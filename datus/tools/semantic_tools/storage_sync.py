@@ -153,7 +153,7 @@ class SemanticStorageManager:
             "yaml_path": "",
             "updated_at": updated_at,
         }
-        store.batch_store([table_obj])
+        store.store_batch([table_obj])
 
         # Store dimensions
         dimensions = model_data.get("dimensions", [])

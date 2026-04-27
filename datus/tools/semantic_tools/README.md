@@ -44,10 +44,10 @@ Standard data models for semantic layer operations:
 
 ```python
 from datus.tools.semantic_tools.models import (
-    MetricDefinition,   # BaseModel: name, description, type, dimensions, etc.
-    QueryResult,        # BaseModel: columns, data, metadata
-    ValidationResult,   # BaseModel: valid, issues
-    AnomalyContext,     # BaseModel: rule, observed_change_pct
+    MetricDefinition,  # BaseModel: name, description, type, dimensions, etc.
+    QueryResult,  # BaseModel: columns, data, metadata
+    ValidationResult,  # BaseModel: valid, issues
+    AnomalyContext,  # BaseModel: rule, observed_change_pct
 )
 ```
 
@@ -82,10 +82,7 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 
 # Register adapter
 semantic_adapter_registry.register(
-    service_type="metricflow",
-    adapter_class=MetricFlowAdapter,
-    config_class=MetricFlowConfig,
-    display_name="MetricFlow"
+    service_type="metricflow", adapter_class=MetricFlowAdapter, config_class=MetricFlowConfig, display_name="MetricFlow"
 )
 
 # Create adapter instance
@@ -171,6 +168,7 @@ from datus.tools.semantic_tools.models import (
     TimeRange,
 )
 
+
 class MetricFlowAdapter(BaseSemanticAdapter):
     def __init__(self, config):
         super().__init__(config, service_type="metricflow")
@@ -228,10 +226,10 @@ class MetricFlowAdapter(BaseSemanticAdapter):
 
         # Apply filtering by path if needed
         if path:
-            metrics = [m for m in metrics if m.path and m.path[:len(path)] == path]
+            metrics = [m for m in metrics if m.path and m.path[: len(path)] == path]
 
         # Apply pagination
-        return metrics[offset:offset + limit]
+        return metrics[offset : offset + limit]
 
     async def get_dimensions(
         self,
@@ -383,13 +381,17 @@ class MetricFlowAdapter(BaseSemanticAdapter):
 from typing import Optional
 from pydantic import BaseModel, Field
 
+
 class SemanticAdapterConfig(BaseModel):
     """Base configuration for semantic adapters."""
+
     namespace: str = Field(..., description="Namespace for this semantic layer instance")
     service_type: str = Field(default="metricflow", description="Type of semantic service")
 
+
 class MetricFlowConfig(SemanticAdapterConfig):
     """Configuration for MetricFlow adapter."""
+
     service_type: str = Field(default="metricflow", description="Service type")
     cli_path: str = Field(default="mf", description="Path to MetricFlow CLI executable")
     timeout: int = Field(default=300, description="Command timeout in seconds")
@@ -409,6 +411,7 @@ class MetricFlowConfig(SemanticAdapterConfig):
 from datus_semantic_metricflow.adapter import MetricFlowAdapter
 from datus_semantic_metricflow.config import MetricFlowConfig
 
+
 def register():
     """Register MetricFlow adapter with Datus semantic adapter registry."""
     # Import at runtime to avoid circular dependencies
@@ -420,6 +423,7 @@ def register():
         config_class=MetricFlowConfig,
         display_name="MetricFlow",
     )
+
 
 __all__ = ["MetricFlowAdapter", "MetricFlowConfig", "register"]
 ```
@@ -469,7 +473,7 @@ datus-agent bootstrap-kb \
   --namespace my_project \
   --components semantic_model \
   --from_adapter metricflow \
-  --kb-update-strategy overwrite
+  --kb_update_strategy overwrite
 
 # Pull metrics from MetricFlow with subject tree categorization
 datus-agent bootstrap-kb \
@@ -477,7 +481,7 @@ datus-agent bootstrap-kb \
   --components metrics \
   --from_adapter metricflow \
   --subject-path "Finance,Sales,Operations" \
-  --kb-update-strategy overwrite
+  --kb_update_strategy overwrite
 ```
 
 ### 2. Use in Agent Node
@@ -589,6 +593,7 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.adapter import MetricFlowAdapter
 from datus_semantic_metricflow.config import MetricFlowConfig
 
+
 @pytest.mark.asyncio
 async def test_list_metrics():
     config = MetricFlowConfig(
@@ -600,6 +605,7 @@ async def test_list_metrics():
     metrics = await adapter.list_metrics(limit=5)
     assert len(metrics) <= 5
     assert all(isinstance(m.name, str) for m in metrics)
+
 
 @pytest.mark.asyncio
 async def test_query_metrics():
@@ -654,27 +660,17 @@ Use the predefined error codes from `datus.utils.exceptions`:
 from datus.utils.exceptions import DatusException, ErrorCode
 
 # Adapter not found
-raise DatusException(
-    ErrorCode.SEMANTIC_ADAPTER_NOT_FOUND,
-    message_args={"adapter_type": "unknown_service"}
-)
+raise DatusException(ErrorCode.SEMANTIC_ADAPTER_NOT_FOUND, message_args={"adapter_type": "unknown_service"})
 
 # Adapter operation failed
-raise DatusException(
-    ErrorCode.SEMANTIC_ADAPTER_ERROR,
-    message_args={"error_message": "Connection timeout"}
-)
+raise DatusException(ErrorCode.SEMANTIC_ADAPTER_ERROR, message_args={"error_message": "Connection timeout"})
 
 # Configuration error
-raise DatusException(
-    ErrorCode.SEMANTIC_ADAPTER_CONFIG_ERROR,
-    message_args={"error_message": "Missing project_root"}
-)
+raise DatusException(ErrorCode.SEMANTIC_ADAPTER_CONFIG_ERROR, message_args={"error_message": "Missing project_root"})
 
 # Sync failed
 raise DatusException(
-    ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
-    message_args={"error_message": "Invalid metric definition"}
+    ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED, message_args={"error_message": "Invalid metric definition"}
 )
 ```
 

@@ -188,7 +188,20 @@ dev = [
     "langsmith>=0.7.0",
     "langsmith-fetch>=0.1.0",
     "pytest-cov>=7.0.0",
+    "datus-postgresql",
+    "datus-semantic-metricflow",
+    "datus-mysql",
+    "datus-semantic-blue @ file:///Users/vbot/workspace/datus/datus-semantic-blue",
 ]
+
+[tool.uv.sources]
+aiohttp = { index = "tsinghua" }
+requests = { index = "tsinghua" }
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+default = true
 
 [tool.coverage.run]
 source = ["datus"]

@@ -464,6 +464,11 @@ class AgentConfig:
                 )
             self.document_configs[name] = DocumentConfig.from_dict(cfg)
 
+        for key, value in kwargs.items():
+            if "_config" not in key:
+                continue
+            setattr(self, key, value)
+
     @property
     def current_database(self):
         return self._current_database
