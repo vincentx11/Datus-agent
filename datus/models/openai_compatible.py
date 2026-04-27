@@ -12,7 +12,6 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import urlparse
 
 import httpx
 import litellm
@@ -27,14 +26,16 @@ from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.litellm_adapter import LiteLLMAdapter
+from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model, is_official_openai_endpoint
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.resource_utils import read_data_file_text
+from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
 from datus.utils.traceable_utils import setup_tracing
 
 logger = get_logger(__name__)
@@ -60,19 +61,49 @@ _MODEL_SPECS_LOCK = threading.Lock()
 
 
 def _load_model_specs() -> Dict[str, Dict[str, int]]:
-    """Load model specifications from conf/providers.yml (cached after first call, thread-safe)."""
+    """Load model specifications from conf/providers.yml (cached after first call, thread-safe).
+
+    Specs from ``providers.yml`` are authoritative. The OpenRouter cache at
+    ``~/.datus/cache/openrouter_models.json`` provides a fallback ``context_length``
+    for slugs the YAML doesn't enumerate — this keeps the status bar and
+    auto-compaction heuristic aware of fresh OpenRouter models without
+    requiring a YAML edit for every new release.
+    """
     global _MODEL_SPECS_CACHE
     if _MODEL_SPECS_CACHE is not None:
         return _MODEL_SPECS_CACHE
     with _MODEL_SPECS_LOCK:
         if _MODEL_SPECS_CACHE is None:
+            specs: Dict[str, Dict[str, int]] = {}
             try:
                 text = read_data_file_text("conf/providers.yml")
                 catalog = yaml.safe_load(text)
-                _MODEL_SPECS_CACHE = catalog.get("model_specs", {})
+                raw_specs = catalog.get("model_specs") or {}
+                if isinstance(raw_specs, dict):
+                    specs = {
+                        k: dict(v) for k, v in raw_specs.items() if isinstance(k, str) and k and isinstance(v, dict)
+                    }
             except Exception as e:
                 logger.warning(f"Failed to load model_specs from providers.yml, using empty specs: {e}")
-                _MODEL_SPECS_CACHE = {}
+
+            # Merge OpenRouter cache: YAML wins on shared keys.
+            try:
+                from datus.cli.provider_model_catalog import load_cached_model_details
+
+                cache_details = load_cached_model_details() or {}
+                for entries in cache_details.values():
+                    for entry in entries:
+                        slug = entry.get("id") if isinstance(entry, dict) else None
+                        if not isinstance(slug, str) or not slug:
+                            continue
+                        ctx_len = entry.get("context_length")
+                        if not isinstance(ctx_len, int):
+                            continue
+                        specs.setdefault(slug, {}).setdefault("context_length", ctx_len)
+            except Exception as e:
+                logger.debug(f"Failed to merge OpenRouter cache into model_specs: {e}")
+
+            _MODEL_SPECS_CACHE = specs
     return _MODEL_SPECS_CACHE
 
 
@@ -115,6 +146,39 @@ def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]
     return ErrorCode.MODEL_REQUEST_FAILED, False
 
 
+# ----------------------------------------------------------------------
+# Tool result summary helpers
+# ----------------------------------------------------------------------
+#
+# ``short_desc`` (= ``ActionHistory.output["summary"]``) is rendered in the
+# CLI and surfaced as ``shortDesc`` in the streaming SSE payload. The
+# per-tool formatter logic now lives in ``datus.schemas.tool_summary`` so
+# CLI compact rendering and SSE share a single source of truth.
+
+
+def _detect_tool_failure(output_content: Any) -> bool:
+    """Return True when the tool's output payload signals failure.
+
+    Tools built on :class:`FuncToolResult` report errors via ``success=0`` /
+    non-empty ``error`` instead of raising. The Agents SDK therefore emits a
+    ``tool_call_output_item`` for them and we must inspect the payload to
+    render ✗ (and mark the action FAILED) correctly.
+    """
+    data: Optional[dict] = None
+    if isinstance(output_content, dict):
+        data = output_content
+    elif isinstance(output_content, str):
+        try:
+            parsed = json.loads(output_content)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(parsed, dict):
+            data = parsed
+    if data is None:
+        return False
+    return looks_like_failure(data)
+
+
 class OpenAICompatibleModel(LLMBaseModel):
     """
     Base class for models that use OpenAI-compatible APIs.
@@ -143,6 +207,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             api_key=self.api_key,
             base_url=self.base_url,
             enable_thinking=model_config.enable_thinking,
+            reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
         )
 
@@ -162,24 +227,83 @@ class OpenAICompatibleModel(LLMBaseModel):
 
     def _is_official_openai_api(self) -> bool:
         """Return True only for official OpenAI API endpoints."""
-        if self.model_config.type != "openai":
-            return False
-        if not self.base_url:
-            # When base_url is unset, the OpenAI SDK defaults to api.openai.com
-            return True
-        try:
-            hostname = (urlparse(self.base_url).hostname or "").lower()
-        except Exception:
-            return False
-        return hostname == "api.openai.com"
+        return is_official_openai_endpoint(self.model_config.type, self.base_url)
 
     def _default_prompt_cache_retention(self) -> Optional[str]:
         """Choose a safe default prompt cache retention policy for OpenAI."""
         if not self._is_official_openai_api():
             return None
-        if self.model_name.startswith("gpt-5.4"):
+        if self.model_name.startswith("gpt-5"):
             return "24h"
         return "in_memory"
+
+    def _model_supports_reasoning(self) -> bool:
+        """Decide whether ``/effort`` should inject ``Reasoning(effort=…)``.
+
+        Authority chain (permissive by design — new models default to
+        supported, Datus only bails out when it has *positive* evidence the
+        model cannot reason):
+
+        1. Datus-maintained deny-list (:func:`is_known_non_thinking_model`)
+           kicks in first. ``deepseek-chat``, ``moonshot-v1-*`` and the bare
+           ``kimi-k2`` family are the only DeepSeek/Kimi models we treat as
+           non-reasoning; everything else in those providers defaults to
+           supported so LiteLLM's catalog lag on DeepSeek V4 / Kimi K2.x
+           doesn't mute the effort hint.
+        2. LiteLLM's built-in catalog returns ``True`` → accepted.
+        3. LiteLLM raises (unknown provider, self-hosted proxy, …) → accepted
+           under the permissive default.
+        4. LiteLLM returns ``False`` → accepted. New models routinely ship
+           before LiteLLM adds them; ``drop_params=True`` still protects the
+           request at the transport layer. ``_build_agent`` emits a ``skip``
+           warning only when branch 1 explicitly blocks.
+        """
+        provider = self.litellm_adapter.provider
+        if is_known_non_thinking_model(provider, self.model_name):
+            return False
+        try:
+            if litellm.supports_reasoning(model=self.model_name, custom_llm_provider=provider):
+                return True
+        except Exception as e:
+            logger.debug(f"litellm.supports_reasoning raised for {self.model_name}: {e}")
+        return True
+
+    def _native_thinking_extra_body(self) -> Optional[Dict[str, Any]]:
+        """Extra ``extra_body`` payload that activates DeepSeek/Moonshot thinking.
+
+        LiteLLM handles these two providers differently, and both need Datus
+        intervention to land the required fields in the HTTP body:
+
+        - **Moonshot**: its ``get_supported_openai_params`` does not list
+          ``thinking`` or ``reasoning_effort``, so under
+          ``litellm.drop_params=True`` both fields are stripped during param
+          mapping. Pushing ``thinking`` through ``extra_body`` bypasses the
+          filter because the OpenAI client merges ``extra_body`` verbatim into
+          the request body. ``reasoning_effort`` is intentionally NOT added
+          for Moonshot — Kimi K2.x does not accept it and would reject the
+          request.
+        - **DeepSeek**: its transformation *does* recognise both fields but
+          pops ``reasoning_effort`` during mapping (it only keeps ``thinking``
+          internally). Per
+          https://api-docs.deepseek.com/zh-cn/guides/thinking_mode, DeepSeek
+          requires ``reasoning_effort`` alongside ``thinking.type=enabled`` to
+          control depth. Adding ``reasoning_effort`` to ``extra_body`` re-injects
+          it into the final request body after the transformation has run.
+
+        Returns ``None`` for non-DeepSeek/Kimi providers or explicitly
+        non-thinking models (see :func:`is_known_non_thinking_model`).
+        """
+        provider = self.litellm_adapter.provider
+        if provider not in ("deepseek", "kimi"):
+            return None
+        if is_known_non_thinking_model(provider, self.model_name):
+            return None
+        body: Dict[str, Any] = {"thinking": {"type": "enabled"}}
+        if provider == "deepseek":
+            effort = self.litellm_adapter.reasoning_effort_level
+            if effort:
+                body["reasoning_effort"] = effort
+        return body
 
     def _default_prompt_cache_key(self, agent_name: str) -> Optional[str]:
         """Build a stable prompt cache key for requests with shared prefixes."""
@@ -187,8 +311,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             return None
 
         node_name = ""
-        namespace = ""
-        database = ""
+        datasource = ""
         if getattr(self, "current_node", None):
             try:
                 node_name = self.current_node.get_node_name()
@@ -196,8 +319,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 node_name = getattr(self.current_node, "node_type", "") or ""
             agent_config = getattr(self.current_node, "agent_config", None)
             if agent_config:
-                namespace = getattr(agent_config, "current_namespace", "") or ""
-                database = getattr(agent_config, "current_database", "") or ""
+                datasource = getattr(agent_config, "current_datasource", "") or ""
 
         raw_key = "|".join(
             [
@@ -205,8 +327,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 self.model_name,
                 agent_name,
                 node_name,
-                namespace,
-                database,
+                datasource,
             ]
         )
         return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:32]
@@ -394,7 +515,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             # Use LiteLLM for unified provider support
             response = litellm.completion(messages=messages, **params)
             message = response.choices[0].message
-            content = message.content
+            content = strip_litellm_placeholder(message.content)
 
             # Handle reasoning content for reasoning models (DeepSeek R1, OpenAI O-series)
             reasoning_content = None
@@ -637,9 +758,37 @@ class OpenAICompatibleModel(LLMBaseModel):
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
 
-        if self.litellm_adapter.is_thinking_model:
-            model_settings_kwargs["reasoning"] = Reasoning(effort="medium")
-            logger.debug(f"Enabled thinking mode for model: {self.model_name}")
+        effort = self.litellm_adapter.reasoning_effort_level
+        if effort:
+            if self._model_supports_reasoning():
+                model_settings_kwargs["reasoning"] = Reasoning(effort=effort)
+                logger.debug(f"Enabled reasoning (effort={effort}) for model: {self.model_name}")
+                native_thinking = self._native_thinking_extra_body()
+                if native_thinking:
+                    # Must go through ``extra_args["extra_body"]`` (not
+                    # ``ModelSettings.extra_body``). The agents SDK *flattens*
+                    # ``extra_body`` into the acompletion kwargs, which means
+                    # Moonshot's transformation — whose ``get_supported_openai_params``
+                    # list does not include ``thinking`` — would silently drop the
+                    # flag under ``drop_params=True``. Nesting it one level deeper
+                    # keeps ``extra_body={...}`` as a reserved acompletion kwarg,
+                    # which the OpenAI client then merges verbatim into the HTTP
+                    # POST body, bypassing the per-provider supported-params filter.
+                    existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
+                    nested_extra_body = dict(existing_extra_args.get("extra_body") or {})
+                    nested_extra_body.update(native_thinking)
+                    existing_extra_args["extra_body"] = nested_extra_body
+                    model_settings_kwargs["extra_args"] = existing_extra_args
+                    logger.debug(f"Added native thinking payload for {self.model_name}: {native_thinking}")
+            else:
+                logger.warning(
+                    "Skipping reasoning (effort=%s) for %s: Datus recognises this model "
+                    "as not supporting thinking. Use `/effort off` or switch to a "
+                    "thinking-capable model (gpt-5*, o-series, claude-4*, gemini-2.5*+, "
+                    "deepseek-v4*, deepseek-reasoner, kimi-k2.5+) to silence this warning.",
+                    effort,
+                    self.model_name,
+                )
 
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
@@ -808,6 +957,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 # Streaming thinking state: accumulate text deltas for real-time output
                 thinking_stream_id: Optional[str] = None
                 thinking_accumulated = ""
+                placeholder_filter = LitellmPlaceholderStreamFilter()
 
                 while not result.is_complete:
                     if interrupt_controller and interrupt_controller.is_interrupted:
@@ -831,7 +981,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Stream text delta: yield thinking_delta for real-time display
                             if raw_type == "response.output_text.delta":
-                                delta_text = getattr(raw_data, "delta", None)
+                                raw_delta = getattr(raw_data, "delta", None) or ""
+                                delta_text = placeholder_filter.feed(raw_delta)
                                 if delta_text:
                                     if thinking_stream_id is None:
                                         thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
@@ -851,8 +1002,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                             # Content part done: emit completed thinking action
                             if raw_type == "response.content_part.done":
-                                if thinking_accumulated.strip():
-                                    full_text = thinking_accumulated.strip()
+                                tail = placeholder_filter.finalize()
+                                if tail:
+                                    thinking_accumulated += tail
+                                full_text = strip_litellm_placeholder(thinking_accumulated.strip())
+                                if full_text:
                                     text_content_split = full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
                                     is_thinking = len(temp_tool_calls) > 0
                                     thinking_action = ActionHistory(
@@ -883,7 +1037,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                             part_text = getattr(content_part, "text", None)
                                             if part_text:
                                                 text_parts.append(part_text)
-                                        full_text = "\n".join(text_parts).strip()
+                                        full_text = strip_litellm_placeholder("\n".join(text_parts).strip())
                                         if full_text:
                                             text_content_split = (
                                                 full_text if len(full_text) <= 200 else f"{full_text[:200]}..."
@@ -994,6 +1148,12 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     logger.warning(f"Unexpected output_content type: {type(output_content)}")
                                     result_summary = self._format_tool_result(str(output_content), tool_name)
 
+                                # Detect failure from FuncToolResult-shaped payload so the
+                                # CLI renders ✗ (and SSE reports FAILED) when the tool
+                                # returned success=0 / non-empty error, even though the
+                                # Agents SDK call itself did not raise.
+                                tool_failed = _detect_tool_failure(output_content)
+
                                 # Create complete action with both input and output
                                 # Put result_summary as the status message to replace default "Success"
                                 complete_action = ActionHistory(
@@ -1003,12 +1163,12 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     action_type=tool_name,
                                     input={"function_name": tool_name, "arguments": tool_info["arguments"]},
                                     output={
-                                        "success": True,
+                                        "success": not tool_failed,
                                         "raw_output": output_content,
                                         "summary": result_summary,
                                         "status_message": result_summary,
                                     },
-                                    status=ActionStatus.SUCCESS,
+                                    status=ActionStatus.FAILED if tool_failed else ActionStatus.SUCCESS,
                                     start_time=tool_info["start_time"],
                                 )
                                 complete_action.end_time = datetime.now()
@@ -1058,9 +1218,8 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 else:
                                     text_content = str(content)
 
+                                text_content = strip_litellm_placeholder(text_content)
                                 if text_content and len(text_content.strip()) > 0:
-                                    # Create thinking/final output action and yield it
-                                    # External AgenticNode will parse raw_output for SQL extraction
                                     text_content = text_content.strip()
                                     text_content_split = (
                                         text_content if len(text_content) <= 200 else f"{text_content[:200]}..."
@@ -1288,122 +1447,49 @@ class OpenAICompatibleModel(LLMBaseModel):
         action.output["usage"] = usage_info
 
     def _format_tool_result_from_dict(self, data: dict, tool_name: str = "") -> str:
-        """Format tool result from dict for display.
-
-        Args:
-            data: Tool result as dict
-            tool_name: Name of the tool (optional)
-
-        Returns:
-            Formatted summary string
-        """
-        _ = tool_name  # Reserved for future use
-
-        # Handle different tool result formats
-        # Check for common result patterns
-        # Handle "result" field (can be int, list, or dict)
-        if "result" in data:
-            result_value = data.get("result")
-            if isinstance(result_value, list):
-                return f"{len(result_value)} items"
-            elif isinstance(result_value, int):
-                return f"{result_value} rows"
-            elif isinstance(result_value, dict):
-                # Try to extract count from nested dict
-                if "count" in result_value:
-                    return f"{result_value['count']} items"
-                else:
-                    return "Success"
-            else:
-                return "Success"
-        # Handle "rows" field
-        elif "rows" in data:
-            row_count = data.get("rows", 0)
-            return f"{row_count} rows" if isinstance(row_count, int) else "Success"
-        # Handle "items" field
-        elif "items" in data:
-            items_count = len(data.get("items", []))
-            return f"{items_count} items"
-        # Handle "success" field only
-        elif "success" in data and len(data) == 1:
-            return "Success" if data["success"] else "Failed"
-        # Handle "count" field
-        elif "count" in data:
-            return f"{data['count']} items"
-        else:
-            # Generic success for dict responses
-            return "Success"
+        """Delegate to the shared :class:`ToolSummaryRegistry`."""
+        return TOOL_SUMMARY_REGISTRY.summarize_dict(data, tool_name)
 
     def _format_tool_result(self, content: str, tool_name: str = "") -> str:
-        """Format tool result for display.
-
-        Args:
-            content: Tool result content (string)
-            tool_name: Name of the tool (optional, for future use)
-
-        Returns:
-            Formatted summary string
-        """
-        if not content:
-            return "Empty result"
-
-        try:
-            # Try to parse as JSON and delegate to _format_tool_result_from_dict
-            import json
-
-            data = json.loads(content)
-            if isinstance(data, dict):
-                return self._format_tool_result_from_dict(data, tool_name)
-            elif isinstance(data, list):
-                return f"{len(data)} items"
-            else:
-                return f"{str(data)[:50]}"
-
-        except (json.JSONDecodeError, Exception):
-            # Not JSON, return truncated string
-            summary = content[:100].replace("\n", " ")
-            return f"{summary}..." if len(content) > 100 else f"{summary}"
+        """Delegate to the shared :class:`ToolSummaryRegistry`."""
+        return TOOL_SUMMARY_REGISTRY.summarize_content(content, tool_name)
 
     @property
     def model_specs(self) -> Dict[str, Dict[str, int]]:
         """Model specifications loaded from conf/providers.yml (cached)."""
         return _load_model_specs()
 
+    def _lookup_spec(self, field: str) -> Optional[int]:
+        """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
+
+        Longest-prefix is important when specs declare both a generic family key
+        (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
+        generic key would otherwise bleed into unrelated slugs that happen to
+        share a short prefix. Returns None when the field is missing —
+        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
+        must tolerate absence.
+        """
+        specs = self.model_specs
+        exact = specs.get(self.model_name)
+        if isinstance(exact, dict) and isinstance(exact.get(field), int):
+            return exact[field]
+        best_key: Optional[str] = None
+        for spec_model, spec in specs.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
+                continue
+            if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
+                best_key = spec_model
+        if best_key is None:
+            return None
+        return specs[best_key][field]
+
     def max_tokens(self) -> Optional[int]:
-        """
-        Get the max tokens from model specs with prefix matching.
-
-        Returns:
-            Max tokens from model specs, or None if unavailable
-        """
-        # First try exact match
-        if self.model_name in self.model_specs:
-            return self.model_specs[self.model_name]["max_tokens"]
-
-        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
-        for spec_model in self.model_specs:
-            if self.model_name.startswith(spec_model):
-                return self.model_specs[spec_model]["max_tokens"]
-
-        return None
+        """Max tokens from model specs with prefix matching, or None if unavailable."""
+        return self._lookup_spec("max_tokens")
 
     def context_length(self) -> Optional[int]:
-        """
-        Get the context length from model specs with prefix matching.
-
-        Returns:
-            Context length from model specs, or None if unavailable
-        """
-        # First try exact match
-        if self.model_name in self.model_specs:
-            return self.model_specs[self.model_name]["context_length"]
-
-        # Try prefix matching for models like gpt-4o-mini, kimi-k2-0711-preview
-        for spec_model in self.model_specs:
-            if self.model_name.startswith(spec_model):
-                return self.model_specs[spec_model]["context_length"]
-
-        return None
+        """Context length from model specs with prefix matching, or None if unavailable."""
+        return self._lookup_spec("context_length")
 
     def token_count(self, prompt: str) -> int:
         """

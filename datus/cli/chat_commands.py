@@ -14,27 +14,90 @@ import platform
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.table import Table
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
-from datus.cli._cli_utils import select_choice
 from datus.cli.action_display.display import ActionHistoryDisplay
+from datus.cli.cli_styles import CODE_THEME
 from datus.cli.execution_state import ExecutionInterrupted, auto_submit_interaction
+from datus.cli.list_selector_app import ListItem, ListSelectorApp
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
-from datus.schemas.token_usage import TokenUsage
 from datus.utils.loggings import get_logger
-from datus.utils.terminal_utils import interrupt_on_escape
+from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
+
+
+@contextmanager
+def _noop_escape_guard():
+    """Context manager that yields an inert :class:`EscapeGuard`.
+
+    Used in TUI mode where prompt_toolkit owns stdin and installing the
+    termios-based ESC listener would conflict. The inert guard's
+    ``paused()`` is a no-op so callers written against the termios path
+    (e.g. ``_make_input_collector``) continue to work unchanged.
+    """
+    yield EscapeGuard()
+
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
 logger = get_logger(__name__)
+
+_MODEL_CONFIG_ERROR_PATTERNS = re.compile(
+    r"no active model configured|not found in agent_config|unsupported model type"
+    r"|api.?key|invalid.{0,10}key",
+    re.IGNORECASE,
+)
+_AUTH_ERROR_PATTERNS = re.compile(r"unauthorized|authentication", re.IGNORECASE)
+_MODEL_CONTEXT_PATTERNS = re.compile(r"model|llm|provider|openai|anthropic|gemini|codex", re.IGNORECASE)
+
+
+def _is_model_config_error(exc: BaseException) -> bool:
+    """Return True if *exc* looks like a model configuration or auth error."""
+    msg = str(exc)
+    if isinstance(exc, KeyError):
+        msg = exc.args[0] if exc.args else ""
+    msg = str(msg)
+    return bool(
+        _MODEL_CONFIG_ERROR_PATTERNS.search(msg)
+        or (_AUTH_ERROR_PATTERNS.search(msg) and _MODEL_CONTEXT_PATTERNS.search(msg))
+    )
+
+
+def _drop_if_matches_final(
+    pending: Optional[ActionHistory],
+    final_action: ActionHistory,
+    incremental_actions: list,
+) -> Optional[ActionHistory]:
+    """Reconcile a pending ASSISTANT action with an incoming *_response action.
+
+    The model layer tags the tail LLM text with is_thinking=False and the node
+    wraps the same text into a *_response action. When both are present we drop
+    the pending entry so the final response is not rendered twice. If the texts
+    differ (e.g. LLM emitted thinking before any tool call, then the node built
+    the final response from a later turn), flush the pending entry into the
+    incremental stream so the thinking is preserved.
+    """
+    if pending is None:
+        return None
+    pending_text = ""
+    if isinstance(pending.output, dict):
+        pending_text = (pending.output.get("raw_output") or "").strip()
+    final_text = ""
+    if isinstance(final_action.output, dict):
+        final_text = (final_action.output.get("response") or "").strip()
+    # Drop the pending entry when it has nothing to contribute (empty text)
+    # or when its body duplicates the final response exactly.
+    if not pending_text or pending_text == final_text:
+        return None
+    incremental_actions.append(pending)
+    return None
 
 
 class ChatCommands:
@@ -47,20 +110,20 @@ class ChatCommands:
 
         # Chat state management - unified node management
         self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
-        self.chat_node: ChatAgenticNode | None = None  # Kept for backward compatibility
         self.current_subagent_name: str | None = None  # Track current subagent name
         self.chat_history = []
         self.last_actions = []
         self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
         self._trace_verbose = False  # toggle state for post-run Ctrl+O
+        # Live handle to the active streaming context, consumed by the TUI
+        # to route ESC (interrupt) and Ctrl+O (verbose toggle) key bindings
+        # to the currently running agent loop. ``None`` when idle.
+        self.current_streaming_ctx = None
 
     def update_chat_node_tools(self):
-        """Update current node tools when namespace changes."""
+        """Update current node tools when datasource changes."""
         if self.current_node and hasattr(self.current_node, "setup_tools"):
             self.current_node.setup_tools()
-        # Keep backward compatibility
-        if self.chat_node:
-            self.chat_node.setup_tools()
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
@@ -74,37 +137,32 @@ class ChatCommands:
             # Create new node only if switching from subagent to regular
             return bool(self.current_subagent_name)
 
-    def _trigger_compact_for_current_node(self):
-        """Trigger compact on current node before switching."""
-        if self.current_node and hasattr(self.current_node, "_manual_compact"):
-            try:
+    def _is_agent_switch(self, subagent_name: str = None) -> bool:
+        """Check if this is a node type switch (not a fresh start)."""
+        if self.current_node is None:
+            return False
+        effective_current = self.current_subagent_name or ""
+        effective_new = subagent_name or ""
+        return effective_current != effective_new
 
-                async def _get_info():
-                    return await self.current_node.get_session_info()
+    def _copy_session_for_switch(self, prev_session_id: str, new_node) -> str:
+        """Copy session data from the previous node to a new session matching the new node's name prefix.
 
-                session_info = asyncio.run(_get_info())
-                if session_info.get("session_id"):
-                    self.console.print("[yellow]Switching node, compacting current session...[/]")
+        Uses :meth:`SessionManager.copy_session` so that the new session_id prefix
+        matches ``new_node.get_node_name()`` and :meth:`_extract_node_type_from_session_id`
+        resolves the correct type on ``.resume``.
 
-                    async def run_compact():
-                        return await self.current_node._manual_compact()
+        Returns:
+            New session_id with the correct node-name prefix.
+        """
+        from datus.models.session_manager import SessionManager
 
-                    result = asyncio.run(run_compact())
-
-                    if result.get("success"):
-                        self.console.print("[green]✓ Session compacted successfully![/]")
-                        logger.info(
-                            f"Session compact details - New Token Count: {result.get('new_token_count', 'N/A')}"
-                            f"Tokens Saved: {result.get('tokens_saved', 'N/A')}"
-                            f"Compression Ratio: {result.get('compression_ratio', 'N/A')}"
-                        )
-                    else:
-                        error_msg = result.get("error", "Unknown error occurred")
-                        self.console.print(f"[bold red]✗ Failed to compact session:[/] {error_msg}")
-
-            except Exception as e:
-                logger.error(f"Compact error during node switch: {e}")
-                self.console.print(f"[bold red]Compact error:[/] {str(e)}")
+        try:
+            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
+            return session_manager.copy_session(prev_session_id, new_node.get_node_name())
+        except Exception as e:
+            logger.warning(f"Failed to copy session on agent switch, starting fresh: {e}")
+            return new_node.session_id  # fall back to whatever the node already has (None → auto-generate)
 
     def _create_new_node(self, subagent_name: str = None):
         """Create new node based on subagent_name and configuration.
@@ -113,8 +171,6 @@ class ChatCommands:
         """
         from datus.agent.node.node_factory import create_interactive_node
 
-        label = subagent_name or "chat"
-        self.console.print(f"[dim]Creating new {label} session...[/]")
         return create_interactive_node(
             subagent_name, self.cli.agent_config, node_id_suffix="_cli", scope=self.cli.scope
         )
@@ -153,14 +209,12 @@ class ChatCommands:
         message: str,
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
-        compact_when_new_subagent: bool = True,
     ):
         """Execute a chat command in interactive REPL mode."""
         self._execute_chat(
             message,
             plan_mode=plan_mode,
             subagent_name=subagent_name,
-            compact_when_new_subagent=compact_when_new_subagent,
             interactive=True,
         )
 
@@ -200,7 +254,6 @@ class ChatCommands:
         message: str,
         plan_mode: bool = False,
         subagent_name: Optional[str] = None,
-        compact_when_new_subagent: bool = True,
         interactive: bool = True,
     ):
         """Core chat execution logic shared by interactive and non-interactive modes."""
@@ -214,30 +267,30 @@ class ChatCommands:
             if interactive:
                 # Decision logic: determine if we need to create a new node
                 need_new_node = self._should_create_new_node(subagent_name)
-
-                # If creating new node and have existing node, trigger compact
-                if need_new_node and self.current_node is not None and compact_when_new_subagent:
-                    self._trigger_compact_for_current_node()
+                is_switch = self._is_agent_switch(subagent_name)
 
                 # Get or create node
                 if need_new_node:
+                    # Copy session when switching agents to preserve conversation
+                    # while keeping the session_id prefix consistent with the new node type.
+                    prev_session_id = None
+                    prev_node_name = None
+                    if is_switch and self.current_node:
+                        prev_session_id = getattr(self.current_node, "session_id", None)
+                        prev_node_name = self.current_node.get_node_name()
                     self.current_node = self._create_new_node(subagent_name)
+                    if prev_session_id:
+                        self.current_node.session_id = self._copy_session_for_switch(prev_session_id, self.current_node)
+                    if prev_node_name:
+                        # Pass the previous node's name explicitly so downstream
+                        # nodes (e.g. feedback) can route memory to the caller
+                        # without having to parse the session id prefix.
+                        self.current_node.caller_node_name = prev_node_name
                     self.current_subagent_name = subagent_name if subagent_name else None
-                    self.all_turn_actions = []
-                    if not subagent_name:
-                        self.chat_node = self.current_node
+                    if not is_switch:
+                        self.all_turn_actions = []
 
                 current_node = self.current_node
-
-                # Show session info for existing session
-                if not need_new_node:
-                    session_info = asyncio.run(current_node.get_session_info())
-                    if session_info.get("session_id"):
-                        session_display = (
-                            f"[dim]Using existing session: {session_info['session_id']} "
-                            f"(tokens: {session_info['token_count']}, actions: {session_info['action_count']})[/]"
-                        )
-                        self.console.print(session_display)
             else:
                 # Non-interactive: always create a new node
                 self.current_node = self._create_new_node(None)
@@ -250,15 +303,33 @@ class ChatCommands:
             current_node.input = node_input
 
             # Initialize action history display
-            action_display = ActionHistoryDisplay(self.console)
+            action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             incremental_actions = []
+            # Streaming text deltas (thinking_delta, depth=0) are routed to this
+            # separate queue so the main trace renderer never has to walk them
+            # again. The TUI streaming context pops deltas off this list as it
+            # repaints the pinned region, and drops the list on each paired
+            # terminal response so the accumulator resets per message.
+            streaming_deltas = []
+            # Will be set True after the streaming context exits if it has
+            # already flushed the main-agent body to the scrollback. When True,
+            # ``_render_final_response`` skips the one-shot
+            # ``_display_markdown_response`` step to avoid painting the body
+            # twice.
+            streamed_body = False
             node_final_action = None  # Node's final ASSISTANT action (e.g. chat_response)
+            # Buffer for ASSISTANT text tagged as non-thinking by the model layer.
+            # Tail text often duplicates the node's *_response; defer rendering
+            # so we can drop it when the *_response arrives, but flush it on any
+            # other action so mid-turn thinking before a tool call is preserved.
+            pending_non_thinking = None
 
             if interactive:
                 self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
+                    nonlocal node_final_action, pending_non_thinking
                     streaming_ctx.set_event_loop(asyncio.get_running_loop())
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
@@ -266,16 +337,13 @@ class ChatCommands:
                         # Skip USER actions (depth=0) — already printed by _echo_user_input
                         if action.role == ActionRole.USER and action.depth == 0:
                             continue
-                        # Skip TOOL PROCESSING entries — SUCCESS version follows
-                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
-                        # Skip non-thinking ASSISTANT actions (final output) —
-                        # rendered by the final response display below instead.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
+                        # Streaming text deltas go to their own queue. Sub-agent
+                        # deltas (depth > 0) are ignored here — they'd pollute
+                        # the main-agent accumulator; sub-agents have their own
+                        # pinned-region path.
+                        if action.action_type == "thinking_delta":
+                            if action.depth == 0:
+                                streaming_deltas.append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -289,36 +357,101 @@ class ChatCommands:
                             and action.action_type.endswith("_response")
                             and action.depth == 0
                         ):
-                            nonlocal node_final_action
                             node_final_action = action
+                            pending_non_thinking = _drop_if_matches_final(
+                                pending_non_thinking, action, incremental_actions
+                            )
+                            # Wrapper *_response closes the delta accumulator for
+                            # this message; reset so a follow-up turn doesn't see
+                            # the previous body in its replay.
+                            streaming_deltas.clear()
                             continue
+                        # Plain "response" from the model layer (openai_compatible /
+                        # codex) is the paired terminal action for the delta
+                        # stream. Push it to the trace list and reset the delta
+                        # accumulator at the same time.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.depth == 0
+                            and action.action_type == "response"
+                            and action.status == ActionStatus.SUCCESS
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = None
+                            incremental_actions.append(action)
+                            streaming_deltas.clear()
+                            continue
+                        # Defer ASSISTANT text flagged as non-thinking — it may
+                        # be the tail text that duplicates the upcoming *_response.
+                        # If a previous pending is still buffered, flush it first
+                        # so back-to-back non-thinking chunks are not dropped.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = action
+                            continue
+                        # Any other action: flush pending first to preserve order.
+                        if pending_non_thinking is not None:
+                            incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = None
                         incremental_actions.append(action)
+                    # Stream ended: flush remaining pending only when no node
+                    # final action captured it (otherwise it was already handled).
+                    if pending_non_thinking is not None and node_final_action is None:
+                        incremental_actions.append(pending_non_thinking)
+                        pending_non_thinking = None
 
                 streaming_ctx = action_display.display_streaming_actions(
                     incremental_actions,
                     history_turns=self.all_turn_actions,
                     current_user_message=message,
                     interaction_broker=current_node.interaction_broker,
+                    streaming_deltas=streaming_deltas,
                 )
-                with (
-                    interrupt_on_escape(
+                # Reprint the CLI banner at the top after Ctrl+O clears the screen.
+                banner_callback = getattr(self.cli, "_print_welcome", None)
+                if banner_callback is not None:
+                    streaming_ctx.set_clear_header_callback(banner_callback)
+
+                # In TUI mode the persistent prompt_toolkit Application owns
+                # stdin, so the termios-based ``interrupt_on_escape`` listener
+                # would fight the main input loop. Skip it and rely on
+                # dedicated ESC / Ctrl+O key bindings registered on the TUI
+                # (see ``DatusCLI._init_tui_app``), which consult this
+                # streaming_ctx and the node's interrupt_controller directly.
+                if getattr(self.cli, "_use_tui", False):
+                    esc_cm = _noop_escape_guard()
+                else:
+                    esc_cm = interrupt_on_escape(
                         current_node.interrupt_controller,
                         key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
-                    ) as esc_guard,
-                    streaming_ctx,
-                ):
-                    streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
-                    try:
-                        asyncio.run(run_chat_stream())
-                    except KeyboardInterrupt:
-                        current_node.interrupt_controller.interrupt()
-                        logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
-                    except ExecutionInterrupted:
-                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    )
+
+                # Publish the streaming context so the TUI Ctrl+O / ESC
+                # bindings can locate it while the agent runs.
+                self.current_streaming_ctx = streaming_ctx
+                try:
+                    with esc_cm as esc_guard, streaming_ctx:
+                        streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
+                        try:
+                            self.cli.run_on_bg_loop(run_chat_stream())
+                        except KeyboardInterrupt:
+                            current_node.interrupt_controller.interrupt()
+                            logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
+                        except ExecutionInterrupted:
+                            logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    streamed_body = bool(getattr(streaming_ctx, "has_streamed_response", False))
+                finally:
+                    self.current_streaming_ctx = None
             else:
 
                 async def run_stream():
-                    nonlocal node_final_action
+                    nonlocal node_final_action, pending_non_thinking
                     async for action in current_node.execute_stream_with_interactions(
                         action_history_manager=self.cli.actions
                     ):
@@ -330,15 +463,9 @@ class ChatCommands:
                                 if broker:
                                     await auto_submit_interaction(broker, action)
                             continue
-                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                            continue
-                        # Skip non-thinking ASSISTANT actions (final output) —
-                        # rendered by the final response display below instead.
-                        if (
-                            action.role == ActionRole.ASSISTANT
-                            and isinstance(action.output, dict)
-                            and not action.output.get("is_thinking", True)
-                        ):
+                        if action.action_type == "thinking_delta":
+                            if action.depth == 0:
+                                streaming_deltas.append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -353,17 +480,56 @@ class ChatCommands:
                             and action.depth == 0
                         ):
                             node_final_action = action
+                            pending_non_thinking = _drop_if_matches_final(
+                                pending_non_thinking, action, incremental_actions
+                            )
+                            streaming_deltas.clear()
                             continue
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and action.depth == 0
+                            and action.action_type == "response"
+                            and action.status == ActionStatus.SUCCESS
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                                pending_non_thinking = None
+                            incremental_actions.append(action)
+                            streaming_deltas.clear()
+                            continue
+                        # Defer ASSISTANT text flagged as non-thinking — it may
+                        # be the tail text that duplicates the upcoming *_response.
+                        # If a previous pending is still buffered, flush it first
+                        # so back-to-back non-thinking chunks are not dropped.
+                        if (
+                            action.role == ActionRole.ASSISTANT
+                            and isinstance(action.output, dict)
+                            and not action.output.get("is_thinking", True)
+                        ):
+                            if pending_non_thinking is not None:
+                                incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = action
+                            continue
+                        if pending_non_thinking is not None:
+                            incremental_actions.append(pending_non_thinking)
+                            pending_non_thinking = None
                         incremental_actions.append(action)
+                    if pending_non_thinking is not None and node_final_action is None:
+                        incremental_actions.append(pending_non_thinking)
+                        pending_non_thinking = None
 
-                with action_display.display_streaming_actions(incremental_actions):
+                ns_streaming_ctx = action_display.display_streaming_actions(
+                    incremental_actions, streaming_deltas=streaming_deltas
+                )
+                with ns_streaming_ctx:
                     try:
-                        asyncio.run(run_stream())
+                        self.cli.run_on_bg_loop(run_stream())
                     except KeyboardInterrupt:
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
                         logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
             # Display final response from the node's final action
             # (separated from incremental_actions to avoid streaming trace rendering)
@@ -375,30 +541,42 @@ class ChatCommands:
                 final_action = None
 
             if final_action:
-                if (
-                    final_action.output
-                    and isinstance(final_action.output, dict)
-                    and final_action.status == ActionStatus.SUCCESS
-                ):
-                    sql = final_action.output.get("sql")
-                    response = final_action.output.get("response")
+                if final_action.output and isinstance(final_action.output, dict):
+                    is_success = final_action.status == ActionStatus.SUCCESS
+                    has_validation_report = bool(final_action.output.get("validation_report"))
 
-                    extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
-                    sql = sql or extracted_sql
+                    if is_success:
+                        sql = final_action.output.get("sql")
+                        response = final_action.output.get("response")
 
-                    clean_output = self._resolve_clean_output(sql, response, extracted_output)
+                        extracted_sql, extracted_output = self._extract_sql_and_output_from_content(response)
+                        sql = sql or extracted_sql
 
-                    if sql:
-                        self.add_in_sql_context(sql, clean_output, incremental_actions)
+                        clean_output = self._resolve_clean_output(sql, response, extracted_output)
 
-                    self._render_final_response(final_action)
-                    self._display_turn_token_usage(final_action, current_node)
+                        if sql:
+                            self.add_in_sql_context(sql, clean_output, incremental_actions)
 
-                    # Merge node_final_action back for history tracking
-                    all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
-                    self.last_actions = all_actions
-                    self.all_turn_actions.append((message, all_actions))
-                    self._trace_verbose = False  # reset toggle for new chat round
+                    # Always render when either the action succeeded OR it failed
+                    # with a validation_report — otherwise users of exhausted-retry
+                    # runs don't see why their deliverable was blocked. The helper
+                    # itself gates downstream SQL / markdown rendering by status;
+                    # ``skip_markdown_body`` is forwarded so the streaming
+                    # context's already-flushed body does not get reprinted.
+                    if is_success or has_validation_report:
+                        self._render_final_response(final_action, skip_markdown_body=streamed_body)
+
+                    if is_success or has_validation_report:
+                        # Merge node_final_action back for history tracking.
+                        # FAILED-with-validation_report turns are kept so
+                        # Ctrl+O (``_full_screen_reprint``) can replay them;
+                        # without this, the new "render on FAILED" branch in
+                        # ``_render_turn_response`` is unreachable because
+                        # ``all_turn_actions`` never sees the failed turn.
+                        all_actions = incremental_actions + ([node_final_action] if node_final_action else [])
+                        self.last_actions = all_actions
+                        self.all_turn_actions.append((message, all_actions))
+                        self._trace_verbose = False  # reset toggle for new chat round
 
                 if interactive:
                     self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
@@ -418,20 +596,37 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
+            if _is_model_config_error(e):
+                self.console.print("[yellow]Hint: Use /model to configure or switch your model.[/]")
 
-    def _render_final_response(self, final_action: "ActionHistory") -> None:
+    def _render_final_response(self, final_action: "ActionHistory", skip_markdown_body: bool = False) -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.
 
         This is used both after streaming completes and when Ctrl+O re-renders.
         Side-effect free — does not modify history or state.
+
+        Args:
+            final_action: The node's terminal assistant action.
+            skip_markdown_body: When True, skip the final Markdown render of
+                the response body (the ``_display_markdown_response`` step).
+                Used when the streaming context has already flushed the
+                accumulated body to the scrollback — without this guard the
+                user sees the same answer twice.
         """
-        if (
-            not final_action
-            or not final_action.output
-            or not isinstance(final_action.output, dict)
-            or final_action.status != ActionStatus.SUCCESS
-        ):
+        if not final_action or not final_action.output or not isinstance(final_action.output, dict):
+            return
+
+        # Render the validation report regardless of success/failure. When the
+        # retry budget is exhausted the node emits status=FAILED with a
+        # ``validation_report`` payload — that's precisely when the user needs
+        # to see *why* things blocked, so this cannot live behind the SUCCESS
+        # guard below.
+        validation_report = final_action.output.get("validation_report")
+        if validation_report:
+            self._display_validation_report(validation_report)
+
+        if final_action.status != ActionStatus.SUCCESS:
             return
 
         sql = final_action.output.get("sql")
@@ -457,26 +652,115 @@ class ChatCommands:
         if ext_knowledge_file:
             self._display_ext_knowledge_file(ext_knowledge_file)
 
-        if clean_output:
+        if clean_output and not skip_markdown_body:
             self._display_markdown_response(clean_output)
 
-    def _get_turn_token_usage(self, final_action: "ActionHistory", node) -> Optional[TokenUsage]:
-        """Extract token usage from the final action or fall back to node lookup."""
-        usage_dict = None
-        if final_action and isinstance(final_action.output, dict) and "usage" in final_action.output:
-            usage_dict = final_action.output["usage"]
+    def _display_validation_report(self, report: Any) -> None:
+        """Render a compact validation panel for ValidationHook output.
 
-        if not usage_dict:
-            try:
-                turn_usage = asyncio.run(node.get_last_turn_usage())
-                return turn_usage
-            except Exception:
-                return None
+        Shows a per-check list with icons / severity colors plus any warnings
+        (e.g. malformed validator skill output). Rendered between other
+        artifacts (SQL, semantic model) and the main markdown response so the
+        user sees it inline with the final assistant turn.
 
-        tu = TokenUsage.from_usage_dict(usage_dict)
-        tu.session_total_tokens = usage_dict.get("last_call_input_tokens", 0) or tu.input_tokens
-        tu.context_length = getattr(node, "context_length", 0) or 0
-        return tu
+        All interpolated user / connector / validator values are run through
+        :func:`rich.markup.escape` — they can legitimately contain ``[`` (list
+        reprs, error messages, path names) which Rich would otherwise parse
+        as markup tags (potentially raising ``MarkupError`` or swallowing
+        subsequent text).
+        """
+        from rich.markup import escape as _rich_escape
+
+        if not isinstance(report, dict):
+            return
+        checks = report.get("checks") or []
+        warnings = report.get("warnings") or []
+        if not checks and not warnings:
+            return
+
+        passed = sum(1 for c in checks if isinstance(c, dict) and c.get("passed"))
+        failed = sum(1 for c in checks if isinstance(c, dict) and not c.get("passed"))
+        has_blocking = any(
+            isinstance(c, dict) and not c.get("passed") and c.get("severity") == "blocking" for c in checks
+        )
+
+        if has_blocking:
+            border_style = "red"
+            header_mark = "✗"
+            header_label = "FAILED"
+        elif failed > 0:
+            border_style = "yellow"
+            header_mark = "⚠"
+            header_label = "WARNINGS"
+        else:
+            border_style = "green"
+            header_mark = "✓"
+            header_label = "PASSED"
+
+        target = report.get("target") or {}
+        target_str = ""
+        if isinstance(target, dict):
+            ttype = target.get("type")
+            if ttype == "table":
+                schema = target.get("schema") or target.get("db_schema")
+                tname = target.get("table")
+                db = target.get("database")
+                fqn = f"{schema}.{tname}" if schema else tname
+                target_str = f"table [cyan]{_rich_escape(str(db))}.{_rich_escape(str(fqn))}[/]"
+            elif ttype == "transfer":
+                src = (target.get("source") or {}).get("name", "?")
+                tgt = target.get("target") or {}
+                tgt_schema = tgt.get("schema") or tgt.get("db_schema")
+                tgt_name = tgt.get("table")
+                tgt_fqn = f"{tgt_schema}.{tgt_name}" if tgt_schema else tgt_name
+                target_str = (
+                    f"transfer [cyan]{_rich_escape(str(src))}[/] → "
+                    f"[cyan]{_rich_escape(str(tgt.get('database')))}.{_rich_escape(str(tgt_fqn))}[/]"
+                )
+            elif ttype == "session":
+                n = len(target.get("targets") or [])
+                target_str = f"session with [cyan]{n}[/] target(s)"
+
+        lines = []
+        header = f"[bold]{header_mark} {header_label}[/]"
+        if target_str:
+            header += f" — {target_str}"
+        lines.append(header)
+        lines.append(f"[dim]{passed} passed, {failed} failed[/]")
+
+        for c in checks:
+            if not isinstance(c, dict):
+                continue
+            mark = "✓" if c.get("passed") else "✗"
+            if c.get("passed"):
+                color = "green"
+            elif c.get("severity") == "blocking":
+                color = "red"
+            else:
+                color = "yellow"
+            source = _rich_escape(str(c.get("source", "?")))
+            name = _rich_escape(str(c.get("name", "?")))
+            detail_parts = []
+            observed = c.get("observed")
+            if observed:
+                detail_parts.append(_rich_escape(f"observed={observed}"))
+            if not c.get("passed"):
+                err = c.get("error")
+                if err:
+                    detail_parts.append(_rich_escape(str(err)))
+            detail = f" — [dim]{'; '.join(detail_parts)}[/]" if detail_parts else ""
+            lines.append(f"  [{color}]{mark}[/] {name} [dim]({source})[/]{detail}")
+
+        for w in warnings:
+            lines.append(f"  [yellow]⚠[/] [dim]{_rich_escape(str(w))}[/]")
+
+        panel = Panel(
+            "\n".join(lines),
+            title="Validation Report",
+            border_style=border_style,
+            expand=False,
+        )
+        self.cli.console.print(panel)
 
     def _get_turn_token_usage_from_node(self, node) -> Optional[dict]:
         """Get detailed token usage from the node's session manager."""
@@ -491,28 +775,6 @@ class ChatCommands:
         except Exception:
             pass
         return None
-
-    def _display_turn_token_usage(self, final_action: "ActionHistory", node) -> None:
-        """Display a compact one-line token usage summary after each turn."""
-        tu = self._get_turn_token_usage(final_action, node)
-        if not tu or tu.total_tokens == 0:
-            return
-
-        parts = [f"Tokens: {tu.input_tokens:,} in / {tu.output_tokens:,} out"]
-
-        if tu.cached_tokens > 0:
-            rate = tu.cache_hit_rate * 100
-            parts.append(f"({tu.cached_tokens:,} cached, {rate:.1f}%)")
-
-        if tu.context_length > 0 and tu.session_total_tokens > 0:
-            ratio = tu.session_total_tokens / tu.context_length * 100
-            parts.append(f"| Context: {tu.session_total_tokens:,}/{tu.context_length:,} ({ratio:.1f}%)")
-
-        if tu.requests > 0:
-            parts.append(f"| {tu.requests} calls")
-
-        line = " ".join(parts)
-        self.console.print(f"[dim]{line}[/dim]")
 
     def _find_node_final_action(self, actions: List["ActionHistory"]) -> Optional["ActionHistory"]:
         """Find the node final action (e.g. chat_response) from an action list."""
@@ -560,7 +822,7 @@ class ChatCommands:
             # Display the SQL in a formatted panel
             self.console.print()
             sql_panel = Panel(
-                Syntax(sql, "sql", theme="monokai", word_wrap=True),
+                Syntax(sql, "sql", theme=CODE_THEME, word_wrap=True),
                 title=f"[bold cyan]Generated SQL{copied_indicator}[/]",
                 border_style="cyan",
                 expand=False,
@@ -653,175 +915,37 @@ class ChatCommands:
         """
         try:
             self.console.print()
-            self.console.print(f"[bold green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
+            self.console.print(f"[green]External Knowledge File:[/] [cyan]{ext_knowledge_file}[/]")
 
         except Exception as e:
             logger.error(f"Error displaying external knowledge file: {e}")
             # Fallback to simple display
-            self.console.print(f"\n[bold green]External Knowledge File:[/] {ext_knowledge_file}")
+            self.console.print(f"\n[green]External Knowledge File:[/] {ext_knowledge_file}")
 
     def _make_input_collector(self, esc_guard):
         """Create a synchronous input collector callback for INTERACTION actions.
 
-        The returned callback is invoked from the daemon thread in InlineStreamingContext
-        when an INTERACTION PROCESSING action arrives.
-
-        Reads ``contents`` / ``choices`` / ``default_choices`` from ``action.input``.
-        Single question (len==1) uses select_choice; batch (len>1) iterates.
+        Returns ``List[List[str]]`` via :class:`InteractionApp`.
         """
 
-        def _collect_single_choice(console, choices, default_choice, allow_free_text):
-            """Collect a single choice or free-text answer."""
-            if not choices:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                return self.cli.prompt_input(message="Your input", multiline=True) or ""
-
-            keys = list(choices.keys())
-            default_key = default_choice if default_choice in keys else keys[0]
-            result = select_choice(
-                console,
-                choices=choices,
-                default=default_key,
-                allow_free_text=allow_free_text,
-            )
-            if result in choices:
-                console.print(f"[dim]Selected: {choices[result]}[/]")
-            if allow_free_text and result == "":
-                console.print("[yellow]No input provided.[/]")
-                return ""
-            return result or default_key
-
-        def _collect_multi_choice(console, choices, allow_free_text):
-            """Collect multiple choices via checkbox-style selector."""
-            from datus.cli._cli_utils import select_multi_choice
-
-            if not choices:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                return self.cli.prompt_input(message="Your input", multiline=True) or ""
-
-            selected_keys = select_multi_choice(
-                console,
-                choices=choices,
-                allow_free_text=allow_free_text,
-            )
-            if selected_keys:
-                selected_display = [choices.get(k, k) for k in selected_keys]
-                console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
-            else:
-                console.print("[yellow]No items selected.[/]")
-            return json.dumps(selected_keys, ensure_ascii=False)
-
-        def collect(action: ActionHistory, console) -> Optional[str]:
-
+        def collect(action: ActionHistory, console) -> Optional[List[List[str]]]:
             try:
-                input_data = action.input or {}
-                contents = input_data.get("contents", [])
-                choices_list = input_data.get("choices", [])
-                default_choices = input_data.get("default_choices", [])
-                allow_free_text = input_data.get("allow_free_text", False)
-                multi_selects = input_data.get("multi_selects", [])
+                from datus.cli.interaction_app import InteractionApp
+                from datus.schemas.interaction_event import InteractionEvent
+
+                events = InteractionEvent.from_broker_input(action.input or {})
+                if not events:
+                    return None
 
                 with esc_guard.paused():
-                    if len(contents) > 1:
-                        return self._collect_batch(console, contents, choices_list, multi_selects)
-
-                    # --- single question ---
-                    ch = choices_list[0] if choices_list else {}
-                    default = default_choices[0] if default_choices else ""
-                    is_multi = multi_selects[0] if multi_selects else False
-
-                    if is_multi and ch:
-                        return _collect_multi_choice(console, ch, allow_free_text)
-                    return _collect_single_choice(console, ch, default, allow_free_text)
+                    app = InteractionApp(events)
+                    result = app.run()
+                    return result.answers
             except Exception as e:
                 logger.error(f"Error collecting interaction input: {e}")
                 return None
 
         return collect
-
-    def _collect_batch(
-        self, console, contents: list, choices_list: list, multi_selects: Optional[list] = None
-    ) -> Optional[str]:
-        """Collect answers for a batch of questions.
-
-        Steps through each question, showing progress (e.g. [1/3]),
-        and returns a JSON-encoded list of answer strings.
-
-        Caller is responsible for holding ``esc_guard.paused()`` context.
-        """
-        if not contents:
-            return json.dumps([])
-
-        answers = []
-        total = len(contents)
-        if multi_selects is None:
-            multi_selects = []
-
-        for idx, q_text in enumerate(contents):
-            ch = choices_list[idx] if idx < len(choices_list) else {}
-            is_multi = multi_selects[idx] if idx < len(multi_selects) else False
-
-            # Show progress header
-            if total > 1:
-                if answers:
-                    prev_q = contents[idx - 1]
-                    short_q = prev_q[:50] + "..." if len(prev_q) > 50 else prev_q
-                    prev_answer = answers[-1]
-                    if isinstance(prev_answer, list):
-                        prev_ch = choices_list[idx - 1] if (idx - 1) < len(choices_list) else {}
-                        prev_display = ", ".join(str(prev_ch.get(k, k)) for k in prev_answer)
-                    else:
-                        prev_display = str(prev_answer)
-                    if len(prev_display) > 60:
-                        prev_display = prev_display[:60] + "..."
-                    console.print(f"  [green]\u2705[/green] [dim]{short_q} \u2192 {prev_display}[/dim]")
-                console.print(f"\n  [bold bright_cyan][{idx + 1}/{total}][/bold bright_cyan] {q_text}")
-            if not ch:
-                console.print()
-                console.print("[dim](Paste supported. Enter to submit)[/]")
-                answer = self.cli.prompt_input(message="Your input", multiline=True) or ""
-            elif is_multi:
-                from datus.cli._cli_utils import select_multi_choice
-
-                selected_keys = select_multi_choice(
-                    console,
-                    choices=ch,
-                    allow_free_text=True,
-                )
-                if selected_keys:
-                    selected_display = [ch.get(k, k) for k in selected_keys]
-                    console.print(f"[dim]Selected: {', '.join(selected_display)}[/]")
-                    answer = selected_keys
-                else:
-                    console.print("[yellow]No items selected.[/]")
-                    answer = []
-            else:
-                default_key = next(iter(ch.keys()))
-                result = select_choice(
-                    console,
-                    choices=ch,
-                    default=default_key,
-                    allow_free_text=True,
-                )
-                if result in ch:
-                    answer = ch[result]
-                    console.print(f"[dim]Selected: {answer}[/]")
-                else:
-                    answer = result
-
-            answers.append(answer)
-
-        # Show summary for multi-question batch
-        if total > 1:
-            console.print()
-            console.print(f"  [green]\u2705 Answers submitted ({total}/{total})[/green]")
-            for idx, answer in enumerate(answers):
-                short_q = contents[idx][:40] + "..." if len(contents[idx]) > 40 else contents[idx]
-                console.print(f"     [dim]{short_q} \u2192 {answer}[/dim]")
-
-        return json.dumps(answers, ensure_ascii=False)
 
     def _extract_report_from_json(self, response: str) -> Optional[str]:
         """
@@ -929,7 +1053,6 @@ class ChatCommands:
 
         # Reset all node references
         self.current_node = None
-        self.chat_node = None  # Keep backward compatibility
         self.all_turn_actions = []
 
     def cmd_chat_info(self, args: str):
@@ -940,7 +1063,7 @@ class ChatCommands:
                 # Determine node type for display
                 node_type = "Chat" if isinstance(self.current_node, ChatAgenticNode) else "Subagent"
 
-                self.console.print(f"[bold green]{node_type} Session Info:[/]")
+                self.console.print(f"[green]{node_type} Session Info:[/]")
                 self.console.print(f"  Session ID: {session_info['session_id']}")
                 self.console.print(f"  Action Count: {session_info['action_count']}")
                 self.console.print(f"  Total Conversations: {len(self.chat_history)}")
@@ -979,6 +1102,67 @@ class ChatCommands:
         else:
             self.console.print("[yellow]No active session.[/]")
 
+    def _full_screen_reprint(
+        self,
+        verbose: bool,
+        *,
+        mode_label: Optional[str] = None,
+        fallback_actions: Optional[List[ActionHistory]] = None,
+    ) -> None:
+        """Clear the screen and re-render the full multi-turn history.
+
+        The viewport ends up with exactly what Ctrl+O produces: banner →
+        optional mode label → every turn's trace + final response. The
+        scrollback is unchanged (``patch_stdout`` cannot erase it), so
+        earlier content remains reachable by scrolling up.
+
+        Args:
+            verbose: Render style for action trace lines.
+            mode_label: Optional banner text printed between the CLI banner
+                and the trace (used by Ctrl+O to show "switched to <mode>").
+            fallback_actions: When ``all_turn_actions`` is empty, render this
+                single action list instead. Used by Ctrl+O on the very first
+                turn before ``all_turn_actions.append`` runs.
+        """
+        self.console.clear()
+        sys.stdout.write("\033[3J")
+        sys.stdout.flush()
+        banner_callback = getattr(self.cli, "_print_welcome", None)
+        if banner_callback is not None:
+            banner_callback()
+        if mode_label:
+            self.console.print(f"[bold bright_black]  \u23af switched to {mode_label} mode \u23af[/]")
+        action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
+
+        def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+            """Callback to render the final response for each turn.
+
+            Render on SUCCESS, or on FAILED when a ``validation_report`` was
+            attached — otherwise Ctrl+O verbose mode hides blocking validation
+            details from runs whose retry budget was exhausted.
+            """
+            final_action = self._find_node_final_action(turn_actions)
+            if not final_action or final_action.depth != 0:
+                return
+            # The viewport was just cleared — render the final Markdown
+            # body here. ``skip_markdown_body`` stays False because the
+            # streaming context's scrollback push is not visible in the
+            # viewport after the clear.
+            if final_action.status == ActionStatus.SUCCESS:
+                self._render_final_response(final_action)
+                return
+            output = final_action.output if isinstance(final_action.output, dict) else None
+            if output and output.get("validation_report"):
+                self._render_final_response(final_action)
+
+        if self.all_turn_actions:
+            action_display.render_multi_turn_history(
+                self.all_turn_actions, verbose=verbose, per_turn_callback=_render_turn_response
+            )
+        elif fallback_actions:
+            action_display.render_action_history(fallback_actions, verbose=verbose)
+            _render_turn_response(fallback_actions)
+
     def display_inline_trace_details(self, actions: List[ActionHistory]) -> None:
         """Toggle action history between compact and verbose modes (post-run Ctrl+O)."""
         if not actions:
@@ -986,25 +1170,11 @@ class ChatCommands:
             return
         self._trace_verbose = not self._trace_verbose
         mode_label = "verbose" if self._trace_verbose else "compact"
-        self.console.clear()
-        sys.stdout.write("\033[3J")
-        sys.stdout.flush()
-        self.console.print(f"[bold bright_black]  ⎯ switched to {mode_label} mode ⎯[/]")
-        action_display = ActionHistoryDisplay(self.console)
-
-        def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
-            """Callback to render the final response for each turn."""
-            final_action = self._find_node_final_action(turn_actions)
-            if final_action and final_action.depth == 0 and final_action.status == ActionStatus.SUCCESS:
-                self._render_final_response(final_action)
-
-        if self.all_turn_actions:
-            action_display.render_multi_turn_history(
-                self.all_turn_actions, verbose=self._trace_verbose, per_turn_callback=_render_turn_response
-            )
-        else:
-            action_display.render_action_history(actions, verbose=self._trace_verbose)
-            _render_turn_response(actions)
+        self._full_screen_reprint(
+            verbose=self._trace_verbose,
+            mode_label=mode_label,
+            fallback_actions=actions,
+        )
 
         self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
@@ -1041,105 +1211,100 @@ class ChatCommands:
                 self.console.print(f"  New Token Count: {result.get('new_token_count', 'N/A')}")
                 self.console.print(f"  Tokens Saved: {result.get('tokens_saved', 'N/A')}")
                 self.console.print(f"  Compression Ratio: {result.get('compression_ratio', 'N/A')}")
+
+                # Reload in-memory state from the compacted session
+                self._reload_state_from_session()
             else:
                 error_msg = result.get("error", "Unknown error occurred")
-                self.console.print(f"[bold red]✗ Failed to compact session:[/] {error_msg}")
+                self.console.print(f"[red]✗ Failed to compact session:[/] {error_msg}")
 
         except Exception as e:
             logger.error(f"Error during manual compact: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
-    def cmd_list_sessions(self, args: str):
-        """List all available chat sessions."""
-        try:
-            # Create a session manager directly (don't rely on chat_node)
-            from datus.models.session_manager import SessionManager
+    def _reload_state_from_session(self):
+        """Reload in-memory state from the current session after compaction.
 
-            session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
-            sessions = session_manager.list_sessions()
+        Clears accumulated action/chat history and rebuilds it from the
+        persisted session messages, then re-renders the conversation on
+        screen so the CLI display matches the compacted DB state.
+        """
+        from datus.models.session_manager import SessionManager
 
-            if not sessions:
-                self.console.print("[yellow]No chat sessions found.[/]")
-                return
+        session_id = self.current_node.session_id
+        session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
+        messages = session_manager.get_session_messages(session_id)
 
-            # Get current session ID for highlighting (if current_node exists)
-            current_session_id = None
-            if self.current_node and hasattr(self.current_node, "session_id"):
-                current_session_id = self.current_node.session_id
+        # Reset in-memory state
+        self.all_turn_actions = []
+        self.last_actions = []
+        self.chat_history = []
+        self._trace_verbose = False
+        if self.current_node:
+            self.current_node.actions = []
 
-            # Get session info for all sessions first to enable sorting
-            sessions_with_info = []
-            for session_data in sessions:
-                session_id = session_data["session_id"]
-                try:
-                    # Get detailed session info if available
-                    if self.current_node and hasattr(self.current_node, "_get_session_details"):
-                        detailed_info = self.current_node._get_session_details(session_id)
-                        session_data.update(detailed_info)
-                    sessions_with_info.append(session_data)
-                except Exception as e:
-                    logger.debug(f"Could not get detailed info for session {session_id}: {e}")
-                    sessions_with_info.append(session_data)
+        # Rebuild state from session messages
+        if messages:
+            from rich.rule import Rule
 
-            # Sort by last_updated (most recent first)
-            sessions_with_info.sort(
-                key=lambda x: x.get("last_updated", x.get("created_at", "")),
-                reverse=True,
-            )
+            self.console.print()
+            action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
+            last_assistant_actions = []
+            current_user_msg = ""
 
-            # Create a table to display sessions
-            table = Table(title="Chat Sessions", show_header=True, header_style="bold blue")
-            table.add_column("Session ID", style="cyan", no_wrap=True)
-            table.add_column("Created", style="green")
-            table.add_column("Last Updated", style="yellow")
-            table.add_column("Conversations", justify="right", style="magenta")
-            table.add_column("SQL Queries", justify="right", style="blue")
+            for msg in messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if role == "user":
+                    current_user_msg = content
+                    self.console.print(f"[bold blue]You:[/] {content}")
+                else:
+                    actions = msg.get("actions")
+                    if actions:
+                        action_display.render_action_history(actions)
+                        last_assistant_actions = actions
+                    sql = msg.get("sql")
+                    if sql:
+                        self._display_sql_with_copy(sql)
+                    if content:
+                        stripped = content.strip()
+                        is_json = stripped.startswith("{") and stripped.endswith("}")
+                        if not (is_json and (sql or actions)):
+                            self._display_markdown_response(content)
+                    # Rebuild all_turn_actions
+                    if actions and current_user_msg:
+                        self.all_turn_actions.append((current_user_msg, actions))
+                    current_user_msg = ""
+                self.console.print(Rule(style="dim"))
 
-            for session in sessions_with_info:
-                session_id = session["session_id"]
-                created = session.get("created_at", "Unknown")[:19]  # Trim to datetime
-                updated = session.get("last_updated", "Unknown")[:19]
-                conversations = session.get("total_turns", 0)
-                sql_count = len(session.get("last_sql_queries", []))
-
-                # Highlight current session
-                if session_id == current_session_id:
-                    session_id = f"→ {session_id}"
-
-                table.add_row(session_id, created, updated, str(conversations), str(sql_count))
-
-            self.console.print(table)
-
-            if current_session_id:
-                self.console.print("\n[dim]→ indicates current active session[/]")
-
-        except Exception as e:
-            logger.error(f"Error listing sessions: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            if last_assistant_actions:
+                self.last_actions = last_assistant_actions
 
     @staticmethod
     def _extract_node_type_from_session_id(session_id: str) -> str:
         """Extract node type from session_id format {node_name}_session_{uuid}."""
-        if "_session_" in session_id:
-            return session_id.rsplit("_session_", 1)[0]
-        return "chat"
+        from datus.models.session_manager import extract_agent_from_session_id
+
+        return extract_agent_from_session_id(session_id)
 
     def cmd_resume(self, args: str):
-        """Resume a previous chat session."""
-        from datus.cli._cli_utils import select_list
-        from datus.models.session_manager import SessionManager
+        """Resume a previous chat session for the active agent."""
+        from datus.models.session_manager import SessionManager, session_matches_agent
 
         try:
             session_manager = SessionManager(self.cli.agent_config.session_dir, scope=self.cli.scope)
 
             # If session_id provided directly, use it
             target_session_id = args.strip() if args else None
+            intended_agent = getattr(self.cli, "default_agent", "") or None
+            agent_label = intended_agent or "chat"
 
             if not target_session_id:
-                # List all sessions for user to choose
+                # List sessions for the current agent only
                 sessions = session_manager.list_sessions(sort_by_modified=True)
+                sessions = [sid for sid in sessions if session_matches_agent(sid, intended_agent)]
                 if not sessions:
-                    self.console.print("[yellow]No sessions found.[/]")
+                    self.console.print(f"[yellow]No sessions found for agent '{agent_label}'.[/]")
                     return
 
                 # Get session info and filter empty sessions
@@ -1150,7 +1315,7 @@ class ChatCommands:
                         session_infos.append(info)
 
                 if not session_infos:
-                    self.console.print("[yellow]No sessions with messages found.[/]")
+                    self.console.print(f"[yellow]No sessions with messages found for agent '{agent_label}'.[/]")
                     return
 
                 # Sort by updated_at descending (newest first)
@@ -1159,29 +1324,37 @@ class ChatCommands:
                     reverse=True,
                 )
 
-                # Build items for interactive list selector (two-line per item)
-                # Line 1: first user message (no newlines, clip to screen width)
-                # Line 2: session_id, updated time, message count
-                list_items = []
+                items = []
                 for info in session_infos:
                     sid = info["session_id"]
-                    first_msg = (info.get("first_user_message", "") or "").replace("\n", " ").replace("\r", " ")
+                    raw_first_msg = info.get("first_user_message", "") or ""
+                    if not isinstance(raw_first_msg, str):
+                        raw_first_msg = str(raw_first_msg)
+                    first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"
                     updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
                     msg_count = str(info.get("message_count", 0))
-                    list_items.append([first_msg, sid, f"Updated: {updated}", f"Msgs: {msg_count}"])
+                    items.append(
+                        ListItem(key=sid, primary=first_msg, secondary=f"{sid}  Updated: {updated}  Msgs: {msg_count}")
+                    )
 
-                idx = select_list(self.console, list_items)
-                if idx is None:
+                app = ListSelectorApp(title=f"Resume session ({agent_label})", items=items)
+                tui_app = getattr(self.cli, "tui_app", None)
+                if tui_app is not None:
+                    with tui_app.suspend_input():
+                        selection = app.run()
+                else:
+                    selection = app.run()
+                if selection is None:
                     self.console.print("[dim]Cancelled.[/]")
                     return
 
-                target_session_id = session_infos[idx]["session_id"]
+                target_session_id = selection.key
 
             # Validate the session exists
             if not session_manager.session_exists(target_session_id):
-                self.console.print(f"[bold red]Session not found:[/] {target_session_id}")
+                self.console.print(f"[red]Session not found:[/] {target_session_id}")
                 return
 
             # Extract node type and create the appropriate node
@@ -1196,15 +1369,14 @@ class ChatCommands:
             # Update state
             self.current_node = new_node
             self.current_subagent_name = subagent_name
-            self.chat_node = new_node if not subagent_name else self.chat_node
 
             # Show conversation history with full formatting
             from rich.rule import Rule
 
             messages = session_manager.get_session_messages(target_session_id)
             if messages:
-                self.console.print(f"\n[bold green]Session resumed![/] Showing {len(messages)} message(s):\n")
-                action_display = ActionHistoryDisplay(self.console)
+                self.console.print(f"\n[green]Session resumed![/] Showing {len(messages)} message(s):\n")
+                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
                 last_assistant_actions = []
                 for msg in messages:
                     role = msg.get("role", "unknown")
@@ -1243,20 +1415,11 @@ class ChatCommands:
                             self.all_turn_actions.append((current_user_msg, actions))
                         current_user_msg = ""
 
-            # Get session info to check token usage
-            info = session_manager.get_session_info(target_session_id)
-            total_tokens = info.get("total_tokens", 0)
-            if total_tokens > 50000:
-                self.console.print(
-                    "[yellow]Note: This session has high token usage. "
-                    "Consider using .compact to reduce context size.[/]"
-                )
-
             self.console.print("[green]You can now continue the conversation.[/]")
 
         except Exception as e:
             logger.error(f"Error resuming session: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def cmd_rewind(self, args: str) -> Optional[str]:
         """Rewind the current session to before a specific user turn.
@@ -1268,7 +1431,6 @@ class ChatCommands:
         Returns:
             The selected user message text, or None if cancelled/error.
         """
-        from datus.cli._cli_utils import select_list
         from datus.models.session_manager import SessionManager
 
         try:
@@ -1306,28 +1468,31 @@ class ChatCommands:
                 try:
                     turn_num = int(turn_str)
                 except ValueError:
-                    self.console.print("[bold red]Invalid input. Please enter a number.[/]")
+                    self.console.print("[red]Invalid input. Please enter a number.[/]")
                     return
                 if turn_num < 1 or turn_num > len(user_turns):
-                    self.console.print(f"[bold red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
+                    self.console.print(f"[red]Invalid turn number. Must be between 1 and {len(user_turns)}.[/]")
                     return
             else:
-                # Interactive list selector (two-line per item)
-                # Line 1: user message (no newlines, clip to screen width)
-                # Line 2: turn number, timestamp
-                list_items = []
+                items = []
                 for idx, turn_msg in enumerate(user_turns, 1):
                     content = (turn_msg.get("content", "") or "").replace("\n", " ").replace("\r", " ")
                     if not content:
                         content = "(empty)"
                     timestamp = (turn_msg.get("created_at") or "")[:19]
-                    list_items.append([content, f"Turn: {idx}", timestamp])
+                    items.append(ListItem(key=str(idx), primary=content, secondary=f"Turn: {idx}  {timestamp}"))
 
-                selected = select_list(self.console, list_items)
-                if selected is None:
+                app = ListSelectorApp(title="Session Rewind", items=items)
+                tui_app = getattr(self.cli, "tui_app", None)
+                if tui_app is not None:
+                    with tui_app.suspend_input():
+                        selection = app.run()
+                else:
+                    selection = app.run()
+                if selection is None:
                     self.console.print("[dim]Cancelled.[/]")
                     return
-                turn_num = selected + 1
+                turn_num = int(selection.key)
 
             # Get the selected user message to return for input prefill
             rewind_user_message = user_turns[turn_num - 1].get("content", "")
@@ -1339,12 +1504,11 @@ class ChatCommands:
                 new_node = self._create_new_node(node_name if node_name != "chat" else None)
                 self.current_node = new_node
                 self.current_subagent_name = node_name if node_name != "chat" else None
-                self.chat_node = new_node if not self.current_subagent_name else self.chat_node
                 self.chat_history = []
                 self.all_turn_actions = []
                 self.last_actions = []
                 self.console.print(
-                    f"\n[bold green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
+                    f"\n[green]Rewound to before turn 1.[/] New session: [cyan]{new_node.session_id}[/]\n"
                 )
                 self.console.print("[green]Selected message placed in input buffer.[/]")
                 return rewind_user_message
@@ -1362,7 +1526,6 @@ class ChatCommands:
 
             self.current_node = new_node
             self.current_subagent_name = subagent_name
-            self.chat_node = new_node if not subagent_name else self.chat_node
 
             # Show the rewound conversation
             from rich.rule import Rule
@@ -1370,10 +1533,10 @@ class ChatCommands:
             new_messages = session_manager.get_session_messages(new_session_id)
             if new_messages:
                 self.console.print(
-                    f"\n[bold green]Rewound to before turn {turn_num}.[/] "
+                    f"\n[green]Rewound to before turn {turn_num}.[/] "
                     f"New session: [cyan]{new_session_id}[/] ({len(new_messages)} messages)\n"
                 )
-                action_display = ActionHistoryDisplay(self.console)
+                action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
                 for msg in new_messages:
                     role = msg.get("role", "unknown")
                     content = msg.get("content", "")
@@ -1412,10 +1575,26 @@ class ChatCommands:
 
         except Exception as e:
             logger.error(f"Error rewinding session: {e}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
         return None
 
     def add_in_sql_context(self, sql: str, explanation: str, incremental_actions: List[ActionHistory]):
+        def _is_success(value) -> bool:
+            if isinstance(value, str):
+                return value.strip().lower() not in {"", "0", "false", "no"}
+            return bool(value)
+
+        def _maybe_parse_json(value):
+            if not isinstance(value, str):
+                return value
+            stripped = value.strip()
+            if not stripped or stripped[0] not in "[{":
+                return value
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return value
+
         last_sql_action = None
         for i in range(len(incremental_actions) - 1, -1, -1):
             action = incremental_actions[i]
@@ -1436,18 +1615,32 @@ class ChatCommands:
             logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
             return
 
-        action_output = last_sql_action.output
-        if not action_output.get("success", "True"):
-            error = action_output.get("error", "") or action_output.get("raw_output", "")
+        action_output = _maybe_parse_json(last_sql_action.output)
+        if not isinstance(action_output, dict):
+            logger.warning("read_query action output is not a dict; storing it as SQL context error")
+            error = str(action_output or "")
+            sql_return = None
+            row_count = 0
+        elif not _is_success(action_output.get("success", True)):
+            error = action_output.get("error", "") or str(action_output.get("raw_output", ""))
             sql_return = None
             row_count = 0
         else:
-            tool_result = action_output.get("raw_output", {})
-            if tool_result.get("success", 0) == 1:
+            tool_result = _maybe_parse_json(action_output.get("raw_output", {}))
+            if not isinstance(tool_result, dict):
+                logger.warning("read_query raw_output is not a dict; storing it as SQL context error")
+                error = str(tool_result or "")
+                sql_return = ""
+                row_count = 0
+            elif _is_success(tool_result.get("success", 0)):
                 data_result = tool_result.get("result")
                 error = None
-                row_count = data_result.get("original_rows", 0)
-                sql_return = data_result.get("compressed_data", "")
+                if isinstance(data_result, dict):
+                    row_count = data_result.get("original_rows", 0)
+                    sql_return = data_result.get("compressed_data", "")
+                else:
+                    row_count = 0
+                    sql_return = str(data_result or "")
             else:
                 error = tool_result.get("error", "")
                 sql_return = ""

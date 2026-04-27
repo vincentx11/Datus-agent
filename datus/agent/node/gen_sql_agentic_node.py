@@ -20,7 +20,6 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput, GenSQLNodeResult
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
@@ -63,6 +62,7 @@ class GenSQLAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenSQLAgenticNode as a workflow-compatible node.
@@ -76,6 +76,7 @@ class GenSQLAgenticNode(AgenticNode):
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml (e.g., "gensql", "gen_sql")
             execution_mode: Execution mode - "interactive" (default) or "workflow"
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
@@ -115,6 +116,7 @@ class GenSQLAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},  # Initialize empty, will setup after parent init
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize MCP servers based on configuration (after node_config is available)
@@ -125,7 +127,7 @@ class GenSQLAgenticNode(AgenticNode):
             f"GenSQLAgenticNode final mcp_servers: {len(self.mcp_servers)} servers - {list(self.mcp_servers.keys())}"
         )
 
-        # Setup tools based on configuration
+        # Setup tools based on configuration (includes subagent task tool wiring)
         self.setup_tools()
 
         # Setup ask_user tool for clarification questions (interactive mode only)
@@ -211,11 +213,9 @@ class GenSQLAgenticNode(AgenticNode):
         Args:
             database_name: The name of the database to connect to
         """
-        db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_database, database_name)
         self.db_func_tool = DBFuncTool(
-            conn,
             agent_config=self.agent_config,
+            default_datasource=database_name,
             sub_agent_name=self.node_config.get("system_prompt"),
         )
         self._rebuild_tools()
@@ -237,6 +237,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self._platform_doc_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
     # Default tools when not configured in agent.yml
     DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
@@ -259,6 +261,13 @@ class GenSQLAgenticNode(AgenticNode):
         if not self.filesystem_func_tool:
             self._setup_filesystem_tools()
 
+        # Rebuild subagent task tool so repeated setup_tools() calls (e.g. via
+        # ChatCommands.update_chat_node_tools after a datasource switch) keep the
+        # "task" tool available for delegation.
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
+
         logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
     def _setup_platform_doc_tools(self):
@@ -269,35 +278,13 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup platform_doc_search tools: {e}")
 
-    def _needs_multi_connector(self) -> bool:
-        """Check if the current node config requires multi-connector mode.
-
-        Multi-connector mode is needed when the node uses tools that access
-        multiple databases (e.g. transfer_query_result for cross-db migration).
-        """
-        tools_str = self.node_config.get("tools", "")
-        return "transfer_query_result" in tools_str
-
     def _setup_db_tools(self):
-        """Setup database tools.
-
-        Uses multi-connector mode (DBManager) when the node needs cross-database
-        access (e.g. migration subagent), otherwise single-connector mode.
-        """
+        """Setup database tools."""
         try:
-            if self._needs_multi_connector():
-                self.db_func_tool = DBFuncTool.create_dynamic(
-                    self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
-                )
-            else:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
-                conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-                self.db_func_tool = DBFuncTool(
-                    conn,
-                    agent_config=self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
-                )
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+            )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup database tools: {e}")
@@ -322,10 +309,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             db_tool = self.db_func_tool
             if not db_tool:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
-                conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
                 db_tool = DBFuncTool(
-                    conn,
                     agent_config=self.agent_config,
                     sub_agent_name=self.node_config.get("system_prompt"),
                 )
@@ -369,10 +353,9 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools (all available tools)."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -435,21 +418,10 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.context_search_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
-                    if self._needs_multi_connector():
-                        self.db_func_tool = DBFuncTool.create_dynamic(
-                            self.agent_config,
-                            sub_agent_name=self.node_config.get("system_prompt"),
-                        )
-                    else:
-                        db_manager = db_manager_instance(self.agent_config.namespaces)
-                        conn = db_manager.get_conn(
-                            self.agent_config.current_database, self.agent_config.current_database
-                        )
-                        self.db_func_tool = DBFuncTool(
-                            conn,
-                            agent_config=self.agent_config,
-                            sub_agent_name=self.node_config.get("system_prompt"),
-                        )
+                    self.db_func_tool = DBFuncTool(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                    )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
                 if not self.date_parsing_tools:
@@ -457,8 +429,7 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.date_parsing_tools
             elif tool_type == "filesystem_tools":
                 if not self.filesystem_func_tool:
-                    root_path = self._resolve_workspace_root()
-                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                    self.filesystem_func_tool = self._make_filesystem_tool()
                 tool_instance = self.filesystem_func_tool
             elif tool_type == "platform_doc_tools":
                 if not self._platform_doc_tool:
@@ -468,12 +439,7 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.reference_template_tools:
                     db_tool = self.db_func_tool
                     if not db_tool:
-                        _db_manager = db_manager_instance(self.agent_config.namespaces)
-                        _conn = _db_manager.get_conn(
-                            self.agent_config.current_namespace, self.agent_config.current_database
-                        )
                         db_tool = DBFuncTool(
-                            _conn,
                             agent_config=self.agent_config,
                             sub_agent_name=self.node_config.get("system_prompt"),
                         )
@@ -511,7 +477,7 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.warning("Database config not found")
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_database)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server
@@ -567,7 +533,7 @@ class GenSQLAgenticNode(AgenticNode):
                     if server:
                         mcp_servers["metricflow_mcp"] = server
                         logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_database}"
+                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
                         )
 
                 # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
@@ -617,6 +583,7 @@ class GenSQLAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context["has_task_tool"] = bool(self.sub_agent_task_tool)
         from datus.utils.time_utils import get_default_current_date
 
         ref = self.date_parsing_tools.reference_date if self.date_parsing_tools else None
@@ -733,11 +700,17 @@ class GenSQLAgenticNode(AgenticNode):
                 logger.info(f"Plan mode activated (auto_mode={auto_mode})")
 
             # Add context to user message if provided
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                user_input.database or "",
+            )
             enhanced_message = build_enhanced_message(
                 user_message=user_input.user_message,
                 db_type=self.agent_config.db_type,
                 catalog=user_input.catalog,
-                database=user_input.database,
+                database=effective_db,
                 db_schema=user_input.db_schema,
                 external_knowledge=user_input.external_knowledge,
                 schemas=user_input.schemas,
@@ -1234,12 +1207,14 @@ def prepare_template_context(
     # Add agent description from configuration or input
     context["agent_description"] = node_config.agent_description
 
-    # Add namespace and workspace info
+    # Add datasource and workspace info
     if agent_config:
         context["agent_config"] = agent_config
-        context["namespace"] = getattr(agent_config, "current_database", None)
-        context["db_name"] = getattr(agent_config, "current_database", None)
-        context["workspace_root"] = workspace_root or agent_config.workspace_root
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        context.update(build_datasource_prompt_context(agent_config))
+        context["db_name"] = context.get("datasource")
+        context["workspace_root"] = workspace_root or getattr(agent_config, "project_root", None)
     logger.debug(f"Prepared template context: {context}")
     return context
 

@@ -12,7 +12,7 @@ Datus-Agent is an AI-powered data analysis agent: natural language → SQL, mult
 
 ```bash
 uv sync                                    # Install dependencies
-uv run pytest tests/unit_tests/ -q                # CI tests (zero external deps)
+uv run pytest tests/unit_tests/ -m "not nightly" -q                # CI tests (zero external deps)
 uv run pytest -m nightly tests/             # Nightly tests (needs API keys)
 uv run pytest -m "nightly or regression" tests/  # Full regression
 uv run ruff format . && uv run ruff check --fix .      # Lint & format
@@ -28,6 +28,42 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 - **Imports**: ruff isort rules, group order: stdlib → third-party → `datus.*`
 - **Type hints**: use throughout; Pydantic models for data structures
 
+### CLI UI Styling
+
+All CLI output colours, symbols, and message formats are centralised in
+`datus/cli/cli_styles.py`.  Changing a constant there propagates globally.
+
+**Message helpers** — use instead of inline Rich markup:
+
+| Helper | Output | When |
+|--------|--------|------|
+| `print_error(console, msg)` | `[red]Error:[/] msg` | Operation failures, invalid input |
+| `print_success(console, msg)` | `[green]msg[/]` | Mode switches, saves, confirmations |
+| `print_success(…, symbol=True)` | `[green]✓ msg[/]` | Operational checks (compact, connectivity) |
+| `print_warning(console, msg)` | `[yellow]msg[/]` | Empty sets, non-critical issues |
+| `print_info(console, msg)` | `[dim]msg[/]` | Progress, hints, secondary info |
+| `print_status(…, ok=True/False)` | `[green]✓[/]` / `[red]✗[/]` | Connectivity / health checks |
+| `print_usage(console, syntax)` | `[cyan]Usage:[/] syntax` | Command help blocks |
+| `print_empty_set(console)` | `[yellow]Empty set.[/]` | No data to display |
+
+**Rules:**
+
+- Colours never use `bold`; `bold` is reserved for structural elements (section headers, prompt labels)
+- Tables: `header_style=TABLE_HEADER_STYLE` (defaults to `"green"`); prefer `build_row_table()` from `_render_utils.py`
+- Code theme: `CODE_THEME` (`"monokai"`) for all `Syntax()` calls
+- Symbols: Unicode `✓`/`✗` only; no emoji (`✅`/`❌`) in new code
+- Closing tags: always short form `[/]`, not `[/red]` or `[/green]`
+- Interactive selectors (`_cli_utils.py`): import `CLR_CURSOR` / `CLR_CURRENT` from `cli_styles`
+- Run `uv run python cli_style_demo.py` to preview the full visual spec
+
+**Interactive component patterns** (for new commands needing exclusive stdin):
+
+- Reference implementation: `ModelApp` (`model_app.py`)
+- Wrap `app.run()` in `tui_app.suspend_input()` when TUI is active
+- Never nest `asyncio.run()` inside an Application
+- Use `DynamicContainer` for view switching; `Condition` guards for key bindings
+- Exit via `app.exit(result=Selection(...))`, return `None` on cancel / error
+
 ### Async
 
 - Mark async tests with `@pytest.mark.asyncio`
@@ -36,6 +72,50 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 
 ## Architecture Patterns
 
+### Storage Layout
+
+- **Project-scoped (CWD)**:
+  - `./subject/{semantic_models, sql_summaries, ext_knowledge}/` — knowledge-base
+    content is anchored to the project root so every CWD ships its own copy.
+  - `./.datus/skills/` — project-level skills; takes precedence over
+    `~/.datus/skills`.
+  - `./.datus/config.yml` — project-level overrides for `target`
+    (provider/model), `default_datasource`, and `project_name`. Written by the
+    `/model` slash command; only whitelisted keys are accepted.
+- **Global (`~/.datus/`), sharded per project where relevant**:
+  - `~/.datus/sessions/{project_name}/{session_id}.db`
+  - `~/.datus/data/{project_name}/datus_db/` (LanceDB, document stores, etc.)
+  - `~/.datus/cache/openrouter_models.json` — cached model catalog from
+    OpenRouter (auto-refreshed, 8 s timeout).
+  - `~/.datus/{conf, logs, template, run, benchmark, workspace, skills, ...}` —
+    shared across projects.
+- **`project_name` derivation**: `os.getcwd().replace("/", "-").lstrip("-")`
+  (falls back to `_root` for empty / root `/`; truncates long paths with a
+  7-char md5 suffix). See `datus.configuration.agent_config._normalize_project_name`.
+- **`agent.knowledge_base_home`**: removed. KB content is anchored to
+  `{project_root}/subject/`; the YAML field is silently ignored if left in.
+
+### LLM Configuration (Two-Tier Provider Model)
+
+LLM selection uses a two-tier system:
+
+1. **Provider-level** (`agent.providers.<name>` in `agent.yml`) — preferred.
+   Only credentials are stored here; available models and metadata come from
+   `conf/providers.yml`. The `/model` CLI command switches between any model
+   exposed by a configured provider without editing YAML.
+2. **Custom/legacy** (`agent.models.<name>` in `agent.yml`) — for self-hosted
+   or private-deployment endpoints not covered by `providers.yml`.
+
+The active selection is persisted in `./.datus/config.yml` as:
+
+```yaml
+target:
+  provider: openai
+  model: gpt-4.1
+```
+
+Resolution order: `.datus/config.yml` override → `agent.target` in `agent.yml`.
+
 ### Adding a New Node
 
 1. Create `datus/agent/node/{name}_node.py`
@@ -43,7 +123,19 @@ bash build_scripts/build_test_data.sh       # Build test knowledge base
 3. Register the type constant in `datus/configuration/node_type.py`
 4. Add the mapping in `Node.new_instance()` factory in `datus/agent/node/node.py`
 
-### Adding a New LLM Model
+### Adding a New LLM Provider (catalog-only)
+
+If the new provider uses an existing interface type (openai, claude, deepseek,
+kimi, gemini, etc.), no Python code is needed:
+
+1. Add the provider entry to `conf/providers.yml` (and the bundled copy at
+   `datus/conf/providers.yml`) with `type`, `base_url`, `api_key_env`,
+   `default_model`, and `models` list
+2. Optionally add `model_specs` entries for context_length / max_tokens
+
+### Adding a New LLM Model Implementation
+
+If a new interface type is required (new SDK, new auth mechanism):
 
 1. Create `datus/models/{provider}_model.py`
 2. Inherit from `LLMBaseModel(ABC)` in `datus/models/base.py`
@@ -70,7 +162,7 @@ Examples:
 
 1. **Pre-format**: Run `uv run ruff format . && uv run ruff check --fix .` before staging and committing, to avoid pre-commit hook failures.
 2. **Coverage gate (two dimensions — both must pass)**:
-   - **Overall coverage**: `uv run pytest tests/unit_tests/ --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
+   - **Overall coverage**: `uv run pytest tests/unit_tests/ -m "not nightly" --cov=datus --cov-report=xml:coverage.xml --cov-fail-under=80`
    - **Diff coverage** (new/changed lines): `uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80`
    - If diff coverage < 80%, run `uv run diff-cover coverage.xml --compare-branch=upstream/main --show-uncovered` to see exactly which new lines need tests, then add tests for those lines specifically.
    - Do NOT commit until both pass.

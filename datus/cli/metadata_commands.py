@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from rich.box import SIMPLE_HEAD
 from rich.panel import Panel
-from rich.table import Table
 
+from datus.cli._render_utils import build_row_table
+from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_empty_set, print_error, print_success, print_warning
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -35,8 +36,8 @@ class MetadataCommands:
         """List all databases in the current connection."""
         try:
             # For SQLite, this is simply the current database file
-            namespace = self.cli.agent_config.current_database
-            database_config_dict = self.cli.agent_config.namespaces[namespace]
+            datasource = self.cli.agent_config.current_datasource
+            database_config_dict = self.cli.agent_config.datasource_configs[datasource]
             result = []
             show_uri = False
             if len(database_config_dict) > 1:
@@ -47,7 +48,7 @@ class MetadataCommands:
                     is_current = logic_name == self.cli.cli_context.current_logic_db_name
                     result.append(
                         {
-                            "logic_name": logic_name if not is_current else f"[bold green]{logic_name}[/]",
+                            "logic_name": logic_name if not is_current else f"[green]{logic_name}[/]",
                             "name": db_config.database,
                             "uri": db_config.uri,
                         }
@@ -62,7 +63,7 @@ class MetadataCommands:
                     result.append(
                         {
                             "logic_name": (
-                                db_config.logic_name if not is_current else f"[bold green]{db_config.logic_name}[/]"
+                                db_config.logic_name if not is_current else f"[green]{db_config.logic_name}[/]"
                             ),
                             "name": db_config.database,
                             "uri": db_config.uri,
@@ -77,84 +78,84 @@ class MetadataCommands:
                                 "name": (
                                     db_name
                                     if db_name != self.cli.cli_context.current_db_name
-                                    else f"[bold green]{db_name}[/]"
+                                    else f"[green]{db_name}[/]"
                                 )
                             }
                         )
 
             self.cli.last_result = result
             if not result:
-                self.cli.console.print("[yellow]Empty set.[/]")
+                print_empty_set(self.cli.console)
                 return
 
-            # Display results
-            table = Table(title="Databases", show_header=True, header_style="bold green")
+            # Display results via the shared row-table helper so styling
+            # matches ``.<service>.list_*`` output.
             if show_uri:
-                table.add_column("Logic Name(Used for switch)")
-                table.add_column("Database Name")
-                table.add_column("URI")
-                for db_config in result:
-                    table.add_row(db_config["logic_name"], db_config["name"], db_config["uri"])
+                columns = [
+                    ("logic_name", "Logic Name(Used for switch)"),
+                    ("name", "Database Name"),
+                    ("uri", "URI"),
+                ]
             else:
-                table.add_column("Name")
-                for db_config in result:
-                    table.add_row(db_config["name"])
-            self.cli.console.print(table)
+                columns = [("name", "Name")]
+            table = build_row_table(result, title="Databases", columns=columns)
+            if table is not None:
+                self.cli.console.print(table)
 
         except Exception as e:
             logger.error(f"Database listing error: {str(e)}")
-            self.cli.console.print(f"[bold red]Error:[/] {str(e)}")
+            print_error(self.cli.console, str(e))
 
     def cmd_switch_database(self, args: str = ""):
         """Switch current database."""
         new_db = args.strip()
         if not new_db:
-            self.cli.console.print("[bold red]Error:[/] Database name is required")
+            print_error(self.cli.console, "Database name is required")
             self.cmd_list_databases()
             return
         if (
             self.cli.db_connector.dialect in (DBType.SQLITE, DBType.DUCKDB)
             and self.cli.cli_context.current_logic_db_name == new_db
         ):
-            self.cli.console.print(
-                f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
+            print_warning(
+                self.cli.console,
+                f"It's now under the database {new_db} and doesn't need to be switched",
             )
             return
         if new_db == self.cli.cli_context.current_db_name:
-            self.cli.console.print(
-                f"[yellow]It's now under the database [bold]{new_db}[/] and doesn't need to be switched[/]"
+            print_warning(
+                self.cli.console,
+                f"It's now under the database {new_db} and doesn't need to be switched",
             )
             return
 
-        self.cli.agent_config.current_database = new_db
+        current_datasource = self.cli.agent_config.current_datasource
         self.cli.cli_context.current_logic_db_name = new_db
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             if new_db not in self.cli.agent_config.current_db_configs():
-                self.cli.console.print(f"[bold yellow]No corresponding database was found: {new_db}[/]")
+                print_warning(self.cli.console, f"No corresponding database was found: {new_db}")
                 return
             # Logic database name
-            self.cli.db_connector = self.cli.db_manager.get_conn(self.cli.agent_config.current_database, new_db)
+            self.cli.db_connector = self.cli.db_manager.get_conn(current_datasource, new_db)
             # use real database name
             self.cli.cli_context.update_database_context(
                 db_name=self.cli.db_connector.database_name, db_logic_name=new_db
             )
-            self.cli.agent_config.current_database = new_db
             self.cli.reset_session()
         else:
             self.cli.db_connector.switch_context(database_name=new_db)
-            self.cli.agent_config.current_database = new_db
             self.cli.cli_context.update_database_context(db_name=new_db)
 
         if self.cli.agent_config.db_type in (DBType.SQLITE, DBType.DUCKDB):
             self.cli.chat_commands.update_chat_node_tools()
 
-        self.cli.console.print(f"[bold green]Database switched to: {new_db}[/]")
+        print_success(self.cli.console, f"Database switched to: {new_db}")
 
     def cmd_tables(self, args: str):
         """List all tables in the current database (internal command)."""
         # Reuse functionality from context commands, but with internal command styling
         if not self.cli.db_connector:
-            self.cli.console.print("[bold red]Error:[/] No database connection.")
+            print_error(self.cli.console, "No database connection.")
             return
 
         try:
@@ -166,15 +167,14 @@ class MetadataCommands:
             )
             self.cli.last_result = result
             if result:
-                # Display results
-                table = Table(
-                    show_header=True,
-                    header_style="bold green",
+                # Display results via the shared row-table helper. The
+                # connector returns a list of names; wrap as single-field
+                # dicts so ``build_row_table`` can label the column.
+                table = build_row_table(
+                    [{"name": row} for row in result],
+                    columns=[("name", "Table Name")],
                 )
-                # Add columns
-                table.add_column("Table Name")
-                for row in result:
-                    table.add_row(row)
+                assert table is not None  # non-empty input, helper returns Table
                 if self.cli.cli_context.current_schema:
                     if self.cli.cli_context.current_db_name:
                         show_name = f"{self.cli.cli_context.current_db_name}.{self.cli.cli_context.current_schema}"
@@ -186,32 +186,29 @@ class MetadataCommands:
                 self.cli.console.print(panel)
             else:
                 # For other database types, execute the appropriate query
-                self.cli.console.print("[yellow]Empty set.[/]")
+                print_empty_set(self.cli.console)
 
         except Exception as e:
             logger.error(f"Table listing error: {str(e)}")
-            self.cli.console.print(f"[bold red]Error:[/] {str(e)}")
+            print_error(self.cli.console, str(e))
 
     def cmd_schemas(self, args: str):
         """List all schemas in the current database."""
         dialect = self.cli.db_connector.dialect
         if not connector_registry.support_schema(dialect):
-            self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            print_error(self.cli.console, f"The {dialect} database does not support schema", prefix=False)
             return
         result = self.cli.db_connector.get_schemas(
             catalog_name=self.cli.cli_context.current_catalog, database_name=self.cli.cli_context.current_db_name
         )
         self.cli.last_result = result
         if result:
-            # Display results
-            table = Table(
-                show_header=True,
-                header_style="bold green",
+            # Display results via the shared row-table helper.
+            table = build_row_table(
+                [{"name": row} for row in result],
+                columns=[("name", "Schema Name")],
             )
-            # Add columns
-            table.add_column("Schema Name")
-            for row in result:
-                table.add_row(row)
+            assert table is not None
             if self.cli.cli_context.current_catalog:
                 if self.cli.cli_context.current_db_name:
                     show_name = f"{self.cli.cli_context.current_catalog}.{self.cli.cli_context.current_db_name}"
@@ -223,17 +220,17 @@ class MetadataCommands:
             self.cli.console.print(panel)
         else:
             # For other database types, execute the appropriate query
-            self.cli.console.print("[yellow]Empty set.[/]")
+            print_empty_set(self.cli.console)
 
     def cmd_switch_schema(self, args: str):
         """Switch current schema."""
         dialect = self.cli.db_connector.dialect
         if not connector_registry.support_schema(dialect):
-            self.cli.console.print(f"[bold red]The {dialect} database does not support schema[/]")
+            print_error(self.cli.console, f"The {dialect} database does not support schema", prefix=False)
             return
         schema_name = args.strip()
         if not schema_name:
-            self.cli.console.print("[yellow]You need to give the name of the schema you want to switch to[/]")
+            print_warning(self.cli.console, "You need to give the name of the schema you want to switch to")
             return
         self.cli.db_connector.switch_context(
             catalog_name=self.cli.cli_context.current_catalog,
@@ -241,12 +238,12 @@ class MetadataCommands:
             schema_name=schema_name,
         )
         self.cli.cli_context.current_schema = schema_name
-        self.cli.console.print(f"[bold green]Schema switched to: {self.cli.cli_context.current_schema}[/]")
+        print_success(self.cli.console, f"Schema switched to: {self.cli.cli_context.current_schema}")
 
     def cmd_table_schema(self, args: str):
         """Show schema information for tables."""
         if not self.cli.db_connector:
-            self.cli.console.print("[bold red]Error:[/] No database connection.")
+            print_error(self.cli.console, "No database connection.")
             return
 
         try:
@@ -260,30 +257,23 @@ class MetadataCommands:
                 )
                 self.cli.last_result = result
 
-                # Display schema for the specific table
-                schema_table = Table(
+                # Display schema for the specific table via the shared helper.
+                schema_table = build_row_table(
+                    result,
                     title=f"Schema for {table_name}",
-                    show_header=True,
-                    header_style="bold green",
+                    columns=[
+                        ("cid", "Column Position"),
+                        ("name", "Name"),
+                        ("type", "Type"),
+                        ("nullable", "Nullable"),
+                        ("default_value", "Default"),
+                        ("pk", "PK"),
+                    ],
                 )
-                schema_table.add_column("Column Position")
-                schema_table.add_column("Name")
-                schema_table.add_column("Type")
-                schema_table.add_column("Nullable")
-                schema_table.add_column("Default")
-                schema_table.add_column("PK")
-
-                for row in result:
-                    schema_table.add_row(
-                        str(row.get("cid", "")),
-                        str(row.get("name", "")),
-                        str(row.get("type", "")),
-                        str(row.get("nullable", "")),
-                        str(row.get("default_value", "")) if row.get("default_value") is not None else "",
-                        str(row.get("pk", "")),
-                    )
-
-                self.cli.console.print(schema_table)
+                if schema_table is not None:
+                    self.cli.console.print(schema_table)
+                else:
+                    print_empty_set(self.cli.console)
             else:
                 # List all tables with basic schema info
                 table_names = self.cli.db_connector.get_tables(
@@ -294,16 +284,16 @@ class MetadataCommands:
                 self.cli.last_result = table_names
 
                 # Display list of tables
-                self.cli.console.print("[bold green]Available tables:[/]")
+                self.cli.console.print(f"[{TABLE_HEADER_STYLE}]Available tables:[/]")
                 # Display table list
                 for idx, table_name in enumerate(table_names):
                     self.cli.console.print(f"{idx + 1}. {table_name}")
 
-                self.cli.console.print("\n[dim]Use .schemas [table_name] to view detailed schema.[/]")
+                self.cli.console.print("\n[dim]Use /schemas [table_name] to view detailed schema.[/]")
 
         except Exception as e:
             logger.error(f"Schema listing error: {str(e)}")
-            self.cli.console.print(f"[bold red]Error:[/] {str(e)}")
+            print_error(self.cli.console, str(e))
             if "result" in locals():
                 logger.debug(f"Result object structure: {dir(result)}")
                 for key in dir(result):
@@ -321,11 +311,11 @@ class MetadataCommands:
         """Show indexes for a table."""
         table_name = args.strip()
         if not table_name:
-            self.cli.console.print("[bold red]Error:[/] Table name required")
+            print_error(self.cli.console, "Table name required")
             return
 
         if not self.cli.db_connector:
-            self.cli.console.print("[bold red]Error:[/] No database connection.")
+            print_error(self.cli.console, "No database connection.")
             return
 
         try:
@@ -335,32 +325,27 @@ class MetadataCommands:
                 result = self.cli.db_connector.execute_pandas(sql)
 
                 if result is None or not result.success:
-                    self.cli.console.print("[bold red]Error:[/] Query failed")
+                    print_error(self.cli.console, "Query failed")
                     return
 
                 indexes = result.sql_return.replace({np.nan: None}).to_dict(orient="records")
-                if indexes:
-                    index_table = Table(title=f"Indexes for {table_name}")
-                    index_table.add_column("Index Name")
-                    for idx in indexes:
-                        # Handle both dict and tuple formats
-                        if isinstance(idx, dict):
-                            index_name = idx.get("name", str(idx))
-                        elif isinstance(idx, (list, tuple)) and len(idx) > 0:
-                            index_name = idx[0]
-                        else:
-                            index_name = str(idx)
-                        index_table.add_row(index_name)
+                index_table = build_row_table(
+                    indexes,
+                    title=f"Indexes for {table_name}",
+                    columns=[("name", "Index Name")],
+                )
+                if index_table is not None:
                     self.cli.console.print(index_table)
                 else:
-                    self.cli.console.print(f"[yellow]Table {table_name} has no indexes[/]")
+                    print_warning(self.cli.console, f"Table {table_name} has no indexes")
             else:
                 # For other database types, use information schema or equivalent
                 # This is a placeholder for future database type support
-                self.cli.console.print(
-                    f"[yellow]Index listing not yet supported for {self.cli.db_connector.get_type()}[/]"
+                print_warning(
+                    self.cli.console,
+                    f"Index listing not yet supported for {self.cli.db_connector.get_type()}",
                 )
 
         except Exception as e:
             logger.error(f"Index listing error: {str(e)}")
-            self.cli.console.print(f"[bold red]Error:[/] {str(e)}")
+            print_error(self.cli.console, str(e))

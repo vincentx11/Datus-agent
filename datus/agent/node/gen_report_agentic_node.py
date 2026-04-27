@@ -17,7 +17,6 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_report_agentic_node_models import GenReportNodeInput, GenReportNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
@@ -55,6 +54,7 @@ class GenReportAgenticNode(AgenticNode):
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenReportAgenticNode.
@@ -68,6 +68,7 @@ class GenReportAgenticNode(AgenticNode):
             tools: List of tools (will be populated in setup_tools)
             node_name: Name of the node configuration in agent.yml
             execution_mode: Execution mode - "interactive" (default) or "workflow"
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.execution_mode = execution_mode
         # Determine node name from node_type if not provided
@@ -97,9 +98,10 @@ class GenReportAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},  # No MCP servers for report nodes by default
             scope=scope,
+            is_subagent=is_subagent,
         )
 
-        # Setup tools based on configuration
+        # Setup tools based on configuration (includes subagent task tool wiring)
         self.setup_tools()
 
         # Setup ask_user tool for clarification questions (interactive mode only)
@@ -141,6 +143,13 @@ class GenReportAgenticNode(AgenticNode):
         # Ensure filesystem tools are always available (required for memory and file operations)
         if not self.filesystem_func_tool:
             self._setup_filesystem_tools()
+
+        # Rebuild subagent task tool so repeated setup_tools() calls (e.g. via
+        # ChatCommands.update_chat_node_tools after a datasource switch) keep the
+        # "task" tool available for delegation.
+        self._setup_sub_agent_task_tool()
+        if self.sub_agent_task_tool:
+            self.tools.extend(self.sub_agent_task_tool.available_tools())
 
         logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
@@ -195,10 +204,7 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
             self.db_func_tool = DBFuncTool(
-                conn,
                 agent_config=self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
             )
@@ -236,10 +242,9 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -257,10 +262,7 @@ class GenReportAgenticNode(AgenticNode):
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
-                    db_manager = db_manager_instance(self.agent_config.namespaces)
-                    conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
                     self.db_func_tool = DBFuncTool(
-                        conn,
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),
                     )
@@ -273,8 +275,7 @@ class GenReportAgenticNode(AgenticNode):
                 tool_instance = self.context_search_tools
             elif tool_type == "filesystem_tools":
                 if not self.filesystem_func_tool:
-                    root_path = self._resolve_workspace_root()
-                    self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+                    self.filesystem_func_tool = self._make_filesystem_tool()
                 tool_instance = self.filesystem_func_tool
             else:
                 logger.warning(f"Unknown tool type: {tool_type}")
@@ -310,6 +311,7 @@ class GenReportAgenticNode(AgenticNode):
             "has_semantic_tools": bool(self.semantic_tools),
             "has_db_tools": bool(self.db_func_tool),
             "has_ask_user_tool": self.ask_user_tool is not None,
+            "has_task_tool": bool(self.sub_agent_task_tool),
             "agent_config": self.agent_config,
             "conversation_summary": conversation_summary,
         }
@@ -320,10 +322,12 @@ class GenReportAgenticNode(AgenticNode):
         # Add agent description from configuration
         context["agent_description"] = self.node_config.get("agent_description", "")
 
-        # Add namespace info
+        # Add datasource info
         if self.agent_config:
-            context["namespace"] = getattr(self.agent_config, "current_database", None)
-            context["db_name"] = getattr(self.agent_config, "current_database", None)
+            from datus.utils.node_utils import build_datasource_prompt_context
+
+            context.update(build_datasource_prompt_context(self.agent_config))
+            context["db_name"] = context.get("datasource")
 
         from datus.utils.time_utils import get_default_current_date
 

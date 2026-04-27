@@ -37,7 +37,7 @@ class SearchTool(BaseTool):
         """Get document store for a specific platform.
 
         Each platform gets an isolated vector database via a dedicated
-        namespace (``docstore__{platform}``).  Returns ``None`` when the
+        store name (``docstore__{platform}``).  Returns ``None`` when the
         store has no data (table does not exist or is empty).
 
         Args:
@@ -301,10 +301,11 @@ class SearchTool(BaseTool):
             if version:
                 conditions.append(eq("version", version))
 
-            # Join titles into a single hierarchy prefix for precise matching
+            # ``datus_storage_base.conditions.like`` uses ``*`` as the wildcard
+            # and escapes raw ``%`` characters, so use shell-style wildcards here.
             if titles:
                 hierarchy_prefix = " > ".join(titles)
-                conditions.append(like("hierarchy", f"%{hierarchy_prefix}%"))
+                conditions.append(like("hierarchy", f"*{hierarchy_prefix}*"))
 
             where: WhereExpr = None
             if len(conditions) > 1:

@@ -49,8 +49,7 @@ jobs:
           DATUS_TEST_HOME="${GITHUB_WORKSPACE}/.datus_test_data"
           echo "DATUS_TEST_HOME=$DATUS_TEST_HOME" >> $GITHUB_ENV
           sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
-          sed -i "s|workspace_root: .datus_test_data/workspace|workspace_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
-          sed -i "s|knowledge_base_home: .datus_test_data/knowledge_base|knowledge_base_home: $DATUS_TEST_HOME/knowledge_base|g" tests/conf/agent.yml
+          sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
       - name: Load environment variables
         run: |
@@ -71,7 +70,7 @@ jobs:
 
       - name: Run tests and extract coverage
         id: metrics
-        run: python3 ci/run-tests-and-coverage.py "${{ github.event.pull_request.base.ref || github.ref_name }}"
+        run: python3 ci/run-pr-tests.py "${{ github.event.pull_request.base.ref || github.ref_name }}"
 
       - name: Post coverage comment
         if: always() && steps.metrics.outcome != 'cancelled'
@@ -101,7 +100,7 @@ jobs:
               print(f'::error::Diff coverage {diff}% is below the 80% threshold')
               failed = True
           if test_outcome != 'success':
-              print('::error::Unit tests did not pass')
+              print('::error::PR acceptance and impacted unit tests did not pass')
               failed = True
           sys.exit(1 if failed else 0)
           "

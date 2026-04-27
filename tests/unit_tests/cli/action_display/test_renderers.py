@@ -13,8 +13,9 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer
+from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, _get_assistant_content
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
 
 
 def _make_action(
@@ -431,6 +432,75 @@ class TestRenderProcessing:
         result = _renderer().render_processing(action, "\u25cb")
         assert isinstance(result, Text)
         assert "list_tables" in result.plain
+        assert result.plain.startswith("\u25cb ")
+
+    def test_processing_includes_first_argument(self):
+        """PROCESSING frame includes the first argument as `(key: value)` summary."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={
+                "function_name": "db_describe",
+                "arguments": {"table": "orders", "schema": "public"},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cf")
+        assert "db_describe" in result.plain
+        assert "(table: orders)" in result.plain
+
+    def test_processing_without_arguments_falls_back_to_ellipsis(self):
+        """PROCESSING frame falls back to `...` suffix when no arguments are present."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="list_tables",
+            input_data={"function_name": "list_tables"},
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert result.plain.endswith("list_tables...")
+
+    def test_processing_truncates_long_argument_value(self):
+        """Long argument values get middle-truncated at 80 chars."""
+        long_sql = "SELECT " + "col, " * 50 + "last FROM t"
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={
+                "function_name": "execute_sql",
+                "arguments": {"sql": long_sql},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        # Truncation helper inserts " ... " separator in the middle.
+        assert " ... " in result.plain
+        # Key label remains visible.
+        assert "sql:" in result.plain
+
+    def test_processing_indents_inside_subagent(self):
+        """PROCESSING row inside a subagent (depth>0) gets the `  ⎿  ` prefix."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            input_data={
+                "function_name": "db_describe",
+                "arguments": {"table": "orders"},
+            },
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert result.plain.startswith("  \u23bf  ")
+        assert "db_describe" in result.plain
+
+    def test_processing_no_indent_at_top_level(self):
+        """PROCESSING row at depth=0 is not indented."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=0,
+            input_data={"function_name": "list_tables"},
+        )
+        result = _renderer().render_processing(action, "\u25cb")
+        assert not result.plain.startswith("  \u23bf")
 
 
 # ── render_user_header / render_separator ──────────────────────────
@@ -689,9 +759,13 @@ class TestRenderBatchInteractionRequest:
             ActionStatus.PROCESSING,
             action_type="request_choice",
             input_data={
-                "contents": ["Which DB?"],
-                "choices": [{"1": "MySQL", "2": "PG"}],
-                "content_type": "markdown",
+                "events": [
+                    {
+                        "content": "Which DB?",
+                        "choices": {"1": "MySQL", "2": "PG"},
+                        "content_type": "markdown",
+                    }
+                ],
             },
         )
         result = _renderer().render_interaction_request(action, verbose=False)
@@ -706,8 +780,10 @@ class TestRenderBatchInteractionRequest:
             ActionStatus.PROCESSING,
             action_type="request_batch",
             input_data={
-                "contents": ["Which DB?", "Time range?"],
-                "choices": [{"1": "MySQL", "2": "PG"}, {}],
+                "events": [
+                    {"content": "Which DB?", "choices": {"1": "MySQL", "2": "PG"}},
+                    {"content": "Time range?", "choices": {}},
+                ],
             },
         )
         result = _renderer().render_interaction_request(action, verbose=False)
@@ -722,7 +798,7 @@ class TestRenderBatchInteractionRequest:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             action_type="request_choice",
-            input_data={"contents": []},
+            input_data={"events": []},
         )
         result = _renderer().render_interaction_request(action, verbose=False)
         text = _plain(result)
@@ -734,7 +810,11 @@ class TestRenderBatchInteractionRequest:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             action_type="request_choice",
-            input_data={"contents": ["Legacy question"], "choices": [{}], "content_type": "markdown"},
+            input_data={
+                "events": [
+                    {"content": "Legacy question", "choices": {}, "content_type": "markdown"},
+                ],
+            },
         )
         result = _renderer().render_interaction_request(action, verbose=False)
         text = _plain(result)
@@ -754,7 +834,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Which DB?", "Time range?"]},
+            input_data={"events": [{"content": "Which DB?"}, {"content": "Time range?"}]},
             output_data={"user_choice": json.dumps(["MySQL", "Last 7 days"])},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -771,7 +851,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Q1?", "Q2?"]},
+            input_data={"events": [{"content": "Q1?"}, {"content": "Q2?"}]},
             output_data={"user_choice": "plain text"},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -787,7 +867,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": ["Q1?", "Q2?"]},
+            input_data={"events": [{"content": "Q1?"}, {"content": "Q2?"}]},
             output_data={"user_choice": json.dumps("just a string")},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -803,7 +883,7 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_batch",
-            input_data={"contents": [long_q, "Q2?"]},
+            input_data={"events": [{"content": long_q}, {"content": "Q2?"}]},
             output_data={"user_choice": json.dumps(["yes", "no"])},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
@@ -816,9 +896,37 @@ class TestRenderBatchInteractionSuccess:
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
             action_type="request_choice",
-            input_data={"contents": ["Sync?"]},
+            input_data={"events": [{"content": "Sync?"}]},
             output_data={"user_choice": "y", "content": "Saved", "content_type": "markdown"},
         )
         result = _renderer().render_interaction_success(action, verbose=False)
         text = _plain(result)
         assert "Selected: y" in text
+
+
+class TestGetAssistantContentPlaceholderFiltering:
+    """Verify _get_assistant_content strips LiteLLM sanitizer placeholder."""
+
+    def test_placeholder_in_raw_output_returns_empty(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": LITELLM_EMPTY_PLACEHOLDER},
+        )
+        assert _get_assistant_content(action) == ""
+
+    def test_placeholder_in_messages_returns_empty(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        assert _get_assistant_content(action) == ""
+
+    def test_normal_raw_output_unchanged(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": "SELECT * FROM users"},
+        )
+        assert _get_assistant_content(action) == "SELECT * FROM users"

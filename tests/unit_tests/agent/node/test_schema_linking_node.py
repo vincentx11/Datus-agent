@@ -26,14 +26,14 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaL
 def _make_agent_config(rag_path="/tmp/nonexistent_rag"):
     cfg = MagicMock()
     cfg.schema_linking_rate = "fast"
-    cfg.current_database = "test_ns"
-    cfg.namespaces = {"test_ns": {}}
+    cfg.current_datasource = "test_ns"
+    cfg.datasource_configs = {"test_ns": {}}
     cfg.rag_storage_path.return_value = rag_path
     cfg.agentic_nodes = {}
     cfg.permissions_config = None
     cfg.skills_config = None
     cfg.prompt_version = None
-    cfg.workspace_root = "."
+    cfg.project_root = "."
     return cfg
 
 

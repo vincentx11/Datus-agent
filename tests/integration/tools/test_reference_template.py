@@ -31,7 +31,7 @@ class TestReferenceTemplateBootstrap:
     """Nightly: Bootstrap J2 template files into vector DB via LLM summary generation."""
 
     def test_bootstrap_overwrite(self, agent_config: AgentConfig):
-        """Bootstrap should process 3 J2 files (4 templates) and store to vector DB."""
+        """Bootstrap should process 4 J2 files (5 templates) and store to vector DB."""
         from datus.storage.reference_template.reference_template_init import init_reference_template
         from datus.storage.reference_template.store import ReferenceTemplateRAG
 
@@ -48,12 +48,13 @@ class TestReferenceTemplateBootstrap:
                 "california_schools/Charter/Zip",
                 "california_schools/SAT_Score/Phone",
                 "california_schools/Enrollment/Summary",
+                "california_schools/Stats/School_Count",
             ],
         )
 
         assert result["status"] == "success", f"Bootstrap failed: {result}"
-        assert result["valid_entries"] == 4, (
-            f"Expected 4 valid templates (3 files, 1 multi), got {result['valid_entries']}"
+        assert result["valid_entries"] == 5, (
+            f"Expected 5 valid templates (4 files, 1 multi — school_queries.j2), got {result['valid_entries']}"
         )
         assert result["processed_entries"] >= 1, f"Expected at least 1 processed, got {result['processed_entries']}"
         assert storage.get_reference_template_size() >= 1, "Storage should have at least 1 template after bootstrap"
@@ -171,23 +172,23 @@ class TestReferenceTemplateToolsNightly:
         params_json = first.get("parameters", "[]")
         params = json.loads(params_json)
 
-        if len(params) > 1:
-            # Only provide the first parameter, omit the rest
-            partial_params = {params[0]["name"]: "test_value"}
-            render_result = tpl_tools.render_reference_template(
-                subject_path=subject_path,
-                name=name,
-                params=json.dumps(partial_params),
-            )
-            assert render_result.success == 0, "Render with missing params should fail"
-            # Error should mention which params are missing
-            assert "requires parameters" in render_result.error or "Missing" in render_result.error
-            assert "retry" in render_result.error.lower()
-        else:
+        if not (params and len(params) > 1):
             pytest.skip(
                 "No template with >1 parameter found to test missing params scenario. "
                 "The test data must include at least one multi-parameter template to exercise this code path."
             )
+
+        # Only provide the first parameter, omit the rest — assertions now unconditional.
+        partial_params = {params[0]["name"]: "test_value"}
+        render_result = tpl_tools.render_reference_template(
+            subject_path=subject_path,
+            name=name,
+            params=json.dumps(partial_params),
+        )
+        assert render_result.success == 0, "Render with missing params should fail"
+        # Error should mention which params are missing
+        assert "requires parameters" in render_result.error or "Missing" in render_result.error
+        assert "retry" in render_result.error.lower()
 
 
 @pytest.mark.nightly

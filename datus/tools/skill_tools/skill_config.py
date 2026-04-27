@@ -11,9 +11,11 @@ Provides:
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+from datus.validation.report import TargetFilter
 
 
 class SkillConfig(BaseModel):
@@ -24,20 +26,22 @@ class SkillConfig(BaseModel):
     Example configuration:
         skills:
           directories:
+            - ./.datus/skills
             - ~/.datus/skills
-            - ./skills
           warn_duplicates: true
           whitelist_from_compaction: true
 
     Attributes:
-        directories: List of directories to scan for skills
+        directories: List of directories to scan for skills. Project-level
+            directories (``./.datus/skills``) take precedence over the global
+            fallback (``~/.datus/skills``).
         warn_duplicates: Warn when duplicate skill names are found
         whitelist_from_compaction: Preserve skill content during session compaction
     """
 
     directories: List[str] = Field(
-        default_factory=lambda: ["~/.datus/skills", "./skills"],
-        description="Directories to scan for SKILL.md files",
+        default_factory=lambda: ["./.datus/skills", "~/.datus/skills"],
+        description="Directories to scan for SKILL.md files (project-level first, global fallback)",
     )
     warn_duplicates: bool = Field(default=True, description="Warn on duplicate skill names")
     whitelist_from_compaction: bool = Field(
@@ -88,6 +92,8 @@ class SkillMetadata(BaseModel):
           - "sh:*.sh"
         disable_model_invocation: false
         user_invocable: true
+        allowed_agents:
+          - gen_dashboard
         context: fork
         agent: Explore
         ---
@@ -101,6 +107,9 @@ class SkillMetadata(BaseModel):
         allowed_commands: Patterns for allowed script execution (Claude Code compatible)
         disable_model_invocation: If true, only user can invoke via /skill-name
         user_invocable: If false, hidden from menu, only model invokes
+        allowed_agents: Node names (from ``AgenticNode.get_node_name()``) allowed
+            to see and load this skill. Empty list means no restriction — every
+            agent can see it.
         context: "fork" to run in isolated subagent
         agent: Subagent type when context=fork (Explore, Plan, general-purpose)
         content: Full SKILL.md content (lazy loaded)
@@ -121,9 +130,35 @@ class SkillMetadata(BaseModel):
     # Invocation control
     disable_model_invocation: bool = Field(default=False, description="If true, only user can invoke via /skill-name")
     user_invocable: bool = Field(default=True, description="If false, hidden from menu, only model invokes")
+    # Agent scoping: empty list == no restriction; non-empty == whitelist of node names
+    allowed_agents: List[str] = Field(
+        default_factory=list,
+        description="Agent node names allowed to see/load this skill; empty = unrestricted",
+    )
     # Subagent execution
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
     agent: Optional[str] = Field(default=None, description="Subagent type when context=fork")
+
+    # Validator skill extensions (ValidationHook infrastructure)
+    # Skills with kind="validator" are NOT injected into the main agent's
+    # prompt via SkillFuncTool — they are consumed exclusively by
+    # ValidationHook which fires them at run end on matching targets.
+    kind: Literal["skill", "validator"] = Field(
+        default="skill",
+        description="'skill' (default) is loaded by the main agent; 'validator' is driven by ValidationHook",
+    )
+    severity: Literal["blocking", "advisory", "off"] = Field(
+        default="advisory",
+        description="Blocking drives retry via on_end final_report; advisory reports only; off disables the validator",
+    )
+    mode: Literal["llm"] = Field(
+        default="llm",
+        description="Execution mode for the validator (future: 'declarative'); only 'llm' supported in current PR",
+    )
+    targets: List[TargetFilter] = Field(
+        default_factory=list,
+        description="Per-target filters (empty = match all); any matching filter activates the validator",
+    )
 
     # Marketplace metadata
     license: Optional[str] = Field(default=None, description="License identifier (e.g. Apache-2.0)")
@@ -159,6 +194,35 @@ class SkillMetadata(BaseModel):
         if not description:
             raise ValueError(f"Skill at {location} missing required 'description' field")
 
+        # Validator fields: parsed with pydantic's TargetFilter so YAML "schema"
+        # alias flows through to db_schema correctly.
+        raw_targets = frontmatter.get("targets", []) or []
+        parsed_targets: List[TargetFilter] = []
+        for t in raw_targets:
+            if isinstance(t, TargetFilter):
+                parsed_targets.append(t)
+            elif isinstance(t, dict):
+                parsed_targets.append(TargetFilter.model_validate(t))
+            else:
+                from datus.utils.exceptions import DatusException, ErrorCode
+
+                raise DatusException(
+                    ErrorCode.SKILL_FRONTMATTER_INVALID,
+                    message_args={
+                        "location": str(location),
+                        "error_message": f"invalid target entry (expected dict): {t!r}",
+                    },
+                )
+
+        # YAML parses bare ``off`` / ``on`` as booleans (False / True). That
+        # collides with our ``severity: off`` spelling — coerce back to string
+        # so skill authors can write ``severity: off`` unquoted.
+        raw_severity = frontmatter.get("severity", "advisory")
+        if raw_severity is False:
+            raw_severity = "off"
+        elif raw_severity is True:
+            raw_severity = "on"  # not a valid enum value — pydantic will flag it
+
         return cls(
             name=name,
             description=description,
@@ -168,8 +232,13 @@ class SkillMetadata(BaseModel):
             allowed_commands=frontmatter.get("allowed_commands", []),
             disable_model_invocation=frontmatter.get("disable_model_invocation", False),
             user_invocable=frontmatter.get("user_invocable", True),
+            allowed_agents=frontmatter.get("allowed_agents", []),
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
+            kind=frontmatter.get("kind", "skill"),
+            severity=raw_severity,
+            mode=frontmatter.get("mode", "llm"),
+            targets=parsed_targets,
             license=frontmatter.get("license"),
             compatibility=frontmatter.get("compatibility"),
         )
@@ -198,6 +267,36 @@ class SkillMetadata(BaseModel):
         """
         return self.context == "fork"
 
+    def is_allowed_for(self, *node_names: Optional[str]) -> bool:
+        """Check whether an agent is allowed to see this skill.
+
+        Empty ``allowed_agents`` means no restriction. A non-empty list is a
+        whitelist matched against *any* of the supplied identifiers — callers
+        typically pass both the node alias (``get_node_name()``) and the
+        canonical class name (``get_node_class_name()``) so that a custom
+        subagent alias (e.g. ``my_dashboard`` with ``node_class: gen_dashboard``)
+        still matches a whitelist written in terms of the class name.
+
+        Args:
+            *node_names: One or more identifiers to test against. ``None`` /
+                empty values are ignored.
+
+        Returns:
+            True if the skill has no scoping or any provided identifier is
+            whitelisted.
+        """
+        if not self.allowed_agents:
+            return True
+        return any(name in self.allowed_agents for name in node_names if name)
+
+    def is_validator(self) -> bool:
+        """Return True if this skill is a validator driven by ValidationHook.
+
+        Validator skills are excluded from the main agent's available-skills
+        list and are invoked exclusively by ``ValidationHook``.
+        """
+        return self.kind == "validator"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -213,8 +312,13 @@ class SkillMetadata(BaseModel):
             "allowed_commands": self.allowed_commands,
             "disable_model_invocation": self.disable_model_invocation,
             "user_invocable": self.user_invocable,
+            "allowed_agents": self.allowed_agents,
             "context": self.context,
             "agent": self.agent,
+            "kind": self.kind,
+            "severity": self.severity,
+            "mode": self.mode,
+            "targets": [t.model_dump(by_alias=True, exclude_none=True) for t in self.targets],
             "license": self.license,
             "compatibility": self.compatibility,
             "source": self.source,

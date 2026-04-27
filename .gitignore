@@ -22,6 +22,9 @@
 /tests/semantic_models
 sql_processing_errors.log
 /conf/agent.yml
+# DuckDB runtime artifacts
+*.duckdb.wal
+*.duckdb.tmp
 /save
 uv.lock
 uv.toml
@@ -62,3 +65,6 @@ evaluation_details.json
 conf/agent.yml.bak
 .gstack/
 /.datus_test_data
+/subject/
+build/
+.datus/

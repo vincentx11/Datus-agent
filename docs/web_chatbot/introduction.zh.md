@@ -8,14 +8,14 @@ Datus Web chatbot 提供一个易用的网页界面，用于与 Datus AI 助手�
 
 ### 启动网页界面
 
-**指定命名空间**：
+**指定数据源**：
 ```bash
-datus --web --namespace <your_namespace>
+datus --web --datasource <your_datasource>
 ```
 
 **使用自定义配置**：
 ```bash
-datus --web --config path/to/agent.yml --namespace snowflake
+datus --web --config path/to/agent.yml --datasource snowflake
 ```
 
 **自定义端口与主机**：
@@ -51,18 +51,22 @@ Show me total revenue by product category for the last month
 
 在网页界面中直接访问面向不同任务的专用 subagent。
 
-**可用 subagent**（在可展开区域中展示）：
+**可用 subagent**：
 
-- `gen_semantic_model`：从数据库表生成语义模型
-- `gen_metrics`：将 SQL 查询转换为 MetricFlow 指标
-- `gen_sql_summary`：分析与分类 SQL 查询
+可用列表来自内置 subagent 以及当前数据库下 `agent.agentic_nodes` 中定义的自定义条目。常见示例包括：
+
+- `gen_sql`
+- `gen_report`
+- `gen_semantic_model`
+- `gen_metrics`
+- `gen_dashboard`
+- `scheduler`
 
 **使用方式**：
 
-1. 在主页点击 "🔧 Access Specialized Subagents"
-2. 选择需要的 subagent
-3. 点击 "🚀 Use [subagent_name]"
-4. 与专用助手对话
+1. 打开主聊天页面
+2. 切换到需要的 subagent
+3. 与专用助手对话
 
 **直达 URL**：
 
@@ -71,6 +75,13 @@ Show me total revenue by product category for the last month
 ```
 http://localhost:8501/?subagent=gen_metrics
 http://localhost:8501/?subagent=gen_semantic_model
+http://localhost:8501/?subagent=finance_report
+```
+
+也可以通过 CLI 直接启动到某个 subagent：
+
+```bash
+datus --web --datasource production --subagent finance_report
 ```
 
 ### 3. 会话管理
@@ -79,16 +90,14 @@ http://localhost:8501/?subagent=gen_semantic_model
 
 侧边栏显示最近的会话信息，包括：
 
-- 会话 ID（截断显示）
+- 会话名称
 - 创建时间
-- 消息数量
-- 最新用户消息预览
 
 **加载历史会话**：
 
 1. 在侧边栏找到目标会话
-2. 点击 "🔗 Load Session"
-3. 以只读方式查看会话内容
+2. 点击对应的会话名称
+3. 即可进入会话详情，查看历史消息或者你可以继续进行对话
 
 **会话分享**：
 
@@ -105,7 +114,7 @@ http://localhost:8501?session=abc123def456...
 当 AI 生成的 SQL 工作良好时：
 
 1. 先审阅生成的 SQL
-2. 点击 "👍 Success" 按钮
+2. 点击 "Save to success story" 按钮
 3. 查询会保存到 `~/.datus/benchmark/[subagent]/success_story.csv`
 
 ![Save Generated SQL](../assets/geneated_sql_save.png)
@@ -119,18 +128,6 @@ http://localhost:8501?session=...,abc123...,chatbot,"Show revenue by category",S
 
 这有助于沉淀有效查询用于基准评测与持续改进。
 
-### 5. 问题反馈（Report Issues）
-
-**便捷分享问题**：
-
-1. 在侧边栏点击 "🐛 Report Issue"
-2. 系统会自动将会话链接复制到剪贴板
-3. 将链接粘贴给开发者即可定位问题
-
-会话链接包含完整的对话上下文，便于排查与复现。
-
-![Report Issue](../assets/report_issue_sessionid_copied.png){ width="50%" }
-
 ## 总结
 
 Datus Web chatbot 提供：
@@ -141,4 +138,4 @@ Datus Web chatbot 提供：
 - **成功归档**：标记并收集有效查询
 - **一键分享**：复制会话链接
 - **可视化执行**：逐步展示 SQL 生成过程
-- **多命名空间支持**：便捷切换数据库
+- **多数据源支持**：便捷切换数据库

@@ -11,7 +11,7 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -19,7 +19,6 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool
 from datus.tools.func_tool.base import trans_to_function_tool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
@@ -44,6 +43,11 @@ class ExploreAgenticNode(AgenticNode):
     and uses a low max_turns budget for fast exploration.
     """
 
+    # Canonical class identifier. ``get_node_class_name()`` returns this even
+    # when a custom alias (e.g. ``my_explorer: { node_class: explore }``) is
+    # used, so skill ``allowed_agents: [explore]`` still matches aliases.
+    NODE_NAME = "explore"
+
     def __init__(
         self,
         node_id: str,
@@ -53,13 +57,15 @@ class ExploreAgenticNode(AgenticNode):
         agent_config: Optional[AgentConfig] = None,
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         self.configured_node_name = node_name
 
         # Default max_turns = 15, can be overridden by agent.yml
         self.max_turns = 15
-        if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
-            agentic_node_config = agent_config.agentic_nodes[node_name]
+        config_key = node_name or self.NODE_NAME
+        if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in agent_config.agentic_nodes:
+            agentic_node_config = agent_config.agentic_nodes[config_key]
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 15)
 
@@ -77,6 +83,7 @@ class ExploreAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Setup read-only tools. When input_data is None (e.g. factory path),
@@ -105,14 +112,10 @@ class ExploreAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools (all are read-only)."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            namespace = self.agent_config.current_namespace or self.agent_config.current_database
-            conn = db_manager.get_conn(namespace, self.agent_config.current_database)
             dynamic_scoped_tables = None
             if isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables:
                 dynamic_scoped_tables = self.input.scoped_tables
             self.db_func_tool = DBFuncTool(
-                conn,
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
                 scoped_tables=dynamic_scoped_tables,
@@ -143,13 +146,12 @@ class ExploreAgenticNode(AgenticNode):
     def _setup_readonly_filesystem_tools(self):
         """Setup only read-only filesystem tools (no write/edit/create/move)."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             for method_name in READONLY_FILESYSTEM_METHODS:
                 if hasattr(self.filesystem_func_tool, method_name):
                     method = getattr(self.filesystem_func_tool, method_name)
                     self.tools.append(trans_to_function_tool(method))
-            logger.debug(f"Setup readonly filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup readonly filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 
@@ -161,6 +163,33 @@ class ExploreAgenticNode(AgenticNode):
         except Exception as e:
             logger.warning(f"Failed to setup date parsing tools, continuing without: {e}")
 
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register read-only tool surface so ``db_tools.read_*`` ALLOW rules fire."""
+        mapping = super()._tool_category_map()
+        if getattr(self, "db_func_tool", None):
+            # Mirror the subset actually exposed by this node — describe/read
+            # always, the rest only when scoped_tables isn't set.
+            db_bucket = [
+                trans_to_function_tool(self.db_func_tool.describe_table),
+                trans_to_function_tool(self.db_func_tool.read_query),
+            ]
+            scoped = isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables
+            if not scoped:
+                db_bucket = list(self.db_func_tool.available_tools())
+            mapping["db_tools"] = db_bucket
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if getattr(self, "filesystem_func_tool", None):
+            fs_bucket: List[Any] = []
+            for method_name in READONLY_FILESYSTEM_METHODS:
+                if hasattr(self.filesystem_func_tool, method_name):
+                    fs_bucket.append(trans_to_function_tool(getattr(self.filesystem_func_tool, method_name)))
+            if fs_bucket:
+                mapping["filesystem_tools"] = fs_bucket
+        if getattr(self, "date_parsing_tools", None):
+            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
+        return mapping
+
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
     ) -> str:
@@ -171,12 +200,19 @@ class ExploreAgenticNode(AgenticNode):
         version = prompt_version or self.node_config.get("prompt_version")
         template_name = "explore_system"
 
+        from datus.utils.node_utils import build_datasource_prompt_context
+
+        context_search_tool_names = []
+        if self.context_search_tools:
+            context_search_tool_names = [tool.name for tool in self.context_search_tools.available_tools()]
+
         context = {
             "has_db_tools": bool(self.db_func_tool),
-            "has_context_search_tools": bool(self.context_search_tools),
+            "has_context_search_tools": bool(context_search_tool_names),
+            "available_context_search_tools": context_search_tool_names,
             "has_filesystem_tools": bool(self.filesystem_func_tool),
             "has_date_parsing_tools": bool(self.date_parsing_tools),
-            "namespace": getattr(self.agent_config, "current_database", None) if self.agent_config else None,
+            **build_datasource_prompt_context(self.agent_config),
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),
@@ -243,6 +279,16 @@ class ExploreAgenticNode(AgenticNode):
         # table allowlist instead of only static agent.yml configuration.
         self.setup_tools()
 
+        # Tool surface changed — reset cached permission hooks and tool
+        # registry so ``_ensure_permission_hooks`` re-registers the new
+        # DB tools under ``db_tools`` before the next LLM turn. Without
+        # this, explore nodes reused across scoped and unscoped runs would
+        # enforce the previous run's tool mapping.
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        self.permission_hooks = None
+        self.tool_registry = ToolRegistry()
+
         # Create initial action
         action = ActionHistory.create_action(
             role=ActionRole.USER,
@@ -273,7 +319,7 @@ class ExploreAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

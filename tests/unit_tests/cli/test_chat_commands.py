@@ -31,12 +31,12 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from rich.console import Console
 
-from datus.cli.chat_commands import ChatCommands
+from datus.cli.chat_commands import ChatCommands, _is_model_config_error
 from datus.cli.cli_context import CliContext
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 
@@ -71,6 +71,20 @@ class MinimalCLI:
     def prompt_input(self, message="", multiline=False):
         """Return empty string for prompt input."""
         return ""
+
+    def _print_welcome(self):
+        """No-op stand-in for the real banner printer."""
+
+    def run_on_bg_loop(self, coro):
+        """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
+
+        The real implementation routes through a persistent background loop to
+        keep prompt_toolkit Futures alive across chat turns; tests don't need
+        that machinery, so we just drive the coroutine to completion.
+        """
+        import asyncio
+
+        return asyncio.run(coro)
 
 
 # ===========================================================================
@@ -167,7 +181,7 @@ class TestChatCommandsInit:
         cmds = _make_chat_commands(real_agent_config)
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         assert cmds.current_subagent_name is None
         assert cmds.chat_history == []
         assert cmds.last_actions == []
@@ -368,25 +382,14 @@ class TestCreateNewNode:
         assert isinstance(node, GenReportAgenticNode)
         assert node.agent_config is real_agent_config
 
-    def test_console_output_on_chat_creation(self, real_agent_config, mock_llm_create):
-        """Console prints 'Creating new chat session...' for default chat."""
+    def test_create_node_no_console_output(self, real_agent_config, mock_llm_create):
+        """_create_new_node produces no console output."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
         cmds._create_new_node()
 
         output = _get_console_output(console)
-        assert "Creating new chat session" in output
-        assert len(output) > 0
-
-    def test_console_output_on_subagent_creation(self, real_agent_config, mock_llm_create):
-        """Console prints the subagent name when creating a subagent node."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds._create_new_node(subagent_name="gen_semantic_model")
-
-        output = _get_console_output(console)
-        assert "gen_semantic_model" in output
-        assert "Creating new" in output
+        assert output.strip() == ""
 
 
 # ===========================================================================
@@ -848,10 +851,10 @@ class TestDisplaySuccess:
         return ActionHistory(
             action_id="test_success_1",
             role=ActionRole.INTERACTION,
-            messages="",
+            messages=content,
             action_type="request_choice",
-            input={},
-            output={"content": content, "content_type": content_type},
+            input={"events": [{"content": "", "content_type": content_type}]},
+            output={"user_choice": "y"},
             status=ActionStatus.SUCCESS,
         )
 
@@ -927,24 +930,21 @@ class TestCmdClearChat:
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         output = _get_console_output(console)
         assert "cleared" in output.lower()
 
     def test_clear_with_existing_current_node(self, real_agent_config, mock_llm_create):
-        """Clearing with an existing node resets both current_node and chat_node."""
+        """Clearing with an existing node resets current_node."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create a node first
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
         assert cmds.current_node is not None
 
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
         output = _get_console_output(console)
         assert "cleared" in output.lower()
 
@@ -1093,6 +1093,70 @@ class TestAddInSqlContext:
         assert last_ctx.sql_query == "SELECT * FROM secret"
         assert last_ctx.row_count == 0
 
+    def test_sql_action_raw_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
+        """read_query raw_output may be a string; store it as an error instead of crashing."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "read_query",
+                {
+                    "success": "True",
+                    "raw_output": "plain text output",
+                },
+            ),
+        ]
+
+        cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT * FROM users"
+        assert last_ctx.sql_error == "plain text output"
+        assert last_ctx.row_count == 0
+
+    def test_sql_action_raw_output_json_string_is_parsed(self, real_agent_config, mock_llm_create):
+        """read_query raw_output may be a JSON string from serialized tool output."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "read_query",
+                {
+                    "success": "True",
+                    "raw_output": json.dumps(
+                        {
+                            "success": 1,
+                            "result": {
+                                "original_rows": 2,
+                                "compressed_data": "id\n1\n2",
+                            },
+                        }
+                    ),
+                },
+            ),
+        ]
+
+        cmds.add_in_sql_context("SELECT id FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT id FROM users"
+        assert last_ctx.sql_error is None
+        assert last_ctx.row_count == 2
+        assert last_ctx.sql_return == "id\n1\n2"
+
+    def test_sql_action_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
+        """read_query action output itself may be malformed; keep chat rendering alive."""
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [self._make_tool_action("read_query", "plain text output")]
+
+        cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        assert last_ctx is not None
+        assert last_ctx.sql_query == "SELECT * FROM users"
+        assert last_ctx.sql_error == "plain text output"
+        assert last_ctx.row_count == 0
+
     def test_multiple_read_query_actions_uses_last(self, real_agent_config, mock_llm_create):
         """When multiple read_query actions exist, the last one is used."""
         cmds = _make_chat_commands(real_agent_config)
@@ -1211,9 +1275,7 @@ class TestUpdateChatNodeTools:
         """Calling update_chat_node_tools with no current node does not raise."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = None
-        cmds.chat_node = None
 
-        # Should not raise
         cmds.update_chat_node_tools()
         assert cmds.current_node is None
 
@@ -1221,12 +1283,9 @@ class TestUpdateChatNodeTools:
         """Calling update_chat_node_tools with a current node calls setup_tools."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
 
-        # Should not raise; setup_tools exists on ChatAgenticNode
         cmds.update_chat_node_tools()
         assert cmds.current_node is not None
-        assert cmds.chat_node is not None
 
 
 # ===========================================================================
@@ -1319,17 +1378,15 @@ class TestEdgeCases:
         output = _get_console_output(console)
         assert isinstance(output, str)
 
-    def test_cmd_clear_chat_resets_both_nodes(self, real_agent_config, mock_llm_create):
-        """cmd_clear_chat resets both current_node and chat_node to None."""
+    def test_cmd_clear_chat_resets_current_node(self, real_agent_config, mock_llm_create):
+        """cmd_clear_chat resets current_node to None."""
         cmds = _make_chat_commands(real_agent_config)
         cmds.current_node = cmds._create_new_node()
-        cmds.chat_node = cmds.current_node
         cmds.current_subagent_name = None
 
         cmds.cmd_clear_chat("")
 
         assert cmds.current_node is None
-        assert cmds.chat_node is None
 
     def test_add_in_sql_context_processing_action_skipped(self, real_agent_config, mock_llm_create):
         """read_query action with PROCESSING status is not considered (is_done() is False)."""
@@ -1423,46 +1480,6 @@ class TestEdgeCases:
 # ===========================================================================
 
 
-class TestTriggerCompact:
-    """Tests for _trigger_compact_for_current_node."""
-
-    def test_trigger_compact_no_node(self, real_agent_config, mock_llm_create):
-        """No-op when current_node is None."""
-        cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = None
-
-        # Should not raise
-        cmds._trigger_compact_for_current_node()
-        assert cmds.current_node is None
-
-    def test_trigger_compact_node_without_compact_method(self, real_agent_config, mock_llm_create):
-        """No-op when node does not have _manual_compact."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        # Use a minimal object without _manual_compact
-        cmds.current_node = object()
-
-        # Should not raise
-        cmds._trigger_compact_for_current_node()
-        output = _get_console_output(console)
-        assert "compacted" not in output.lower()
-        assert cmds.current_node is not None
-
-    def test_trigger_compact_with_node_no_session(self, real_agent_config, mock_llm_create):
-        """Node with _manual_compact but no active session does not print compact messages."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-        node = cmds._create_new_node()
-        cmds.current_node = node
-
-        # Node exists but has no session_id set, so get_session_info returns no session_id
-        cmds._trigger_compact_for_current_node()
-
-        output = _get_console_output(console)
-        # Should not contain compact success/failure messages (no active session)
-        assert "Session compacted successfully" not in output
-
-
 # ===========================================================================
 # TestCmdCompact
 # ===========================================================================
@@ -1491,26 +1508,6 @@ class TestCmdCompact:
 
         output = _get_console_output(console)
         assert "No active session" in output
-
-
-# ===========================================================================
-# TestCmdListSessions
-# ===========================================================================
-
-
-class TestCmdListSessions:
-    """Tests for cmd_list_sessions."""
-
-    def test_list_sessions_no_sessions(self, real_agent_config, mock_llm_create):
-        """No sessions prints warning."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        # Either shows "No chat sessions found" or shows table
-        assert len(output) > 0
 
 
 # ===========================================================================
@@ -1563,10 +1560,10 @@ class TestDisplayExceptionPaths:
         action = ActionHistory(
             action_id="test_text_ct",
             role=ActionRole.INTERACTION,
-            messages="",
+            messages="Plain text result",
             action_type="request_choice",
-            input={},
-            output={"content": "Plain text result", "content_type": "text"},
+            input={"events": [{"content": "", "content_type": "text"}]},
+            output={"user_choice": "y"},
             status=ActionStatus.SUCCESS,
         )
         renderables = renderer.render_interaction_success(action, verbose=False)
@@ -1709,7 +1706,7 @@ class TestExecuteChatCommandResponseProcessing:
         cmds.execute_chat_command("Hello", subagent_name=None)
         first_node = cmds.current_node
 
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql", compact_when_new_subagent=False)
+        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
         second_node = cmds.current_node
 
         assert first_node is not second_node
@@ -2022,8 +2019,8 @@ class TestExecuteResponseProcessing:
         assert len(cmds.chat_history) == 1
         assert cmds.current_node is not None
 
-    def test_session_reuse_shows_session_info(self, real_agent_config, mock_llm_create):
-        """Second execute reusing same node shows 'Using existing session' info."""
+    def test_session_reuse_does_not_print_session_info(self, real_agent_config, mock_llm_create):
+        """Second execute reusing same node must not print the legacy session banner."""
         from tests.unit_tests.mock_llm_model import build_simple_response
 
         console = Console(file=io.StringIO(), no_color=True)
@@ -2032,15 +2029,13 @@ class TestExecuteResponseProcessing:
         mock_llm_create.reset(responses=[build_simple_response("First"), build_simple_response("Second")])
 
         cmds.execute_chat_command("First message")
-        # Clear console buffer for second call
         console.file = io.StringIO()
 
         cmds.execute_chat_command("Second message")
         output = _get_console_output(console)
 
         assert len(cmds.chat_history) == 2
-        # Second call reuses the node, may show session info
-        assert "Processing" in output or "Using existing session" in output
+        assert "Using existing session" not in output
 
 
 # ===========================================================================
@@ -2130,32 +2125,44 @@ class TestCmdCompactWithSession:
             or "Error" in output
         )
 
-
-# ===========================================================================
-# TestCmdListSessionsWithData — cmd_list_sessions 有 session 数据
-# ===========================================================================
-
-
-class TestCmdListSessionsWithData:
-    """Tests for cmd_list_sessions when sessions exist."""
-
-    def test_list_sessions_after_execute(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions shows sessions after creating one via execute."""
+    def test_compact_resets_in_memory_state(self, real_agent_config, mock_llm_create):
+        """After successful compact, in-memory state is reset via _reload_state_from_session."""
         from tests.unit_tests.mock_llm_model import build_simple_response
 
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        mock_llm_create.reset(responses=[build_simple_response("Response")])
-        cmds.execute_chat_command("Create session")
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response("First reply"),
+                build_simple_response("Second reply"),
+                # compact summary response
+                build_simple_response("Summary of conversation"),
+            ]
+        )
+
+        # Two rounds of chat to accumulate history
+        cmds.execute_chat_command("First question")
+        cmds.execute_chat_command("Second question")
+
+        # Verify pre-compact state has accumulated data
+        assert len(cmds.all_turn_actions) == 2
+        assert len(cmds.chat_history) == 2
+        assert len(cmds.last_actions) > 0
 
         console.file = io.StringIO()
-        cmds.cmd_list_sessions("")
+        cmds.cmd_compact("")
 
         output = _get_console_output(console)
-        assert len(output) > 0
-        # Either shows sessions table or "No chat sessions found"
-        assert "Session" in output or "No chat sessions" in output
+        # Compact must succeed; this is the precondition for the reload behavior
+        # under test. A silent failure here would have previously made the
+        # remaining assertions vacuous.
+        assert "compacted successfully" in output.lower(), f"compact did not succeed; output={output!r}"
+        # After successful compact, _reload_state_from_session rebuilds from
+        # the compacted session (which contains only the summary pair), so
+        # pre-compact accumulated turn actions must be cleared.
+        assert cmds._trace_verbose is False
+        assert cmds.current_node.actions == []
 
 
 # ===========================================================================
@@ -2164,10 +2171,10 @@ class TestCmdListSessionsWithData:
 
 
 class TestTriggerCompactWithSession:
-    """Tests for _trigger_compact_for_current_node with an active session."""
+    """Tests for subagent switch without compact."""
 
-    def test_trigger_compact_before_subagent_switch(self, real_agent_config, mock_llm_create):
-        """Switching subagent with compact_when_new_subagent=True triggers compact."""
+    def test_no_compact_on_subagent_switch(self, real_agent_config, mock_llm_create):
+        """Switching subagent should NOT trigger compact."""
         from tests.unit_tests.mock_llm_model import build_simple_response
 
         console = Console(file=io.StringIO(), no_color=True)
@@ -2176,8 +2183,7 @@ class TestTriggerCompactWithSession:
         mock_llm_create.reset(
             responses=[
                 build_simple_response("Chat reply"),
-                build_simple_response("Summary"),  # for compact
-                build_simple_response("SQL reply"),  # for subagent
+                build_simple_response("SQL reply"),
             ]
         )
 
@@ -2185,13 +2191,13 @@ class TestTriggerCompactWithSession:
         cmds.execute_chat_command("Hello")
         assert cmds.current_node is not None
 
-        # Second: switch to subagent with compact (exercises line 314)
+        # Second: switch to subagent — no compact should be triggered
         console.file = io.StringIO()
-        cmds.execute_chat_command("Generate SQL", subagent_name="gensql", compact_when_new_subagent=True)
+        cmds.execute_chat_command("Generate SQL", subagent_name="gensql")
 
         output = _get_console_output(console)
         assert cmds.current_subagent_name == "gensql"
-        assert len(output) > 0
+        assert "compacting" not in output.lower()
 
 
 # ===========================================================================
@@ -2218,7 +2224,7 @@ class TestCmdClearChatWithSession:
 
         output = _get_console_output(console)
         assert cmds.current_node is None
-        assert cmds.chat_node is None
+        assert not hasattr(cmds, "chat_node")
         assert "cleared" in output.lower()
 
 
@@ -2307,9 +2313,9 @@ class TestCmdResumeWithSession:
         # Verify state is updated correctly
         assert cmds.current_node is not None
         assert cmds.current_node.session_id == session_id
-        # chat session -> subagent_name should be None, chat_node should be updated
+        # chat session -> subagent_name should be None, current_node should be updated
         assert cmds.current_subagent_name is None
-        assert cmds.chat_node is not None
+        assert cmds.current_node is not None
 
     def test_resume_exception_handling(self, real_agent_config, mock_llm_create):
         """cmd_resume handles exceptions gracefully with invalid session_id."""
@@ -2339,44 +2345,6 @@ class TestCmdResumeWithSession:
         assert cmds.current_node is not None
         # Should show "You:" for user messages
         assert "you:" in output.lower() or "message" in output.lower()
-
-    def test_resume_high_token_warning(self, real_agent_config, mock_llm_create):
-        """cmd_resume shows high token warning when session has > 50000 tokens."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        session_id = "chat_session_resume05"
-        _create_session_on_disk(session_id)
-
-        # Insert token usage > 50000 into turn_usage table
-        from datus.utils.path_manager import get_path_manager
-
-        db_path = os.path.join(str(get_path_manager().sessions_dir), f"{session_id}.db")
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS turn_usage ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "branch_id TEXT DEFAULT 'main', "
-                "user_turn_number INTEGER NOT NULL, "
-                "requests INTEGER DEFAULT 0, "
-                "input_tokens INTEGER DEFAULT 0, "
-                "output_tokens INTEGER DEFAULT 0, "
-                "total_tokens INTEGER DEFAULT 0, "
-                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
-            )
-            conn.execute(
-                "INSERT INTO turn_usage (session_id, user_turn_number, total_tokens) VALUES (?, ?, ?)",
-                (session_id, 1, 60000),
-            )
-            conn.commit()
-
-        cmds.cmd_resume(session_id)
-
-        output = _get_console_output(console)
-        assert cmds.current_node is not None
-        # Should show high token warning
-        assert "token" in output.lower() or "compact" in output.lower()
 
 
 # ===========================================================================
@@ -2489,10 +2457,16 @@ class TestCmdRewindWithSession:
             [("user", "Question"), ("assistant", "Reply")],
         )
 
-        # Patch select_list to return None (simulating Esc/cancel in picker)
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+        class FakeCancelApp:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCancelApp)
 
         console.file = io.StringIO()
         result = cmds.cmd_rewind("")
@@ -2626,7 +2600,6 @@ class TestCmdRewindWithSession:
         assert cmds.current_node is not None
         new_session_id = cmds.current_node.session_id
         assert new_session_id != session_id
-        assert cmds.chat_node is not None
 
     def test_rewind_no_messages_in_session(self, real_agent_config, mock_llm_create):
         """cmd_rewind with empty session shows 'no messages' warning."""
@@ -2669,62 +2642,6 @@ class TestCmdRewindWithSession:
 
         output = _get_console_output(console)
         assert "no messages" in output.lower() or "no user turns" in output.lower() or "error" in output.lower()
-
-
-# ===========================================================================
-# TestCmdListSessionsTableRendering — cmd_list_sessions with disk sessions
-# ===========================================================================
-
-
-class TestCmdListSessionsTableRendering:
-    """Tests for cmd_list_sessions table rendering when sessions exist (lines 929-974)."""
-
-    def test_list_sessions_no_sessions(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions with no sessions shows 'No chat sessions found'."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert "no chat sessions" in output.lower() or len(output) > 0
-
-    def test_list_sessions_with_disk_session(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions with disk sessions exercises the listing path."""
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        # Create disk sessions
-        _create_session_on_disk("chat_session_list01", [("user", "Hello"), ("assistant", "Hi")])
-
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert len(output) > 0
-        # list_sessions() returns list[str] but cmd_list_sessions tries dict access,
-        # so it will hit the error path or handle it gracefully
-        assert "session" in output.lower() or "error" in output.lower()
-
-    def test_list_sessions_with_active_session(self, real_agent_config, mock_llm_create):
-        """cmd_list_sessions when current_node has session_id exercises highlight path."""
-        from tests.unit_tests.mock_llm_model import build_simple_response
-
-        console = Console(file=io.StringIO(), no_color=True)
-        cmds = _make_chat_commands(real_agent_config, console=console)
-
-        # Create a node first
-        mock_llm_create.reset(responses=[build_simple_response("Reply")])
-        cmds.execute_chat_command("Hello")
-        assert cmds.current_node is not None
-
-        # Create a disk session matching the node's session_id
-        _create_session_on_disk(cmds.current_node.session_id)
-
-        console.file = io.StringIO()
-        cmds.cmd_list_sessions("")
-
-        output = _get_console_output(console)
-        assert len(output) > 0
 
 
 # ===========================================================================
@@ -2978,31 +2895,35 @@ class TestResumeInteractiveWithSessions:
 
     def test_resume_interactive_valid_selection(self, real_agent_config, mock_llm_create, monkeypatch):
         """cmd_resume interactive: user selects session #1 from the list."""
+        from datus.cli.list_selector_app import ListSelection
+
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Create two sessions so we can verify index→session mapping
         _create_session_on_disk("chat_session_pick01", [("user", "First Q"), ("assistant", "First A")])
         _create_session_on_disk("chat_session_pick01b", [("user", "Second Q"), ("assistant", "Second A")])
 
-        # Monkeypatch select_list to return index 0 (select first/newest session)
-        import datus.cli._cli_utils as cli_utils_mod
-
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return 0
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+        class FakeListSelectorApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
+
+            def run(self):
+                if captured["items"]:
+                    return ListSelection(key=captured["items"][0].key)
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeListSelectorApp)
 
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
         assert cmds.current_node is not None
         assert "session" in output.lower()
-        # Verify items were passed to select_list
-        assert "items" in captured and len(captured["items"]) >= 2
+        assert len(captured["items"]) >= 2
 
     def test_resume_interactive_cancel(self, real_agent_config, mock_llm_create, monkeypatch):
         """cmd_resume interactive: user cancels selection."""
@@ -3011,9 +2932,16 @@ class TestResumeInteractiveWithSessions:
 
         _create_session_on_disk("chat_session_pick02", [("user", "Q"), ("assistant", "A")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", lambda *args, **kwargs: None)
+        class FakeCancelApp:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCancelApp)
 
         cmds.cmd_resume("")
 
@@ -3128,61 +3056,60 @@ class TestResumeListingTruncation:
     """Tests for cmd_resume listing truncation of session_id and first_user_message."""
 
     def test_long_first_message_is_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
-        """Session with session_id > 24 chars is truncated with '...' in listing."""
-        # Use a wide console so Rich Table does not re-truncate our "..." with its own ellipsis
+        """Session with long first message passes full text to ListSelectorApp items."""
         console = Console(file=io.StringIO(), no_color=True, width=160)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
-        # Use a session ID longer than 24 characters so sid truncation adds "..."
         long_sid = "chat_truncate_test_01_abcdefghijklmnop"
         long_msg = "This is a very long message that should definitely be truncated in the display listing table"
         _create_session_on_disk(long_sid, [("user", long_msg), ("assistant", "OK")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
-        # Capture items passed to select_list, then cancel
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return None
+        class FakeCaptureApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCaptureApp)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
         output = _get_console_output(console)
         assert "cancelled" in output.lower()
-        # Verify items were passed to select_list with the long message
-        assert "items" in captured and len(captured["items"]) > 0
-        first_item_text = captured["items"][0][0]  # primary line text
-        # The full message is passed to select_list (clipping is done internally by the renderer)
-        assert long_msg.replace("\n", " ") in first_item_text or first_item_text in long_msg
+        assert len(captured["items"]) > 0
+        first_item = captured["items"][0]
+        assert long_msg.replace("\n", " ") in first_item.primary or first_item.primary in long_msg
 
     def test_short_session_id_not_truncated(self, real_agent_config, mock_llm_create, monkeypatch):
-        """Session with session_id <= 24 chars should appear in select_list items without truncation."""
+        """Session with short session_id appears in ListSelectorApp items without truncation."""
         console = Console(file=io.StringIO(), no_color=True, width=160)
         cmds = _make_chat_commands(real_agent_config, console=console)
 
         short_sid = "chat_short_sid_01"
         _create_session_on_disk(short_sid, [("user", "Hi"), ("assistant", "Hello")])
 
-        import datus.cli._cli_utils as cli_utils_mod
+        import datus.cli.chat_commands as chat_mod
 
         captured = {}
 
-        def fake_select(*args, **kwargs):
-            captured["items"] = args[1] if len(args) > 1 else kwargs.get("items")
-            return None
+        class FakeCaptureApp:
+            def __init__(self, **kwargs):
+                captured["items"] = kwargs.get("items", [])
 
-        monkeypatch.setattr(cli_utils_mod, "select_list", fake_select)
+            def run(self):
+                return None
+
+        monkeypatch.setattr(chat_mod, "ListSelectorApp", FakeCaptureApp)
 
         console.file = io.StringIO()
         cmds.cmd_resume("")
-        # Verify items were passed to select_list with the short sid
-        assert "items" in captured and len(captured["items"]) > 0
-        # The session ID appears in secondary info columns (not truncated)
-        all_text = " ".join(str(col) for item in captured["items"] for col in item)
+        assert len(captured["items"]) > 0
+        all_text = " ".join(f"{item.primary} {item.secondary}" for item in captured["items"])
         assert short_sid in all_text
 
 
@@ -3347,6 +3274,11 @@ class MinimalCLIExtended:
     def prompt_input(self, message="", multiline=False, default="", **kw):
         return default
 
+    def run_on_bg_loop(self, coro):
+        import asyncio
+
+        return asyncio.run(coro)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -3397,6 +3329,130 @@ class TestShouldCreateNewNodeExtended:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _is_agent_switch
+# ---------------------------------------------------------------------------
+
+
+class TestIsAgentSwitch:
+    def test_no_current_node_is_not_switch(self, chat_cmd):
+        """No current node means this is not a switch."""
+        chat_cmd.current_node = None
+        assert chat_cmd._is_agent_switch("gensql") is False
+
+    def test_same_subagent_is_not_switch(self, chat_cmd):
+        """Same subagent is not a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch("gensql") is False
+
+    def test_different_subagent_is_switch(self, chat_cmd):
+        """Different subagent is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch("compare") is True
+
+    def test_chat_to_subagent_is_switch(self, chat_cmd):
+        """Switching from chat to subagent is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = None
+        assert chat_cmd._is_agent_switch("gensql") is True
+
+    def test_subagent_to_chat_is_switch(self, chat_cmd):
+        """Switching from subagent to chat is a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = "gensql"
+        assert chat_cmd._is_agent_switch(None) is True
+
+    def test_chat_to_chat_is_not_switch(self, chat_cmd):
+        """Staying on chat is not a switch."""
+        chat_cmd.current_node = MagicMock()
+        chat_cmd.current_subagent_name = None
+        assert chat_cmd._is_agent_switch(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: session_id preservation on agent switch
+# ---------------------------------------------------------------------------
+
+
+class TestSessionPreservationOnSwitch:
+    def test_session_copied_on_switch_with_correct_prefix(self, chat_cmd):
+        """When switching agents, session is copied and new id has the target node prefix."""
+        old_node = MagicMock()
+        old_node.session_id = "chat_session_abc123"
+        chat_cmd.current_node = old_node
+        chat_cmd.current_subagent_name = None  # was on chat
+
+        new_node = MagicMock()
+        new_node.session_id = None
+        new_node.get_node_name.return_value = "gensql"
+        chat_cmd._create_new_node = MagicMock(return_value=new_node)
+
+        # Mock _copy_session_for_switch to return a properly-prefixed session_id
+        chat_cmd._copy_session_for_switch = MagicMock(return_value="gensql_session_def456")
+
+        # Simulate _execute_chat logic for agent switch
+        subagent_name = "gensql"
+        need_new_node = chat_cmd._should_create_new_node(subagent_name)
+        is_switch = chat_cmd._is_agent_switch(subagent_name)
+
+        assert need_new_node is True
+        assert is_switch is True
+
+        prev_session_id = None
+        if is_switch and chat_cmd.current_node and hasattr(chat_cmd.current_node, "session_id"):
+            prev_session_id = chat_cmd.current_node.session_id
+        chat_cmd.current_node = chat_cmd._create_new_node(subagent_name)
+        if prev_session_id:
+            chat_cmd.current_node.session_id = chat_cmd._copy_session_for_switch(prev_session_id, chat_cmd.current_node)
+
+        # Verify the new session_id has the target node prefix, not the source prefix
+        assert chat_cmd.current_node.session_id == "gensql_session_def456"
+        chat_cmd._copy_session_for_switch.assert_called_once_with("chat_session_abc123", new_node)
+
+    def test_copy_session_delegates_to_session_manager(self, chat_cmd):
+        """_copy_session_for_switch delegates to SessionManager.copy_session."""
+        new_node = MagicMock()
+        new_node.get_node_name.return_value = "gensql"
+
+        with patch("datus.models.session_manager.SessionManager") as mock_sm_cls:
+            mock_sm = mock_sm_cls.return_value
+            mock_sm.copy_session.return_value = "gensql_session_xyz789"
+
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+
+        assert result == "gensql_session_xyz789"
+        mock_sm.copy_session.assert_called_once_with("chat_session_abc123", "gensql")
+
+    def test_copy_session_fallback_on_error(self, chat_cmd):
+        """If copy_session fails, fall back to the node's existing session_id."""
+        new_node = MagicMock()
+        new_node.session_id = "fallback_session_id"
+        new_node.get_node_name.return_value = "gensql"
+
+        with patch("datus.models.session_manager.SessionManager", side_effect=Exception("no dir")):
+            result = chat_cmd._copy_session_for_switch("chat_session_abc123", new_node)
+
+        assert result == "fallback_session_id"
+
+    def test_session_id_not_carried_on_fresh_start(self, chat_cmd):
+        """First node creation (no previous node) does not carry session_id."""
+        chat_cmd.current_node = None
+        chat_cmd.current_subagent_name = None
+
+        new_node = MagicMock()
+        new_node.session_id = None
+        chat_cmd._create_new_node = MagicMock(return_value=new_node)
+
+        is_switch = chat_cmd._is_agent_switch("gensql")
+        assert is_switch is False
+
+        chat_cmd.current_node = chat_cmd._create_new_node("gensql")
+        # session_id remains None (will be auto-generated on first use)
+        assert chat_cmd.current_node.session_id is None
+
+
+# ---------------------------------------------------------------------------
 # Tests: update_chat_node_tools
 # ---------------------------------------------------------------------------
 
@@ -3405,14 +3461,13 @@ class TestUpdateChatNodeToolsExtended:
     def test_calls_setup_tools_on_current_node(self, chat_cmd):
         mock_node = MagicMock()
         chat_cmd.current_node = mock_node
-        chat_cmd.chat_node = None
         chat_cmd.update_chat_node_tools()
         mock_node.setup_tools.assert_called_once()
 
     def test_no_current_node_no_crash(self, chat_cmd):
         chat_cmd.current_node = None
-        chat_cmd.chat_node = None
-        chat_cmd.update_chat_node_tools()  # should not raise
+        chat_cmd.update_chat_node_tools()
+        assert chat_cmd.current_node is None
 
 
 # ---------------------------------------------------------------------------
@@ -3431,65 +3486,6 @@ class TestCmdClearChatExtended:
 
         # After clear, state should be reset
         assert chat_cmd.chat_history == [] or chat_cmd.current_node is None
-
-
-# ---------------------------------------------------------------------------
-# Tests: _trigger_compact_for_current_node
-# ---------------------------------------------------------------------------
-
-
-class TestTriggerCompactExtended:
-    def test_no_current_node_does_nothing(self, chat_cmd):
-        chat_cmd.current_node = None
-        chat_cmd._trigger_compact_for_current_node()  # should not raise
-
-    def test_compact_success(self, chat_cmd):
-        mock_node = MagicMock()
-        mock_node._manual_compact = AsyncMock(
-            return_value={
-                "success": True,
-                "new_token_count": 100,
-                "tokens_saved": 50,
-                "compression_ratio": 0.5,
-            }
-        )
-
-        async def mock_get_info():
-            return {"session_id": "abc123"}
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        chat_cmd._trigger_compact_for_current_node()
-        output = chat_cmd.console.file.getvalue()
-        # Should print success message
-        assert len(output) > 0, "Should have printed compact result"
-
-    def test_compact_failure_logged(self, chat_cmd):
-        mock_node = MagicMock()
-        mock_node._manual_compact = AsyncMock(return_value={"success": False, "error": "Compact failed"})
-
-        async def mock_get_info():
-            return {"session_id": "abc123"}
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        chat_cmd._trigger_compact_for_current_node()
-        output = chat_cmd.console.file.getvalue()
-        assert "Failed" in output or "compact" in output.lower(), f"Expected failure message, got: {output[:200]}"
-
-    def test_exception_during_compact_handled(self, chat_cmd):
-        mock_node = MagicMock()
-
-        async def mock_get_info():
-            raise RuntimeError("session error")
-
-        mock_node.get_session_info = mock_get_info
-        chat_cmd.current_node = mock_node
-
-        # Should not propagate exception
-        chat_cmd._trigger_compact_for_current_node()
 
 
 # ---------------------------------------------------------------------------
@@ -3597,90 +3593,25 @@ class TestCmdChatInfoExtended:
         assert "sess_123" in output or "Session" in output
 
 
-# ===========================================================================
-# _collect_batch tests
-# ===========================================================================
-
-
-class TestCollectBatch:
-    """Test _collect_batch method for batch question collection."""
-
-    @staticmethod
-    def _make(real_agent_config):
-        """Create ChatCommands with a MinimalCLI that has controllable prompt_input."""
-        console = Console(file=io.StringIO(), no_color=True)
-        return _make_chat_commands(real_agent_config, console=console), console
-
-    def test_empty_contents_returns_empty_json(self, real_agent_config, mock_llm_create):
-        """Empty contents list returns '[]'."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, [], [])
-        assert result == json.dumps([])
-
-    def test_single_free_text_question(self, real_agent_config, mock_llm_create):
-        """Single free-text question collects via prompt_input."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="my answer")
-        result = chat_cmd._collect_batch(console, ["What name?"], [{}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "my answer"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="2")
-    def test_single_question_with_choices(self, mock_select, real_agent_config, mock_llm_create):
-        """Single question with choices uses select_choice."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, ["Pick DB?"], [{"1": "MySQL", "2": "PG"}])
-        answers = json.loads(result)
-        assert len(answers) == 1
-        assert answers[0] == "PG"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="1")
-    def test_multi_question_batch(self, mock_select, real_agent_config, mock_llm_create):
-        """Multiple questions with choices collects answers sequentially."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="custom filter")
-        result = chat_cmd._collect_batch(
-            console,
-            ["DB?", "Time?", "Filter?"],
-            [{"1": "MySQL", "2": "PG"}, {"1": "7d", "2": "30d"}, {}],
-        )
-        answers = json.loads(result)
-        assert len(answers) == 3
-        assert answers[0] == "MySQL"
-        assert answers[1] == "7d"
-        assert answers[2] == "custom filter"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="custom text")
-    def test_free_text_option_preserves_input(self, mock_select, real_agent_config, mock_llm_create):
-        """Free-text input via select_choice is preserved as-is."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(console, ["Q?"], [{"1": "A", "2": "B"}])
-        answers = json.loads(result)
-        assert answers[0] == "custom text"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="1")
-    def test_multi_question_shows_summary(self, mock_select, real_agent_config, mock_llm_create):
-        """Multi-question batch prints summary to console."""
-        chat_cmd, console = self._make(real_agent_config)
-        result = chat_cmd._collect_batch(
-            console,
-            ["Q1?", "Q2?"],
-            [{"1": "A", "2": "B"}, {"1": "C", "2": "D"}],
-        )
-        output = console.file.getvalue()
-        assert "Answers submitted" in output
-        answers = json.loads(result)
-        assert len(answers) == 2
-
-
 class TestMakeInputCollector:
-    """Test _make_input_collector and the returned collect() closure."""
+    """Test ``_make_input_collector`` delegating to ``InteractionApp``.
+
+    ``_collect_batch`` and module-level ``select_choice`` have been replaced
+    by the TUI-based ``InteractionApp``; the collector now reads the
+    structured ``events`` payload and returns ``List[List[str]]``.
+    """
 
     @staticmethod
     def _make(real_agent_config):
         console = Console(file=io.StringIO(), no_color=True)
         return _make_chat_commands(real_agent_config, console=console), console
+
+    @staticmethod
+    def _make_esc_guard():
+        esc_guard = MagicMock()
+        esc_guard.paused.return_value.__enter__ = MagicMock()
+        esc_guard.paused.return_value.__exit__ = MagicMock()
+        return esc_guard
 
     @staticmethod
     def _make_action(action_type, input_data):
@@ -3693,86 +3624,60 @@ class TestMakeInputCollector:
             input=input_data,
         )
 
-    def test_collect_routes_batch_to_collect_batch(self, real_agent_config, mock_llm_create):
-        """collect() routes multi-question contents to _collect_batch."""
+    def test_collect_without_events_returns_none(self, real_agent_config, mock_llm_create):
+        """Empty/missing ``events`` yields ``None`` (no UI to display)."""
         chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="ans1")
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
+        action = self._make_action("request_choice", {})
+        assert collector(action, console) is None
+
+    def test_collect_single_event_returns_answers(self, real_agent_config, mock_llm_create):
+        """Collector returns ``answers`` from ``InteractionApp.run``."""
+        chat_cmd, console = self._make(real_agent_config)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
+        action = self._make_action(
+            "request_choice",
+            {"events": [{"content": "Confirm?", "choices": {"y": "Yes", "n": "No"}}]},
+        )
+        expected = [["y"]]
+        fake_app = MagicMock()
+        fake_app.run.return_value = MagicMock(answers=expected)
+        with patch("datus.cli.interaction_app.InteractionApp", return_value=fake_app) as app_cls:
+            result = collector(action, console)
+        assert result == expected
+        app_cls.assert_called_once()
+
+    def test_collect_multi_event_returns_answers(self, real_agent_config, mock_llm_create):
+        """Collector handles multi-event batches via ``InteractionApp``."""
+        chat_cmd, console = self._make(real_agent_config)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
         action = self._make_action(
             "request_batch",
             {
-                "contents": ["Q1?", "Q2?"],
-                "choices": [{}, {}],
-                "default_choices": ["", ""],
-                "allow_free_text": True,
+                "events": [
+                    {"content": "Q1?", "choices": {"a": "A", "b": "B"}},
+                    {"content": "Q2?", "choices": {}, "allow_free_text": True},
+                ]
             },
         )
-        result = collector(action, console)
-        answers = json.loads(result)
-        assert len(answers) == 2
+        expected = [["a"], ["typed"]]
+        fake_app = MagicMock()
+        fake_app.run.return_value = MagicMock(answers=expected)
+        with patch("datus.cli.interaction_app.InteractionApp", return_value=fake_app):
+            result = collector(action, console)
+        assert result == expected
 
-    @patch("datus.cli.chat_commands.select_choice", return_value="y")
-    def test_collect_routes_choice_to_single(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() routes single-question contents to single choice."""
+    def test_collect_swallows_exceptions_and_returns_none(self, real_agent_config, mock_llm_create):
+        """Errors from ``InteractionApp`` are logged and surface as ``None``."""
         chat_cmd, console = self._make(real_agent_config)
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
+        collector = chat_cmd._make_input_collector(self._make_esc_guard())
         action = self._make_action(
             "request_choice",
-            {
-                "contents": ["Confirm?"],
-                "choices": [{"y": "Yes", "n": "No"}],
-                "default_choices": ["y"],
-                "allow_free_text": False,
-            },
+            {"events": [{"content": "Pick?", "choices": {"a": "A"}}]},
         )
-        result = collector(action, console)
-        assert result == "y"
-
-    def test_collect_free_text_no_choices(self, real_agent_config, mock_llm_create):
-        """collect() with empty choices calls prompt_input for free text."""
-        chat_cmd, console = self._make(real_agent_config)
-        chat_cmd.cli.prompt_input = MagicMock(return_value="typed answer")
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action(
-            "request_choice",
-            {
-                "contents": ["Enter text"],
-                "choices": [{}],
-                "default_choices": [""],
-                "allow_free_text": True,
-            },
-        )
-        result = collector(action, console)
-        assert result == "typed answer"
-
-    @patch("datus.cli.chat_commands.select_choice", return_value="")
-    def test_collect_empty_free_text_returns_empty(self, mock_select, real_agent_config, mock_llm_create):
-        """collect() with allow_free_text and empty result returns empty string."""
-        chat_cmd, console = self._make(real_agent_config)
-        esc_guard = MagicMock()
-        esc_guard.paused.return_value.__enter__ = MagicMock()
-        esc_guard.paused.return_value.__exit__ = MagicMock()
-        collector = chat_cmd._make_input_collector(esc_guard)
-        action = self._make_action(
-            "request_choice",
-            {
-                "contents": ["Pick?"],
-                "choices": [{"a": "Option A"}],
-                "default_choices": ["a"],
-                "allow_free_text": True,
-            },
-        )
-        result = collector(action, console)
-        assert result == ""
+        with patch("datus.cli.interaction_app.InteractionApp", side_effect=RuntimeError("boom")):
+            result = collector(action, console)
+        assert result is None
 
     def test_collect_exception_returns_none_for_choice(self, real_agent_config, mock_llm_create):
         """collect() returns None on exception for request_choice."""
@@ -3795,3 +3700,232 @@ class TestMakeInputCollector:
         action = self._make_action("request_batch", {"contents": ["Q1?", "Q2?"], "choices": [{}, {}]})
         result = collector(action, console)
         assert result is None
+
+
+# ===========================================================================
+# _drop_if_matches_final (thinking pending reconcile helper)
+# ===========================================================================
+
+
+@pytest.mark.ci
+class TestDropIfMatchesFinal:
+    """Unit tests for the helper that drops a deferred ASSISTANT text when its
+    content equals the node's final *_response body, or flushes it otherwise."""
+
+    def _assistant(self, raw: str) -> ActionHistory:
+        return ActionHistory(
+            action_id="a1",
+            role=ActionRole.ASSISTANT,
+            messages="",
+            action_type="response",
+            input={},
+            output={"raw_output": raw, "is_thinking": False},
+            status=ActionStatus.SUCCESS,
+        )
+
+    def _final(self, response: str) -> ActionHistory:
+        return ActionHistory(
+            action_id="f1",
+            role=ActionRole.ASSISTANT,
+            messages="",
+            action_type="chat_response",
+            input={},
+            output={"response": response},
+            status=ActionStatus.SUCCESS,
+        )
+
+    def test_pending_none_returns_none(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        result = _drop_if_matches_final(None, self._final("hi"), incremental)
+        assert result is None
+        assert incremental == []
+
+    def test_texts_equal_drops_pending(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("  Hello world  ")
+        final = self._final("Hello world")
+        result = _drop_if_matches_final(pending, final, incremental)
+        assert result is None
+        assert incremental == []  # pending was NOT flushed
+
+    def test_texts_differ_flushes_pending(self):
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("mid-turn thought")
+        final = self._final("actual final answer")
+        result = _drop_if_matches_final(pending, final, incremental)
+        assert result is None
+        assert incremental == [pending]
+
+    def test_non_dict_pending_output_is_dropped(self):
+        """Non-dict pending output has no extractable text — drop it."""
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = ActionHistory(
+            action_id="a2",
+            role=ActionRole.ASSISTANT,
+            messages="raw",
+            action_type="response",
+            input={},
+            output="not a dict",
+            status=ActionStatus.SUCCESS,
+        )
+        final = self._final("anything")
+        _drop_if_matches_final(pending, final, incremental)
+        assert incremental == []
+
+    def test_empty_pending_text_is_dropped(self):
+        """Empty pending text has nothing to contribute — drop it."""
+        from datus.cli.chat_commands import _drop_if_matches_final
+
+        incremental: list = []
+        pending = self._assistant("")
+        final = self._final("anything")
+        _drop_if_matches_final(pending, final, incremental)
+        assert incremental == []
+
+
+# ===========================================================================
+# TestSessionFilterByAgent — cmd_resume filters by active agent
+# ===========================================================================
+
+
+class TestIsModelConfigError:
+    """Tests for _is_model_config_error() helper."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            KeyError("No active model configured. Set `target` in agent.yml"),
+            KeyError("Model foo not found in agent_config"),
+            KeyError("Unsupported model type: xyz"),
+            Exception("invalid api_key provided"),
+            RuntimeError("OpenAI model authentication failed"),
+            Exception("401 Unauthorized from provider openai"),
+        ],
+    )
+    def test_model_errors_detected(self, exc):
+        assert _is_model_config_error(exc) is True
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ValueError("database connection failed"),
+            RuntimeError("some unrelated error"),
+            Exception("timeout waiting for response"),
+            Exception("401 Unauthorized"),
+            RuntimeError("authentication failed"),
+        ],
+    )
+    def test_non_model_errors_not_detected(self, exc):
+        assert _is_model_config_error(exc) is False
+
+
+class TestSessionFilterByAgent:
+    """cmd_resume only surfaces sessions for the active agent."""
+
+    def test_resume_interactive_empty_when_agent_has_no_sessions(self, real_agent_config, mock_llm_create):
+        """cmd_resume with no args filters by intended agent (default_agent); empty result message mentions agent."""
+        console = Console(file=io.StringIO(), no_color=True)
+        cmds = _make_chat_commands(real_agent_config, console=console)
+        cmds.cli.default_agent = "gen_metrics"
+
+        _create_session_on_disk("chat_session_a", [("user", "hi")])
+        cmds.cmd_resume("")
+
+        output = _get_console_output(console)
+        assert "gen_metrics" in output
+        assert cmds.current_node is None
+
+
+class TestRenderFinalResponseValidationReport:
+    """``_render_final_response`` must surface ``validation_report`` even when
+    the final action status is FAILED, otherwise users don't see why the retry
+    budget was exhausted (P2 regression guard)."""
+
+    def _make_action(self, status, output):
+        return ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="test",
+            messages="",
+            input_data={},
+            output_data=output,
+            status=status,
+        )
+
+    def test_renders_validation_report_on_failed_status(self, real_agent_config, mock_llm_create):
+        """FAILED action with a validation_report must still trigger the panel."""
+        cmds = _make_chat_commands(real_agent_config)
+        report_payload = {"target": None, "checks": [{"name": "x", "passed": False, "severity": "blocking"}]}
+        action = self._make_action(
+            ActionStatus.FAILED,
+            {"validation_report": report_payload, "response": "ignored on failed"},
+        )
+        with patch.object(cmds, "_display_validation_report") as disp:
+            cmds._render_final_response(action)
+            disp.assert_called_once_with(report_payload)
+
+    def test_skips_success_rendering_on_failed(self, real_agent_config, mock_llm_create):
+        """FAILED still short-circuits SQL / markdown rendering — only the
+        validation panel is shown."""
+        cmds = _make_chat_commands(real_agent_config)
+        action = self._make_action(
+            ActionStatus.FAILED,
+            {"validation_report": {"checks": []}, "response": "not shown"},
+        )
+        with patch.object(cmds, "_display_markdown_response") as md:
+            cmds._render_final_response(action)
+            md.assert_not_called()
+
+    def test_renders_both_on_success(self, real_agent_config, mock_llm_create):
+        """SUCCESS path: validation panel + downstream rendering both run."""
+        cmds = _make_chat_commands(real_agent_config)
+        action = self._make_action(
+            ActionStatus.SUCCESS,
+            {"validation_report": {"checks": []}, "response": "hello"},
+        )
+        with (
+            patch.object(cmds, "_display_validation_report") as disp,
+            patch.object(cmds, "_display_markdown_response") as md,
+        ):
+            cmds._render_final_response(action)
+            disp.assert_called_once()
+            md.assert_called_once()
+
+    def test_display_validation_report_escapes_markup_brackets(self, real_agent_config, mock_llm_create):
+        """Values containing ``[...]`` (list repr, error mentioning ``[RED]``,
+        bracketed paths) must not be parsed as Rich markup tags — otherwise
+        this helper can swallow surrounding text or raise ``MarkupError``.
+        Regression guard for the CodeRabbit comment on chat_commands.py:676."""
+        cmds = _make_chat_commands(real_agent_config)
+        report = {
+            "target": {"type": "table", "database": "ch", "schema": "[bad]", "table": "rev"},
+            "checks": [
+                {
+                    "name": "row_count",
+                    "passed": False,
+                    "severity": "blocking",
+                    "source": "skill:[spicy]",
+                    "observed": {"rows": "[a, b, c]"},
+                    "error": "error with [brackets] and [RED]tag[/] markers",
+                }
+            ],
+            "warnings": [{"type": "x", "msg": "[unterminated"}],
+        }
+        # Must not raise, must invoke console.print exactly once with a Panel.
+        with patch.object(cmds.cli.console, "print") as printer:
+            cmds._display_validation_report(report)
+            assert printer.call_count == 1
+            panel_arg = printer.call_args.args[0]
+            rendered = str(panel_arg.renderable)
+            # Bracket content survives as literal text (escape turns ``[x]`` into ``\[x]``)
+            # so the raw substring "[bad]" still appears somewhere in the panel body.
+            assert "[bad]" in rendered
+            # The error string's ``[RED]`` must not be consumed as a color tag.
+            assert "[RED]" in rendered

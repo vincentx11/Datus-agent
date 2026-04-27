@@ -19,7 +19,6 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
@@ -54,6 +53,8 @@ class ChatAgenticNode(AgenticNode):
     - Session-based conversation management with MCP server integration
     """
 
+    DEFAULT_SUBAGENTS = "*"
+
     def __init__(
         self,
         node_id: str,
@@ -64,6 +65,7 @@ class ChatAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         scope: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        is_subagent: bool = False,
     ):
         """
         Initialize the ChatAgenticNode.
@@ -97,9 +99,6 @@ class ChatAgenticNode(AgenticNode):
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
-        # SubAgent task delegation tool
-        self.sub_agent_task_tool = None
-
         # Plan mode attributes
         self.plan_mode_active = False
         self.plan_hooks = None
@@ -117,6 +116,7 @@ class ChatAgenticNode(AgenticNode):
             tools=tools or [],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Execution mode: "interactive" enables ask_user tool; "workflow"
@@ -129,9 +129,7 @@ class ChatAgenticNode(AgenticNode):
         # Setup tools
         self.setup_tools()
         logger.debug(f"ChatAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
-        logger.debug(
-            f"ChatAgenticNode initialized: {self.agent_config.current_database} {self.agent_config.current_database}"
-        )
+        logger.debug(f"ChatAgenticNode initialized: {self.agent_config.current_datasource}")
 
     def get_node_name(self) -> str:
         """Get the configured node name."""
@@ -141,9 +139,7 @@ class ChatAgenticNode(AgenticNode):
 
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
@@ -170,10 +166,9 @@ class ChatAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            root_path = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=root_path)
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools with root path: {root_path}")
+            logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -196,21 +191,21 @@ class ChatAgenticNode(AgenticNode):
             else:
                 base_config = PermissionConfig()
 
-            # Add default ASK for skill_execute_command (bash) at position 0 (lowest priority)
-            has_bash_rule = any(r.tool == "skills" and r.pattern == "skill_execute_command" for r in base_config.rules)
-            if not has_bash_rule:
-                base_config.rules.insert(
-                    0,
-                    PermissionRule(
-                        tool="skills",
-                        pattern="skill_execute_command",
-                        permission=PermissionLevel.ASK,
-                    ),
-                )
-
             self.permission_manager = PermissionManager(
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
+                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
+            )
+            # Register bash ASK as a persistent rule so ``/profile dangerous``
+            # doesn't silently drop it on rebuild. ``add_persistent_rule``
+            # skips duplicates, so this is safe even if the profile base
+            # already contains the rule.
+            self.permission_manager.add_persistent_rule(
+                PermissionRule(
+                    tool="skills",
+                    pattern="skill_execute_command",
+                    permission=PermissionLevel.ASK,
+                )
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 
@@ -222,25 +217,12 @@ class ChatAgenticNode(AgenticNode):
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name="chat",
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
-
-    def _setup_sub_agent_task_tool(self):
-        """Setup SubAgent task delegation tool."""
-        try:
-            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-            self.sub_agent_task_tool = SubAgentTaskTool(
-                agent_config=self.agent_config,
-            )
-            self.sub_agent_task_tool.set_action_bus(self.action_bus)
-            self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
-            self.sub_agent_task_tool.set_parent_node(self)
-        except Exception as e:
-            logger.error(f"Failed to setup SubAgent task tool: {e}")
-            self.sub_agent_task_tool = None
 
     def _setup_permission_hooks(self):
         """Setup permission hooks and register all tool categories."""
@@ -277,6 +259,7 @@ class ChatAgenticNode(AgenticNode):
                 permission_manager=self.permission_manager,
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
+                fs_policy=self._make_filesystem_policy(),
             )
 
             logger.debug(f"Permission hooks setup with {len(self.tool_registry)} registered tools")
@@ -306,9 +289,7 @@ class ChatAgenticNode(AgenticNode):
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
-        db_manager = db_manager_instance(self.agent_config.namespaces)
-        conn = db_manager.get_conn(self.agent_config.current_database, database_name)
-        self.db_func_tool = DBFuncTool(conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, default_datasource=database_name)
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────
@@ -371,7 +352,7 @@ class ChatAgenticNode(AgenticNode):
                     if server:
                         mcp_servers["metricflow_mcp"] = server
                         logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_database}"
+                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
                         )
                     continue
 
@@ -395,7 +376,7 @@ class ChatAgenticNode(AgenticNode):
             if not db_config:
                 return None
 
-            metricflow_server = MCPServer.get_metricflow_mcp_server(namespace=self.agent_config.current_database)
+            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
             if metricflow_server:
                 logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
                 return metricflow_server

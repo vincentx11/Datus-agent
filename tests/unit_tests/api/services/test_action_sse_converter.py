@@ -16,6 +16,7 @@ from datus.api.services.action_sse_converter import (
     action_to_sse_event,
 )
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
 
 
 def _make_action(**overrides) -> ActionHistory:
@@ -139,6 +140,88 @@ class TestBuildToolResultContent:
         )
         contents = _build_tool_result_content(action)
         assert contents[0].payload["duration"] == 0.0
+
+    def test_failed_tool_includes_error_from_output(self):
+        """Failed tool action includes an error field from output.error."""
+        action = _make_action(
+            action_id="complete_tool-77",
+            status=ActionStatus.FAILED,
+            input={"function_name": "run_sql"},
+            output={"error": "boom"},
+        )
+        contents = _build_tool_result_content(action)
+        assert contents[0].type == "call-tool-result"
+        assert contents[0].payload["error"] == "boom"
+
+    def test_failed_tool_falls_back_to_messages(self):
+        """Failed tool with no output.error uses action.messages as the error field."""
+        action = _make_action(
+            action_id="complete_tool-88",
+            status=ActionStatus.FAILED,
+            input={"function_name": "run_sql"},
+            output={},
+            messages="kaboom",
+        )
+        contents = _build_tool_result_content(action)
+        assert contents[0].payload["error"] == "kaboom"
+
+    def test_successful_tool_omits_error_field(self):
+        """Successful tool actions never carry an error field."""
+        action = _make_action(
+            action_id="complete_tool-89",
+            status=ActionStatus.SUCCESS,
+            input={"function_name": "run_sql"},
+            output={"raw_output": "data"},
+        )
+        contents = _build_tool_result_content(action)
+        assert "error" not in contents[0].payload
+
+
+class TestBuildSubagentCompleteContent:
+    """Tests for _build_subagent_complete_content."""
+
+    def test_success_omits_error_field(self):
+        """Successful sub-agent completion never carries an error field."""
+        from datus.api.services.action_sse_converter import _build_subagent_complete_content
+
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.SUCCESS,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "explore", "tool_count": 5},
+        )
+        contents = _build_subagent_complete_content(action)
+        assert contents[0].type == "subagent-complete"
+        assert contents[0].payload["subagentType"] == "explore"
+        assert contents[0].payload["toolCount"] == 5
+        assert "error" not in contents[0].payload
+
+    def test_failed_includes_error_from_output(self):
+        """Failed sub-agent completion includes an error field from output.error."""
+        from datus.api.services.action_sse_converter import _build_subagent_complete_content
+
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.FAILED,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "explore", "tool_count": 1, "error": "timeout"},
+        )
+        contents = _build_subagent_complete_content(action)
+        assert contents[0].payload["error"] == "timeout"
+
+    def test_failed_falls_back_to_messages(self):
+        """Failed sub-agent completion with no output.error uses action.messages."""
+        from datus.api.services.action_sse_converter import _build_subagent_complete_content
+
+        action = _make_action(
+            role=ActionRole.SYSTEM,
+            status=ActionStatus.FAILED,
+            action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+            output={"subagent_type": "explore"},
+            messages="cancelled",
+        )
+        contents = _build_subagent_complete_content(action)
+        assert contents[0].payload["error"] == "cancelled"
 
 
 class TestBuildUserContent:
@@ -297,6 +380,35 @@ class TestBuildThinkingContent:
         contents = _build_thinking_content(action)
         assert contents[0].payload["content"] == "final fallback"
 
+    def test_placeholder_in_output_returns_none(self):
+        """LiteLLM sanitizer placeholder in output is filtered out."""
+        action = _make_action(
+            action_type="gen_sql",
+            output={"raw_output": LITELLM_EMPTY_PLACEHOLDER},
+            messages="",
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
+
+    def test_placeholder_in_messages_returns_none(self):
+        """LiteLLM sanitizer placeholder in messages fallback is filtered out."""
+        action = _make_action(
+            action_type="gen_sql",
+            output=None,
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
+
+    def test_placeholder_in_llm_generation_returns_none(self):
+        """LiteLLM sanitizer placeholder in llm_generation messages is filtered out."""
+        action = _make_action(
+            action_type="llm_generation",
+            messages=LITELLM_EMPTY_PLACEHOLDER,
+        )
+        contents = _build_thinking_content(action)
+        assert contents is None
+
 
 class TestBuildInteractionContent:
     """Tests for _build_interaction_content."""
@@ -307,11 +419,15 @@ class TestBuildInteractionContent:
             action_id="interact-1",
             action_type="ask_user",
             input={
-                "contents": ["Choose a database:"],
-                "choices": [{"db1": "Database 1", "db2": "Database 2"}],
-                "default_choices": ["db1"],
-                "content_type": "markdown",
-                "allow_free_text": False,
+                "events": [
+                    {
+                        "content": "Choose a database:",
+                        "choices": {"db1": "Database 1", "db2": "Database 2"},
+                        "default_choice": "db1",
+                        "content_type": "markdown",
+                        "allow_free_text": False,
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -332,15 +448,18 @@ class TestBuildInteractionContent:
         assert contents[0].payload["requests"] == []
 
     def test_multi_select_field_present(self):
-        """multiSelect field is included in SSE payload when multi_selects is provided."""
+        """multiSelect field is included in SSE payload when multi_select is True on the event."""
         action = _make_action(
             action_id="interact-3",
             action_type="ask_user",
             input={
-                "contents": ["Pick databases:"],
-                "choices": [{"db1": "DB 1", "db2": "DB 2"}],
-                "default_choices": [""],
-                "multi_selects": [True],
+                "events": [
+                    {
+                        "content": "Pick databases:",
+                        "choices": {"db1": "DB 1", "db2": "DB 2"},
+                        "multi_select": True,
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -348,14 +467,18 @@ class TestBuildInteractionContent:
         assert req["multiSelect"] is True
 
     def test_multi_select_defaults_to_false(self):
-        """multiSelect defaults to False when multi_selects is not provided."""
+        """multiSelect defaults to False when multi_select is not set on the event."""
         action = _make_action(
             action_id="interact-4",
             action_type="ask_user",
             input={
-                "contents": ["Pick one:"],
-                "choices": [{"a": "A"}],
-                "default_choices": ["a"],
+                "events": [
+                    {
+                        "content": "Pick one:",
+                        "choices": {"a": "A"},
+                        "default_choice": "a",
+                    }
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -363,15 +486,16 @@ class TestBuildInteractionContent:
         assert req["multiSelect"] is False
 
     def test_multi_select_batch_mixed(self):
-        """Batch with mixed multi_selects values."""
+        """Batch with mixed multi_select values across events."""
         action = _make_action(
             action_id="interact-5",
             action_type="ask_user",
             input={
-                "contents": ["Single select:", "Multi select:", "No flag:"],
-                "choices": [{"a": "A"}, {"b": "B", "c": "C"}, {"d": "D"}],
-                "default_choices": ["a", "", ""],
-                "multi_selects": [False, True],
+                "events": [
+                    {"content": "Single select:", "choices": {"a": "A"}, "default_choice": "a"},
+                    {"content": "Multi select:", "choices": {"b": "B", "c": "C"}, "multi_select": True},
+                    {"content": "No flag:", "choices": {"d": "D"}},
+                ]
             },
         )
         contents = _build_interaction_content(action)
@@ -379,7 +503,7 @@ class TestBuildInteractionContent:
         assert len(requests) == 3
         assert requests[0]["multiSelect"] is False
         assert requests[1]["multiSelect"] is True
-        assert requests[2]["multiSelect"] is False  # defaults when index out of range
+        assert requests[2]["multiSelect"] is False
 
 
 class TestBuildInteractionResultContent:
@@ -415,8 +539,8 @@ class TestBuildInteractionResultContent:
 class TestActionToSSEEvent:
     """Tests for the main action_to_sse_event dispatcher."""
 
-    def test_failed_action_produces_error_event(self):
-        """FAILED status maps to error content regardless of role."""
+    def test_assistant_failed_action_produces_error_event(self):
+        """ASSISTANT + FAILED falls through to the catch-all error branch."""
         action = _make_action(
             role=ActionRole.ASSISTANT,
             status=ActionStatus.FAILED,
@@ -430,6 +554,43 @@ class TestActionToSSEEvent:
         content = event.data.payload.content[0]
         assert content.type == "error"
         assert content.payload["content"] == "Timeout"
+
+    def test_tool_failed_produces_call_tool_result_with_error(self):
+        """TOOL + FAILED stays on the call-tool-result channel and adds an error field.
+
+        This preserves the callToolId / toolName pairing so the frontend can mark the
+        original call-tool card as failed instead of emitting an orphaned error event.
+        """
+        action = _make_action(
+            action_id="complete_tool-99",
+            role=ActionRole.TOOL,
+            status=ActionStatus.FAILED,
+            input={"function_name": "run_sql", "arguments": {"sql": "SELECT 1"}},
+            output={"error": "syntax error", "summary": "failed"},
+        )
+        event = action_to_sse_event(action, event_id=40, message_id="msg-40")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.type == "call-tool-result"
+        assert content.payload["callToolId"] == "tool-99"
+        assert content.payload["toolName"] == "run_sql"
+        assert content.payload["error"] == "syntax error"
+
+    def test_tool_failed_without_error_falls_back_to_messages(self):
+        """TOOL + FAILED with no output.error uses action.messages for the error field."""
+        action = _make_action(
+            action_id="complete_tool-100",
+            role=ActionRole.TOOL,
+            status=ActionStatus.FAILED,
+            input={"function_name": "run_sql"},
+            output={},
+            messages="connection lost",
+        )
+        event = action_to_sse_event(action, event_id=41, message_id="msg-41")
+        assert event is not None
+        content = event.data.payload.content[0]
+        assert content.type == "call-tool-result"
+        assert content.payload["error"] == "connection lost"
 
     def test_tool_processing_produces_call_tool(self):
         """TOOL + PROCESSING maps to call-tool content."""
@@ -752,16 +913,22 @@ class TestActionToSSEEvent:
         assert event is not None
         assert event.data.type == SSEDataType.CREATE_MESSAGE
 
-    def test_subagent_complete_failed_produces_error_event(self):
-        """subagent_complete with FAILED status produces error content, not subagent-complete."""
+    def test_subagent_complete_failed_produces_subagent_complete_with_error(self):
+        """subagent_complete + FAILED stays on the subagent-complete channel and adds an error field.
+
+        This keeps the subagentType / duration metadata so the frontend can mark the
+        original subagent card as failed instead of emitting an orphaned error event.
+        """
         action = _make_action(
             role=ActionRole.SYSTEM,
             status=ActionStatus.FAILED,
             action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
-            output={"error": "sub-agent timed out"},
+            output={"error": "sub-agent timed out", "subagent_type": "explore", "tool_count": 3},
         )
         event = action_to_sse_event(action, event_id=17, message_id="msg-17")
         assert event is not None
         content = event.data.payload.content[0]
-        assert content.type == "error"
-        assert "timed out" in content.payload["content"]
+        assert content.type == "subagent-complete"
+        assert content.payload["subagentType"] == "explore"
+        assert content.payload["toolCount"] == 3
+        assert content.payload["error"] == "sub-agent timed out"

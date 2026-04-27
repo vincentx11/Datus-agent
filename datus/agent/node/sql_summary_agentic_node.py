@@ -10,11 +10,11 @@ SQL query summarization and classification with support for filesystem tools,
 generation tools, and hooks.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
@@ -48,6 +48,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         subject_tree: Optional[list] = None,
         storage_type: str = "reference_sql",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the SqlSummaryAgenticNode.
@@ -73,8 +74,8 @@ class SqlSummaryAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
-        self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path(agent_config.current_database))
-        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
+        self.sql_summary_dir = str(agent_config.path_manager.sql_summary_path())
+        self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
 
@@ -90,6 +91,7 @@ class SqlSummaryAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize reference SQL storage for context queries
@@ -151,10 +153,7 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
         try:
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="sql_summary"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
         except Exception as e:
@@ -168,6 +167,19 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Route filesystem/generation helpers to permission categories."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        mapping = super()._tool_category_map()
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.generation_tools:
+            mapping.setdefault("semantic_tools", []).append(
+                trans_to_function_tool(self.generation_tools.generate_sql_summary_id)
+            )
+        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -238,14 +250,18 @@ class SqlSummaryAgenticNode(AgenticNode):
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["sql_summary_dir"] = self.sql_summary_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "sql_summaries"
-        context["current_database"] = self.agent_config.current_database
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = "subject/sql_summaries"
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -392,12 +408,18 @@ class SqlSummaryAgenticNode(AgenticNode):
             if user_input.comment:
                 enhanced_parts.append(f"Comment: {user_input.comment}")
 
-            if user_input.catalog or user_input.database or user_input.db_schema:
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                None,
+                user_input.database or "",
+            )
+            if user_input.catalog or effective_db or user_input.db_schema:
                 context_parts = []
                 if user_input.catalog:
                     context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
+                if effective_db:
+                    context_parts.append(f"database: {effective_db}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f"Context: {', '.join(context_parts)}"
@@ -430,7 +452,7 @@ class SqlSummaryAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
+                hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
@@ -621,9 +643,7 @@ class SqlSummaryAgenticNode(AgenticNode):
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                sql_summary_file, "sql_summary", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
                 return

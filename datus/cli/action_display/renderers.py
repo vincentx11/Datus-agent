@@ -19,6 +19,7 @@ from rich.markup import escape as rich_escape
 from rich.syntax import Syntax
 from rich.text import Text
 
+from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -47,11 +48,13 @@ def _truncate_middle(text: str, max_len: int = 120) -> str:
 
 def _get_assistant_content(action: ActionHistory) -> str:
     """Extract display content from an ASSISTANT action, preferring output.raw_output."""
+    from datus.utils.text_utils import strip_litellm_placeholder
+
     if action.output and isinstance(action.output, dict):
-        raw = action.output.get("raw_output", "")
+        raw = strip_litellm_placeholder(action.output.get("raw_output", ""))
         if raw:
             return raw
-    return action.messages or ""
+    return strip_litellm_placeholder(action.messages or "")
 
 
 # ── Icon/color mappings ─────────────────────────────────────────────────────
@@ -60,12 +63,7 @@ def _get_assistant_content(action: ActionHistory) -> str:
 class BaseActionContentGenerator:
     def __init__(self) -> None:
         self.role_colors = {
-            ActionRole.SYSTEM: "bright_magenta",
-            ActionRole.ASSISTANT: "bright_blue",
-            ActionRole.USER: "bright_green",
-            ActionRole.TOOL: "bright_cyan",
-            ActionRole.WORKFLOW: "bright_yellow",
-            ActionRole.INTERACTION: "bright_yellow",
+            role: ACTION_ROLE_COLOR_NAMES[role.name] for role in ActionRole if role.name in ACTION_ROLE_COLOR_NAMES
         }
         self.status_icons = {
             ActionStatus.PROCESSING: "\u23f3",
@@ -132,9 +130,8 @@ class ActionContentGenerator(BaseActionContentGenerator):
                 pass
             else:
                 tc = self.tool_content_builder.build(action, verbose=False)
-                output_preview = ""
-                if tc.output_preview:
-                    output_preview = f"\n    {tc.output_preview}"
+                preview = tc.compact_result or tc.output_preview
+                output_preview = f"\n    {preview}" if preview else ""
                 text += f" - {tc.status_mark}{output_preview}{tc.duration_str}"
 
         return text
@@ -461,8 +458,9 @@ class ActionRenderer:
                     result.append(Text.from_markup(f"[dim]          {line}[/dim]"))
                 result.append(Text(""))
             else:
-                if tc.output_preview:
-                    result.append(Text.from_markup(f"[dim]          {rich_escape(tc.output_preview)}[/dim]"))
+                preview = tc.compact_result or tc.output_preview
+                if preview:
+                    result.append(Text.from_markup(f"[dim]          {rich_escape(preview)}[/dim]"))
             return result
         if action.role == ActionRole.ASSISTANT:
             content = _get_assistant_content(action)
@@ -538,37 +536,32 @@ class ActionRenderer:
     def render_interaction_request(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION PROCESSING -- request content.
 
-        Reads ``contents`` (list) and ``choices`` (list of dicts) from
-        ``action.input``.  Single-question renders with the legacy header;
-        multiple questions render a numbered overview.
+        Reads ``events`` from ``action.input`` (new format).
         """
-        input_data = action.input or {}
-        contents = input_data.get("contents", [])
-        content_type = input_data.get("content_type", "text")
+        from datus.schemas.interaction_event import InteractionEvent
+
+        events = InteractionEvent.from_broker_input(action.input or {})
 
         result: List[Union[Text, Markdown, Syntax]] = []
 
-        if not contents:
+        if not events:
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-        elif len(contents) == 1:
-            # Single question
+        elif len(events) == 1:
+            ev = events[0]
             result.append(Text.from_markup("[bold bright_yellow]\u2753 Interaction Request[/bold bright_yellow]"))
-            content = contents[0]
-            if content:
-                if content_type == "yaml":
-                    result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
-                elif content_type == "sql":
-                    result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
-                elif content_type == "markdown":
-                    result.append(Markdown(content))
+            if ev.content:
+                if ev.content_type == "yaml":
+                    result.append(Syntax(ev.content, "yaml", theme=CODE_THEME, line_numbers=True))
+                elif ev.content_type == "sql":
+                    result.append(Syntax(ev.content, "sql", theme=CODE_THEME, line_numbers=True))
+                elif ev.content_type == "markdown":
+                    result.append(Markdown(ev.content))
                 else:
-                    result.append(Text(content))
+                    result.append(Text(ev.content))
         else:
-            # Multiple questions — brief header only; individual questions
-            # are shown interactively by _collect_batch during input collection.
             result.append(
                 Text.from_markup(
-                    f"[bold bright_yellow]\u2753 Agent Questions ({len(contents)} questions)[/bold bright_yellow]"
+                    f"[bold bright_yellow]\u2753 Agent Questions ({len(events)} questions)[/bold bright_yellow]"
                 )
             )
 
@@ -577,20 +570,22 @@ class ActionRenderer:
     def render_interaction_success(self, action: ActionHistory, verbose: bool) -> List[Union[Text, Markdown, Syntax]]:
         """Render INTERACTION SUCCESS -- user choice + result content.
 
-        Reads ``contents`` from ``action.input`` to decide between single
+        Reads ``events`` from ``action.input`` to decide between single
         and batch rendering.
         """
-        input_data = action.input or {}
-        output_data = action.output or {}
-        contents = input_data.get("contents", [])
+        from datus.schemas.interaction_event import InteractionEvent
 
-        if len(contents) > 1:
+        events = InteractionEvent.from_broker_input(action.input or {})
+        output_data = action.output or {}
+
+        if len(events) > 1:
+            contents = [ev.content for ev in events]
             return self._render_batch_success(contents, output_data)
 
         # --- single question ---
-        content = output_data.get("content", "") or action.messages or ""
-        content_type = output_data.get("content_type", "markdown")
         user_choice = output_data.get("user_choice", "")
+        content = action.messages or ""
+        content_type = events[0].content_type if events else "markdown"
 
         result: List[Union[Text, Markdown, Syntax]] = []
 
@@ -599,9 +594,9 @@ class ActionRenderer:
 
         if content:
             if content_type == "yaml":
-                result.append(Syntax(content, "yaml", theme="monokai", line_numbers=True))
+                result.append(Syntax(content, "yaml", theme=CODE_THEME, line_numbers=True))
             elif content_type == "sql":
-                result.append(Syntax(content, "sql", theme="monokai", line_numbers=True))
+                result.append(Syntax(content, "sql", theme=CODE_THEME, line_numbers=True))
             elif content_type == "markdown":
                 result.append(Markdown(content))
             else:
@@ -707,10 +702,19 @@ class ActionRenderer:
             return result
         else:
             status_dot = "[green]\u23fa[/green]" if action.status == ActionStatus.SUCCESS else "[red]\u23fa[/red]"
-            header = f"\U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}"
-            if tc.output_preview:
-                header += f"\n    {rich_escape(tc.output_preview)}"
-            return [Text.from_markup(f"{status_dot} {header}")]
+            header = f"\U0001f527 {rich_escape(tc.label)}({rich_escape(tc.args_summary)})"
+            if action.status == ActionStatus.SUCCESS:
+                mark = "[green]\u2713[/green]"
+            else:
+                mark = "[red]\u00d7[/red]"
+            result_text = tc.compact_result or tc.output_preview
+            dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
+            dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
+            if result_text:
+                body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
+            else:
+                body = f"  \u2514\u2500 {mark}{dur_suffix}"
+            return [Text.from_markup(f"{status_dot} {header}\n{body}")]
 
     @staticmethod
     def _parse_task_tool_input(input_data: dict) -> tuple:
@@ -786,10 +790,25 @@ class ActionRenderer:
     # -- processing animation -----------------------------------------------
 
     def render_processing(self, action: ActionHistory, frame: str) -> Text:
-        """Render blinking animation frame for a PROCESSING tool."""
+        """Render the static running indicator for a PROCESSING tool.
+
+        Output: ``{frame} 🔧 {function_name}({first_arg_summary})`` at depth=0
+        (no dim — matches the completed top-level tool header colour), and
+        ``  ⎿  {frame} 🔧 …`` inside a subagent group (depth>0) with
+        ``[dim]`` so it aligns with the other ``⎿`` tool rows under the
+        ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` when no
+        arguments were sent.
+        """
+        from datus.cli.action_display.tool_content import extract_args
+
         function_name = action.input.get("function_name", "") if action.input else ""
-        text = f"{frame} \U0001f527 {function_name or action.messages}..."
-        return Text.from_markup(f"[white]{text}[/white]")
+        label = function_name or action.messages or ""
+        args_lines = extract_args(action)
+        suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
+        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}"
+        if action.depth > 0:
+            return Text.from_markup(f"[dim]  \u23bf  {body}[/dim]")
+        return Text.from_markup(body)
 
     # -- utility renderables ------------------------------------------------
 

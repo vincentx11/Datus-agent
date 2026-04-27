@@ -112,7 +112,7 @@ class TestCreateInteractiveNode:
     def test_gen_table(self, mock_init):
         config = _mock_agent_config()
         create_interactive_node("gen_table", config)
-        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive")
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", node_name=None)
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gensql(self, mock_init):
@@ -122,6 +122,59 @@ class TestCreateInteractiveNode:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["node_id"] == "my_custom_sql_cli"
         assert call_kwargs["node_type"] == "gensql"
+
+    @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_table")
+    def test_config_driven_gen_table(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("wide_table_builder", config)
+        mock_init.assert_called_once_with(
+            agent_config=config,
+            execution_mode="interactive",
+            node_name="wide_table_builder",
+        )
+
+    @patch("datus.agent.node.gen_skill_agentic_node.SkillCreatorAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_skill")
+    def test_config_driven_gen_skill(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("skill_designer", config, node_id_suffix="_cli")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "skill_designer_cli"
+        assert call_kwargs["node_name"] == "skill_designer"
+        assert call_kwargs["node_type"] == "gen_skill"
+
+    @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="gen_dashboard")
+    def test_config_driven_gen_dashboard(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("sales_dashboard", config, node_id_suffix="_cli", scope="team-a")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "sales_dashboard_cli"
+        assert call_kwargs["node_name"] == "sales_dashboard"
+        assert call_kwargs["execution_mode"] == "interactive"
+        assert call_kwargs["scope"] == "team-a"
+
+    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
+    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="scheduler")
+    def test_config_driven_scheduler(self, mock_resolve, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("etl_scheduler", config, node_id_suffix="_cli", scope="team-a")
+        mock_init.assert_called_once()
+        call_kwargs = mock_init.call_args[1]
+        assert call_kwargs["node_id"] == "etl_scheduler_cli"
+        assert call_kwargs["node_name"] == "etl_scheduler"
+        assert call_kwargs["execution_mode"] == "interactive"
+        assert call_kwargs["scope"] == "team-a"
+
+    @patch("datus.agent.node.feedback_agentic_node.FeedbackAgenticNode.__init__", return_value=None)
+    def test_feedback_routes_to_feedback_node(self, mock_init):
+        """`/feedback` must land on FeedbackAgenticNode, not the gensql fallback."""
+        config = _mock_agent_config()
+        create_interactive_node("feedback", config)
+        mock_init.assert_called_once_with(agent_config=config, execution_mode="interactive", scope=None)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +256,13 @@ class TestCreateNodeInput:
                 {"catalog": "cat", "database": "db"},
                 {"user_message": "report", "catalog": "cat", "database": "db"},
             ),
+            (
+                "datus.agent.node.feedback_agentic_node",
+                "FeedbackAgenticNode",
+                "analyze and archive",
+                {"database": "db"},
+                {"user_message": "analyze and archive", "database": "db"},
+            ),
         ],
     )
     def test_create_node_input(self, node_module, node_class_name, message, kwargs, expected_attrs):
@@ -213,3 +273,24 @@ class TestCreateNodeInput:
             assert getattr(result, attr) == expected_value, (
                 f"{node_class_name}: expected {attr}={expected_value!r}, got {getattr(result, attr)!r}"
             )
+
+    def test_feedback_source_session_id_wired(self):
+        """Feedback branch must forward source_session_id to FeedbackNodeInput."""
+        node_class = _load_node_class("datus.agent.node.feedback_agentic_node", "FeedbackAgenticNode")
+        node = MagicMock(spec=node_class)
+        result = create_node_input(
+            "analyze and archive",
+            node,
+            database="db",
+            source_session_id="chat_session_abc",
+        )
+        assert result.source_session_id == "chat_session_abc"
+        assert result.database == "db"
+        assert result.user_message == "analyze and archive"
+
+    def test_feedback_source_session_id_defaults_to_none(self):
+        """CLI callers leave source_session_id unset → FeedbackNodeInput carries None."""
+        node_class = _load_node_class("datus.agent.node.feedback_agentic_node", "FeedbackAgenticNode")
+        node = MagicMock(spec=node_class)
+        result = create_node_input("/feedback", node)
+        assert result.source_session_id is None

@@ -12,6 +12,8 @@ to provide a unified interface for skill operations.
 import fnmatch
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
+from xml.sax.saxutils import escape as xml_escape
+from xml.sax.saxutils import quoteattr as xml_quoteattr
 
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
@@ -74,14 +76,19 @@ class SkillManager:
         self,
         node_name: str,
         patterns: Optional[List[str]] = None,
+        node_class: Optional[str] = None,
     ) -> List[SkillMetadata]:
         """Get skills available for a node, filtered by permissions and patterns.
 
         Skills with DENY permission are hidden. Skills with ALLOW or ASK are included.
 
         Args:
-            node_name: Name of the agentic node
-            patterns: Optional list of glob patterns to filter skills (e.g., ["sql-*", "data-*"])
+            node_name: Agent node name (alias).
+            patterns: Optional glob patterns to filter skills (e.g., ``["sql-*"]``).
+            node_class: Canonical node class identifier (e.g. ``gen_dashboard``
+                for a subagent aliased as ``my_dashboard``). Passed alongside
+                ``node_name`` when matching ``allowed_agents`` so class-level
+                scoping applies to custom aliases.
 
         Returns:
             List of available SkillMetadata
@@ -105,6 +112,18 @@ class SkillManager:
         # Filter by model invocation (respect disable_model_invocation)
         all_skills = [s for s in all_skills if s.is_model_invocable()]
 
+        # Filter by agent scoping (respect allowed_agents whitelist). Match
+        # against both the alias and the canonical class name so custom
+        # subagent aliases still pick up class-level scoping.
+        all_skills = [s for s in all_skills if s.is_allowed_for(node_name, node_class)]
+
+        # Exclude validator skills. They are driven exclusively by
+        # ValidationHook and must NOT be exposed in the main agent's
+        # <available_skills> list or via SkillFuncTool — otherwise the
+        # validator body would run twice (softly by the main agent + hardly
+        # by the hook). See ValidationHook design doc (Part §5.3).
+        all_skills = [s for s in all_skills if not s.is_validator()]
+
         logger.debug(f"Available skills for {node_name}: {[s.name for s in all_skills]}")
         return all_skills
 
@@ -113,6 +132,8 @@ class SkillManager:
         skill_name: str,
         node_name: str,
         check_permission: bool = True,
+        check_scope: bool = True,
+        node_class: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[str]]:
         """Load a skill's full content.
 
@@ -120,9 +141,16 @@ class SkillManager:
         Does NOT handle ASK permission prompts - caller should handle that.
 
         Args:
-            skill_name: Name of the skill to load
-            node_name: Name of the current agentic node
-            check_permission: Whether to check permission (default True)
+            skill_name: Name of the skill to load.
+            node_name: Agent node name (alias) of the current agentic node.
+            check_permission: Whether to check permission (default True).
+            check_scope: Whether to enforce the skill's ``allowed_agents``
+                whitelist (default True). Authoring workflows (``gen_skill``)
+                pass False so they can read scoped skills for editing.
+            node_class: Canonical class identifier for the current agent,
+                matched against ``allowed_agents`` alongside ``node_name`` so
+                scope rules written in terms of the class (e.g. ``gen_dashboard``)
+                apply to custom aliases.
 
         Returns:
             Tuple of (success, message, content)
@@ -134,6 +162,33 @@ class SkillManager:
         skill = self.registry.get_skill(skill_name)
         if not skill:
             return False, f"Skill '{skill_name}' not found", None
+
+        # Validator skills are driven exclusively by ``ValidationHook`` and
+        # must never be resolved through the main SkillFuncTool path. If a
+        # hallucinated / cached skill name leaks through, refusing here
+        # preserves the "runs once, by hook" invariant noted above at the
+        # ``get_available_skills`` filter.
+        if skill.is_validator():
+            logger.warning(
+                "Skill '%s' is a validator and cannot be loaded directly; it runs via ValidationHook only",
+                skill_name,
+            )
+            return (
+                False,
+                f"Skill '{skill_name}' is a validator — executed by ValidationHook, not loadable here",
+                None,
+            )
+
+        # Enforce ``allowed_agents`` scope unless an authoring workflow opts
+        # out. Matches both the alias and the canonical class name so that
+        # aliased subagents still satisfy class-level whitelists.
+        if check_scope and not skill.is_allowed_for(node_name, node_class):
+            logger.warning(f"Skill '{skill_name}' is not available for agent '{node_name}'")
+            return (
+                False,
+                f"Skill '{skill_name}' is not available for agent '{node_name}'",
+                None,
+            )
 
         # Check permission
         if check_permission and self.permission_manager:
@@ -159,33 +214,76 @@ class SkillManager:
         self,
         node_name: str,
         patterns: Optional[List[str]] = None,
+        node_class: Optional[str] = None,
     ) -> str:
         """Generate XML context for available skills (for system prompt injection).
 
         Produces the <available_skills> XML block that lists skills the LLM can use.
 
         Args:
-            node_name: Name of the agentic node
-            patterns: Optional patterns to filter skills
+            node_name: Agent node name (alias).
+            patterns: Optional patterns to filter skills.
+            node_class: Canonical node class name, passed through to
+                ``get_available_skills`` for class-level scoping.
 
         Returns:
             XML string for system prompt injection
         """
-        skills = self.get_available_skills(node_name, patterns)
-
-        if not skills:
-            return ""
+        skills = self.get_available_skills(node_name, patterns, node_class=node_class)
 
         lines = ["<available_skills>"]
-        for skill in skills:
-            lines.append(f'<skill name="{skill.name}">')
-            lines.append(f"  <description>{skill.description}</description>")
-            if skill.tags:
-                lines.append(f"  <tags>{', '.join(skill.tags)}</tags>")
-            lines.append("</skill>")
+        if not skills:
+            # Emit an explicit empty block instead of returning "" so the LLM
+            # has a definitive signal that no skills are available. Without
+            # this, an LLM asked "what skills can I use?" tends to hallucinate
+            # names from adjacent tool schemas — most commonly the subagent
+            # types enumerated by the ``task()`` tool — and then calls
+            # ``load_skill()`` with a subagent name.
+            lines.append("  (none)")
+        else:
+            for skill in skills:
+                # XML-escape every interpolated field — SKILL.md metadata is
+                # author-controlled (especially for marketplace-installed
+                # skills), and an unescaped ``</available_skills>`` or similar
+                # control sequence inside a description/tag would otherwise
+                # close the block early and open a prompt-injection channel
+                # right before our guardrail lines below.
+                lines.append(f"<skill name={xml_quoteattr(skill.name)}>")
+                lines.append(f"  <description>{xml_escape(skill.description or '')}</description>")
+                if skill.tags:
+                    tags_text = ", ".join(xml_escape(tag) for tag in skill.tags)
+                    lines.append(f"  <tags>{tags_text}</tags>")
+                lines.append("</skill>")
         lines.append("</available_skills>")
         lines.append("")
-        lines.append('To use a skill, call: load_skill(skill_name="<skill_name>")')
+        if skills:
+            lines.append('To use a skill, call: load_skill(skill_name="<skill_name>")')
+            lines.append(
+                "HARD RULES for skill references:\n"
+                "  1. The list above is EXHAUSTIVE. Only names appearing inside "
+                "``<available_skills>`` are real.\n"
+                "  2. Never invent, guess, extrapolate, or infer skill names from "
+                "naming patterns (e.g. do NOT assume ``<domain>-creation`` / "
+                "``<domain>-validation`` sibling skills exist just because one does).\n"
+                "  3. Subagent names (from the ``task()`` tool) are NOT skill names.\n"
+                "  4. Do not mention, propose, or ask the user about skill names that "
+                "are not in the list — not in ``ask_user`` prompts, not in plans, not "
+                "in explanations. If the needed skill is absent, delegate to a "
+                "subagent via ``sub_agent_tools.task(type=<subagent>, ...)`` and let "
+                "the subagent load its own skills."
+            )
+        else:
+            lines.append(
+                "HARD RULES — no skills are available to this agent:\n"
+                "  1. Do NOT call ``load_skill()``. There is nothing to load.\n"
+                "  2. Do NOT mention, propose, or ask the user about any skill name "
+                "in ``ask_user`` prompts, plans, or explanations. Any skill name you "
+                "produce is fabricated by definition — the list above is empty.\n"
+                "  3. Subagent names from the ``task()`` tool are NOT skill names.\n"
+                "  4. For tasks that would typically use a skill, delegate via "
+                "``sub_agent_tools.task(type=<subagent>, ...)``. The subagent will "
+                "load whichever skill it needs — that decision is NOT yours to make."
+            )
 
         return "\n".join(lines)
 

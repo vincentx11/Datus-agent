@@ -5,55 +5,56 @@
 """Scheduler tools for submitting and managing jobs via Datus scheduler adapters."""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agents import Tool
+from datus_scheduler_core.models import SchedulerJobPayload
+from datus_scheduler_core.registry import SchedulerAdapterRegistry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
-from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
 class SchedulerTools(BaseTool):
-    """Function tools for interacting with the configured scheduler platform (e.g. Airflow).
-
-    Requires a ``scheduler:`` section in ``agent.yml`` with the adapter config.
-    """
+    """Function tools for interacting with the configured scheduler platform (e.g. Airflow)."""
 
     tool_name = "scheduler_tools"
     tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
 
-    def __init__(self, agent_config: AgentConfig, **kwargs):
+    def __init__(self, agent_config: AgentConfig, scheduler_service: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self.agent_config = agent_config
+        self.scheduler_service = scheduler_service
+
+    def _selected_scheduler_config(self) -> dict:
+        return dict(self.agent_config.get_scheduler_config(self.scheduler_service))
 
     # ── Adapter factory ────────────────────────────────────────────────────
 
     def _get_adapter(self):
-        """Lazily create a scheduler adapter from the configured scheduler."""
-        try:
-            from datus_scheduler_core.registry import SchedulerAdapterRegistry
-        except ImportError as exc:
-            raise DatusException(
-                ErrorCode.COMMON_MISSING_DEPENDENCY,
-                message_args={},
-                message="datus-scheduler-core is required for scheduler tools. "
-                "Install it with: pip install datus-scheduler-core",
-            ) from exc
-
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
-        if not scheduler_config:
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={"config_error": "No scheduler configured in agent.yml. Add a 'scheduler:' section."},
-            )
-
-        config = dict(scheduler_config)
+        """Create a scheduler adapter from the configured scheduler."""
+        config = self._selected_scheduler_config()
         platform = config.get("type", "airflow")
+
+        # For Airflow, the adapter config's ``project_name`` is a
+        # filesystem-scoped knob ONLY — it controls the DAG subdirectory
+        # (``{dags_folder_root}/{project_name}/``) so multiple Datus
+        # instances writing DAG files to the same Airflow cluster never
+        # collide on disk. It does NOT auto-derive a ``dag_id_prefix``
+        # anymore (the two concerns were split in datus-scheduler-airflow
+        # 0.2.0), so reads aren't silently filtered by the Datus workspace.
+        # Auto-injecting the Datus workspace identifier is safe: it stays
+        # on the file side, and users who want list-level multi-tenant
+        # isolation opt in by setting ``dag_id_prefix`` explicitly in
+        # ``services.schedulers.<name>``.
+        if platform == "airflow":
+            config.setdefault("project_name", self.agent_config.project_name)
+
         return SchedulerAdapterRegistry.create_adapter(platform=platform, config=config)
 
     # ── Tool methods ───────────────────────────────────────────────────────
@@ -82,11 +83,6 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
         # Read SQL file
         try:
             sql_path = Path(sql_file_path).expanduser()
@@ -101,7 +97,7 @@ class SchedulerTools(BaseTool):
         # Submit
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -121,6 +117,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -156,11 +153,6 @@ class SchedulerTools(BaseTool):
             FuncToolResult with result containing job_id and status.
         """
         try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
-        try:
             sql_path = Path(sql_file_path).expanduser()
             if not sql_path.exists():
                 return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
@@ -172,7 +164,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -195,6 +187,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -220,7 +213,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -256,7 +249,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -287,37 +280,43 @@ class SchedulerTools(BaseTool):
     def list_scheduler_jobs(
         self,
         limit: int = 20,
+        offset: int = 0,
     ) -> FuncToolResult:
         """List all scheduled jobs on the configured scheduler.
 
         Args:
             limit: Maximum number of jobs to return (default 20).
+            offset: Pagination offset (default 0).
 
         Returns:
-            FuncToolResult with result containing a list of job summaries.
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): job summary rows
+              - total (int | None): upstream total when the platform reports
+                it; None in multi-tenant modes where the server's count
+                would be misleading
+              - has_more (bool | None): next-page hint
+              - extra (dict | None): {"next_offset": int} when has_more=True
+
+            Pagination: call again with offset=extra.next_offset until
+            has_more is False.
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            jobs = adapter.list_jobs(limit=limit)
-            return FuncToolResult(
-                success=1,
-                result={
-                    "total": len(jobs),
-                    "jobs": [
-                        {
-                            "job_id": j.job_id,
-                            "job_name": j.job_name,
-                            "status": j.status.value,
-                            "schedule": j.schedule,
-                        }
-                        for j in jobs
-                    ],
-                },
-            )
+            page = adapter.list_jobs(limit=limit, offset=offset)
+            rows = [
+                {
+                    "job_id": j.job_id,
+                    "job_name": j.job_name,
+                    "status": j.status.value,
+                    "schedule": j.schedule,
+                }
+                for j in page.items
+            ]
+            return self._build_scheduler_envelope(rows, total=page.total, offset=offset, limit=limit)
         except Exception as exc:
             logger.error("list_scheduler_jobs failed: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
@@ -326,6 +325,32 @@ class SchedulerTools(BaseTool):
                 adapter.close()
             except Exception as close_exc:
                 logger.debug("adapter.close() failed: %s", close_exc)
+
+    @staticmethod
+    def _build_scheduler_envelope(
+        rows: list,
+        *,
+        total: "int | None",
+        offset: int,
+        limit: int,
+    ) -> FuncToolResult:
+        """Wrap adapter ListJobsResult / ListRunsResult rows into FuncToolListResult.
+
+        When ``total`` is known, ``has_more`` is exact. When it's ``None``
+        (multi-tenant Airflow or status-filtered runs), fall back to
+        ``len(rows) == limit`` as the "looks like another page" heuristic.
+        """
+        if total is not None:
+            has_more: "bool | None" = offset + len(rows) < total
+        elif limit > 0:
+            has_more = len(rows) == limit
+        else:
+            has_more = None
+        extra = {"next_offset": offset + len(rows)} if has_more else None
+        return FuncToolResult(
+            success=1,
+            result=FuncToolListResult(items=rows, total=total, has_more=has_more, extra=extra).model_dump(),
+        )
 
     def pause_job(
         self,
@@ -341,7 +366,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -370,7 +395,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -399,7 +424,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -449,11 +474,6 @@ class SchedulerTools(BaseTool):
         if job_type not in ("sql", "sparksql"):
             return FuncToolResult(success=0, error=f"Unsupported job_type '{job_type}'. Use 'sql' or 'sparksql'.")
 
-        try:
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError as exc:
-            return FuncToolResult(success=0, error=f"datus-scheduler-core not installed: {exc}")
-
         # Read SQL file
         try:
             sql_path = Path(sql_file_path).expanduser()
@@ -475,7 +495,7 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -507,6 +527,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "deliverable_target": self._build_scheduler_target(job),
                 },
             )
         except Exception as exc:
@@ -522,41 +543,36 @@ class SchedulerTools(BaseTool):
         self,
         job_id: str,
         limit: int = 10,
+        offset: int = 0,
     ) -> FuncToolResult:
         """List recent runs of a scheduled job, showing status and timing.
 
         Args:
             job_id: The job/DAG identifier to query.
-            limit:          Maximum number of runs to return (default 10).
+            limit: Maximum number of runs to return (default 10).
+            offset: Pagination offset (default 0).
 
         Returns:
-            FuncToolResult with result containing a list of run summaries.
+            FuncToolResult with result as FuncToolListResult. See
+            ``list_scheduler_jobs`` for field semantics.
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            runs = adapter.list_job_runs(job_id, limit=limit)
-            return FuncToolResult(
-                success=1,
-                result={
-                    "job_id": job_id,
-                    "total": len(runs),
-                    "runs": [
-                        {
-                            "run_id": r.run_id,
-                            "status": r.status.value,
-                            "started_at": r.started_at.isoformat()
-                            if hasattr(r.started_at, "isoformat")
-                            else r.started_at,
-                            "ended_at": r.ended_at.isoformat() if hasattr(r.ended_at, "isoformat") else r.ended_at,
-                        }
-                        for r in runs
-                    ],
-                },
-            )
+            page = adapter.list_job_runs(job_id, limit=limit, offset=offset)
+            rows = [
+                {
+                    "run_id": r.run_id,
+                    "status": r.status.value,
+                    "started_at": r.started_at.isoformat() if hasattr(r.started_at, "isoformat") else r.started_at,
+                    "ended_at": r.ended_at.isoformat() if hasattr(r.ended_at, "isoformat") else r.ended_at,
+                }
+                for r in page.items
+            ]
+            return self._build_scheduler_envelope(rows, total=page.total, offset=offset, limit=limit)
         except Exception as exc:
             logger.error("list_job_runs failed: %s", exc)
             return FuncToolResult(success=0, error=str(exc))
@@ -582,7 +598,7 @@ class SchedulerTools(BaseTool):
         """
         try:
             adapter = self._get_adapter()
-        except (ImportError, ValueError, DatusException) as exc:
+        except (ValueError, DatusException) as exc:
             return FuncToolResult(success=0, error=str(exc))
 
         try:
@@ -614,7 +630,10 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing a list of {conn_id, description}.
         """
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        try:
+            scheduler_config = self._selected_scheduler_config()
+        except DatusException as exc:
+            return FuncToolResult(success=0, error=str(exc))
         connections = scheduler_config.get("connections", {})
         if not connections:
             return FuncToolResult(
@@ -639,12 +658,29 @@ class SchedulerTools(BaseTool):
 
     def _connections_description(self) -> str:
         """Build a suffix describing available conn_ids from scheduler config."""
-        scheduler_config = getattr(self.agent_config, "scheduler_config", {}) or {}
+        try:
+            scheduler_config = self._selected_scheduler_config()
+        except DatusException:
+            return ""
         connections = scheduler_config.get("connections", {})
         if not connections:
             return ""
         items = ", ".join(f"'{k}' ({v})" for k, v in connections.items())
         return f"\n\nAvailable conn_id values: {items}"
+
+    @staticmethod
+    def _build_scheduler_target(job: Any) -> dict:
+        """Build a ``SchedulerJobTarget`` dict from a scheduler-core
+        ``ScheduledJob`` return, for ValidationHook consumption. Attached by
+        mutating methods (``submit_*`` / ``update_job``).
+        """
+        from datus.validation.report import SchedulerJobTarget
+
+        return SchedulerJobTarget(
+            platform=str(getattr(job, "platform", "") or "unknown"),
+            job_id=str(getattr(job, "job_id", "") or ""),
+            job_name=getattr(job, "job_name", None),
+        ).model_dump(exclude_none=True)
 
     def available_tools(self) -> List[Tool]:
         """Return all scheduler tool functions as FunctionTool objects."""

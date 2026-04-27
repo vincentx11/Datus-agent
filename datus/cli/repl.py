@@ -9,8 +9,10 @@ This module provides the main interactive shell for the CLI.
 
 from __future__ import annotations
 
-import sys
+import asyncio
+import contextvars
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import date, datetime
@@ -25,26 +27,51 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 if TYPE_CHECKING:
     from datus.agent.workflow_runner import WorkflowRunner
 
 from datus_db_core import BaseSqlConnector
 
+from datus import __version__
 from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
-from datus.cli.autocomplete import AtReferenceCompleter, CustomPygmentsStyle, CustomSqlLexer, SubagentCompleter
+from datus.cli.autocomplete import (
+    AtReferenceCompleter,
+    CustomPygmentsStyle,
+    CustomSqlLexer,
+    ServiceCommandCompleter,
+    SlashCommandCompleter,
+)
 from datus.cli.bi_dashboard import BiDashboardCommands
 from datus.cli.chat_commands import ChatCommands
+from datus.cli.cli_styles import (
+    PASTE_COLLAPSE_THRESHOLD,
+    STATUS_BAR_STYLE,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 from datus.cli.context_commands import ContextCommands
+from datus.cli.effort_commands import EffortCommands
+from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
-from datus.cli.sub_agent_commands import SubAgentCommands
+from datus.cli.model_commands import ModelCommands
+from datus.cli.service_commands import ServiceCommands
+from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
+from datus.cli.status_bar import StatusBarProvider
+from datus.cli.tui import DatusApp, tui_enabled
+from datus.cli.tui.app import EXIT_SENTINEL
+from datus.cli.tui.live_display_state import LiveDisplayState
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.tools.db_tools.db_manager import db_manager_instance
-from datus.utils.constants import SYS_SUB_AGENTS, DBType, SQLType
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
@@ -52,15 +79,54 @@ from datus.utils.sql_utils import parse_sql_type
 logger = get_logger(__name__)
 
 
+DATUS_BANNER_TEXT = (
+    "██████╗   █████╗  ████████╗ ██╗   ██╗ ███████╗\n"
+    "██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██║   ██║ ██╔════╝\n"
+    "██║  ██║ ███████║    ██║    ██║   ██║ ███████╗\n"
+    "██║  ██║ ██╔══██║    ██║    ██║   ██║ ╚════██║\n"
+    "██████╔╝ ██║  ██║    ██║    ╚██████╔╝ ███████║\n"
+    "╚═════╝  ╚═╝  ╚═╝    ╚═╝     ╚═════╝  ╚══════╝"
+)
+_BANNER_MIN_WIDTH = 60
+
+
 class CommandType(Enum):
     """Type of command entered by the user."""
 
-    SQL = "sql"  # Regular SQL
+    SQL = "sql"  # Regular SQL statement
     TOOL = "tool"  # !command (tool/workflow)
-    CONTEXT = "context"  # @command (context explorer)
-    CHAT = "chat"  # /command (chat)
-    INTERNAL = "internal"  # .command (CLI control)
+    SLASH = "slash"  # /command (session / metadata / context / agent / system)
+    CHAT = "chat"  # bare text routed to the default agent
     EXIT = "exit"  # exit/quit command
+    UNKNOWN = "unknown"  # unrecognized /command or renamed legacy prefix
+
+
+_LEGACY_PREFIX_HINTS: dict[str, str] = {
+    ".help": "/help",
+    ".exit": "/exit",
+    ".quit": "/quit",
+    ".clear": "/clear",
+    ".chat_info": "/chat_info",
+    ".compact": "/compact",
+    ".resume": "/resume",
+    ".rewind": "/rewind",
+    ".databases": "/databases",
+    ".database": "/database",
+    ".tables": "/tables",
+    ".schemas": "/schemas",
+    ".schema": "/schema",
+    ".table_schema": "/table_schema",
+    ".indexes": "/indexes",
+    ".datasource": "/datasource",
+    ".agent": "/agent",
+    ".subagent": "/subagent",
+    ".mcp": "/mcp",
+    ".skill": "/skill",
+    ".bootstrap-bi": "/bootstrap-bi",
+    ".language": "/language",
+    "@catalog": "/catalog",
+    "@subject": "/subject",
+}
 
 
 class DatusCLI:
@@ -76,10 +142,8 @@ class DatusCLI:
         self.selected_catalog_data = {}
         self.scope = getattr(args, "session_scope", None)
 
-        setup_exception_handler(
-            console_logger=self.console.print, prefix_wrap_func=lambda x: f"[bold red]{x}[/bold red]"
-        )
-        self.db_connector: BaseSqlConnector
+        setup_exception_handler(console_logger=self.console.print, prefix_wrap_func=lambda x: f"[red]{x}[/red]")
+        self.db_connector: BaseSqlConnector | None = None
 
         self.agent = None
         self.agent_initializing = False
@@ -88,10 +152,39 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
+        self._last_ctrl_c_time: float = 0.0
+        # Default agent for /message routing ("" = chat node)
+        self.default_agent = ""
 
         # Load agent config first so path-dependent helpers use the configured home.
-        self.agent_config = load_agent_config(**vars(self.args))
+        self.agent_config = load_agent_config(create_if_missing=True, **vars(self.args))
         self.configuration_manager = configuration_manager()
+
+        # Active permission profile name. Initialized from agent_config;
+        # mutated by /profile. StatusBarProvider reads this for display.
+        self.active_profile: str = getattr(self.agent_config, "active_profile_name", "normal")
+
+        # Bind the process-wide path-manager ContextVar once so implicit callers
+        # (e.g. ``get_path_manager()`` inside storage init) resolve against the
+        # loaded agent_config instead of an empty default.  Required before
+        # background tasks are scheduled, since ContextVars are snapshotted at
+        # task-creation / context-copy time.
+        from datus.utils.path_manager import set_current_path_manager
+
+        set_current_path_manager(agent_config=self.agent_config)
+
+        # Background event loop for async init tasks.  A single daemon thread
+        # hosts the loop; individual init work runs as coroutines that inherit
+        # the current ContextVar snapshot (see ``_async_init_agent``).  Using
+        # a managed loop instead of spawning ad-hoc ``threading.Thread`` means
+        # we only pay the ContextVar-copy cost once per background task.
+        self._bg_loop = asyncio.new_event_loop()
+        self._bg_loop_thread = threading.Thread(
+            target=self._bg_loop.run_forever,
+            name="datus-cli-bg-loop",
+            daemon=True,
+        )
+        self._bg_loop_thread.start()
 
         if args.history_file:
             history_file = Path(args.history_file).expanduser().resolve()
@@ -103,12 +196,25 @@ class DatusCLI:
 
         # Initialize available subagents early (needed by autocomplete)
         self.available_subagents = set(SYS_SUB_AGENTS)
+        self.available_subagents.add("chat")
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
 
+        # TUI mode: use persistent prompt_toolkit Application with pinned
+        # status bar + input. Requires a TTY on both stdin/stdout and can be
+        # disabled via ``DATUS_TUI=0`` as an escape hatch.
+        self._use_tui = self.interactive and tui_enabled()
+        self.tui_app: Optional[DatusApp] = None
+        self.live_state: Optional[LiveDisplayState] = None
+
         self.at_completer: AtReferenceCompleter
         if self.interactive:
-            self._init_prompt_session()
+            # Both paths build completers, lexers and styles via the same
+            # helpers so feature parity is preserved.
+            if self._use_tui:
+                self._init_tui_app()
+            else:
+                self._init_prompt_session()
         else:
             self.at_completer = AtReferenceCompleter(self.agent_config, available_subagents=self.available_subagents)
 
@@ -128,18 +234,29 @@ class DatusCLI:
             current_catalog=getattr(args, "catalog", ""),
             current_schema=getattr(args, "schema", ""),
         )
-        self.db_manager = db_manager_instance(self.agent_config.namespaces)
+        self.db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
         # Initialize command handlers after cli_context is created
         self.agent_commands = AgentCommands(self, self.cli_context)
         self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
-        self.sub_agent_commands = SubAgentCommands(self)
         self.bi_dashboard_commands = BiDashboardCommands(self)
+        self.model_commands = ModelCommands(self)
+        self.language_commands = LanguageCommands(self)
+        self.effort_commands = EffortCommands(self)
+        self.service_commands = ServiceCommands(self)
+        from datus.cli.datasource_commands import DatasourceCommands
+
+        self.datasource_commands = DatasourceCommands(self)
+
+        from datus.cli.background_sync import BackgroundSchemaSyncManager
+
+        self.bg_sync = BackgroundSchemaSyncManager(self)
+        self._status_bar_provider = StatusBarProvider(self)
 
         # Dictionary of available commands - created after handlers are initialized
-        self.commands = {
+        self.commands: Dict[str, Any] = {
             # "!run": self.agent_commands.cmd_darun_screen,
             "!sl": self.agent_commands.cmd_schema_linking,
             "!schema_linking": self.agent_commands.cmd_schema_linking,
@@ -156,36 +273,62 @@ class DatusCLI:
             # to be deprecated when sub agent is read
             # "!reason": self.agent_commands.cmd_reason_stream,
             # "!compare": self.agent_commands.cmd_compare_stream,
-            # catalog commands
-            "@catalog": self.context_commands.cmd_catalog,
-            "@subject": self.context_commands.cmd_subject,
-            # interal commands
-            ".clear": self.chat_commands.cmd_clear_chat,
-            ".chat_info": self.chat_commands.cmd_chat_info,
-            ".compact": self.chat_commands.cmd_compact,
-            ".sessions": self.chat_commands.cmd_list_sessions,
-            ".resume": self.chat_commands.cmd_resume,
-            ".rewind": self.chat_commands.cmd_rewind,
-            ".databases": self.metadata_commands.cmd_list_databases,
-            ".database": self.metadata_commands.cmd_switch_database,
-            ".tables": self.metadata_commands.cmd_tables,
-            ".schemas": self.metadata_commands.cmd_schemas,
-            ".schema": self.metadata_commands.cmd_switch_schema,
-            ".table_schema": self.metadata_commands.cmd_table_schema,
-            ".indexes": self.metadata_commands.cmd_indexes,
-            ".namespace": self._cmd_switch_namespace,
-            ".subagent": self.sub_agent_commands.cmd,
-            ".mcp": self._cmd_mcp,
-            ".skill": self._cmd_skill,
-            ".bootstrap-bi": self.bi_dashboard_commands.cmd,
-            ".help": self._cmd_help,
-            ".exit": self._cmd_exit,
-            ".quit": self._cmd_exit,
         }
+        # Slash commands are driven by ``slash_registry.SLASH_COMMANDS`` so the
+        # completer, help text, and dispatcher share one source of truth.
+        for spec_name, handler in self._build_slash_handler_map().items():
+            spec = lookup(spec_name)
+            if spec is None:
+                raise RuntimeError(f"Slash handler '{spec_name}' has no registry entry")
+            self.commands[f"/{spec.name}"] = handler
+            for alias in spec.aliases:
+                self.commands[f"/{alias}"] = handler
 
         # Start agent initialization in background
         self._async_init_agent()
         self._init_connection()
+
+    def _build_slash_handler_map(self) -> Dict[str, Any]:
+        """Return the canonical-name -> handler map consumed by the commands dict.
+
+        Kept alongside ``SLASH_COMMANDS`` ordering so the registry integrity
+        test can assert every spec has a bound handler.
+        """
+
+        return {
+            # session
+            "help": self._cmd_help,
+            "exit": self._cmd_exit,
+            "clear": self.chat_commands.cmd_clear_chat,
+            "chat_info": self.chat_commands.cmd_chat_info,
+            "compact": self.chat_commands.cmd_compact,
+            "resume": self.chat_commands.cmd_resume,
+            "rewind": self.chat_commands.cmd_rewind,
+            # metadata
+            "databases": self.metadata_commands.cmd_list_databases,
+            "database": self.metadata_commands.cmd_switch_database,
+            "tables": self.metadata_commands.cmd_tables,
+            "schemas": self.metadata_commands.cmd_schemas,
+            "schema": self.metadata_commands.cmd_switch_schema,
+            "table_schema": self.metadata_commands.cmd_table_schema,
+            "indexes": self.metadata_commands.cmd_indexes,
+            # context
+            "catalog": self.context_commands.cmd_catalog,
+            "subject": self.context_commands.cmd_subject,
+            # agent
+            "agent": self._cmd_agent,
+            "subagent": self._cmd_subagent,
+            "datasource": self.datasource_commands.cmd,
+            "language": self.language_commands.cmd_language,
+            # system
+            "mcp": self._cmd_mcp,
+            "skill": self._cmd_skill,
+            "bootstrap-bi": self.bi_dashboard_commands.cmd,
+            "model": self.model_commands.cmd_model,
+            "effort": self.effort_commands.cmd_effort,
+            "services": self.service_commands.cmd_services,
+            "profile": self._cmd_profile,
+        }
 
     @property
     def workflow_runner(self) -> WorkflowRunner:
@@ -202,15 +345,21 @@ class DatusCLI:
 
         @kb.add("tab")
         def _(event):
-            """The Tab key triggers completion only, not navigation."""
+            """Tab confirms the highlighted completion (arrow keys navigate)."""
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # If the menu is already open, close it.
-                buffer.complete_next()
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    buffer.complete_next()
+                    cs = buffer.complete_state
+                    if cs and cs.current_completion is not None:
+                        buffer.apply_completion(cs.current_completion)
             else:
-                # If the menu is incomplete, trigger completion.
-                buffer.start_completion(select_first=False)
+                buffer.start_completion(select_first=True)
 
         @kb.add("s-tab")
         def _(event):
@@ -228,7 +377,7 @@ class DatusCLI:
 
             # Show mode change message
             if self.plan_mode_active:
-                self.console.print("[bold green]Plan Mode Activated![/]")
+                self.console.print("[green]Plan Mode Activated![/]")
                 self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
             else:
                 self.console.print("[yellow]Plan Mode Deactivated[/]")
@@ -237,23 +386,21 @@ class DatusCLI:
         def _(event):
             """
             Enter key:
-                if completion menu is open, apply the highlighted item (if any) or close the menu; otherwise execute.
+                apply highlighted completion (if any), close the menu, then
+                submit — in a single keystroke. The earlier two-step behaviour
+                (first Enter only dismissed the auto-opened menu, second Enter
+                submitted) was confusing for slash commands like ``/model``.
             """
             buffer = event.app.current_buffer
 
             if buffer.complete_state:
-                # If there is an actively highlighted completion, apply it.
                 cs = buffer.complete_state
                 comp = cs.current_completion
                 if comp is not None:
                     buffer.apply_completion(comp)
                 else:
-                    # No item highlighted (e.g., select_first=False). Close the menu and proceed as normal Enter.
                     buffer.cancel_completion()
-                    buffer.validate_and_handle()
-                return
 
-            # Performs normal Enter behavior when there is no completion menu.
             buffer.validate_and_handle()
 
         @kb.add("c-o")
@@ -275,17 +422,210 @@ class DatusCLI:
         self.console.print(echoed)
 
     def _get_prompt_text(self):
-        """Get the current prompt text based on mode"""
-        if self.plan_mode_active:
-            return "[PLAN MODE] Datus> "
-        else:
-            return "Datus> "
+        """Input-line prompt text.
+
+        The Datus brand, plan mode, and current agent are now rendered by the
+        status bar on the line above, so the input line keeps a single minimal
+        indicator. Legacy call sites that expect a textual prompt still receive
+        a non-empty string here.
+        """
+        return "> "
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""
         # The prompt will be updated on the next iteration of the main loop
         # This is a limitation of prompt_toolkit's PromptSession
         # For immediate feedback, we could force a redraw, but it's complex
+
+    def _build_prompt_message(self, prompt_text: str):
+        """Build multi-line prompt: status bar line + input prompt line."""
+        try:
+            state = self._status_bar_provider.current_state()
+            tokens = state.to_formatted_tokens()
+        except Exception as e:
+            logger.debug(f"status bar render failed: {e}")
+            tokens = []
+        tokens.append(("", "\n"))
+        tokens.append(("class:prompt", prompt_text))
+        return tokens
+
+    def _build_app_style(self) -> Style:
+        """Return the prompt_toolkit Style used by both PromptSession and TUI.
+
+        Declaring it once keeps status-bar/input coloring in sync between the
+        two input paths and avoids drift when new status-bar segments are
+        added.
+        """
+        return merge_styles(
+            [
+                style_from_pygments_cls(CustomPygmentsStyle),
+                Style.from_dict(STATUS_BAR_STYLE),
+            ]
+        )
+
+    def _status_tokens_for_tui(self) -> List[Tuple[str, str]]:
+        """Build status-bar tokens for the persistent TUI layout.
+
+        Shares :class:`StatusBarProvider` with the PromptSession path so both
+        modes present the same brand/plan/agent/connector/model/tokens/ctx
+        segments.
+        """
+        try:
+            state = self._status_bar_provider.current_state()
+            return state.to_formatted_tokens()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"status bar render failed: {e}")
+            return []
+
+    def _interrupt_agent(self) -> None:
+        chat_commands = getattr(self, "chat_commands", None)
+        current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
+        controller = getattr(current_node, "interrupt_controller", None) if current_node else None
+        if controller is not None:
+            try:
+                controller.interrupt()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(f"interrupt_controller.interrupt failed: {exc}")
+
+    def _init_tui_app(self) -> None:
+        """Create the persistent ``DatusApp`` and register REPL bindings."""
+        # The Tab handler matches the legacy PromptSession behavior
+        # (trigger completion only, no navigation). Additional bindings —
+        # Shift+Tab plan-mode toggle, Ctrl+O trace details, ESC interrupt —
+        # are wired in later phases.
+        from prompt_toolkit.lexers import PygmentsLexer
+
+        # The TUI path still relies on the same AtReferenceCompleter handle
+        # that downstream code queries for subagent state, so attach it
+        # before constructing the app.
+        completer = self.create_combined_completer()
+
+        # Build the shared live-render state first; DatusApp will wire its
+        # own ``invalidate`` into it once constructed (see LiveDisplayState
+        # docstring for the deferred-callback rationale).
+        self.live_state = LiveDisplayState()
+
+        self.tui_app = DatusApp(
+            status_tokens_fn=self._status_tokens_for_tui,
+            dispatch_fn=self._dispatch_command_text,
+            completer=completer,
+            history=self.history,
+            lexer=PygmentsLexer(CustomSqlLexer),
+            style=self._build_app_style(),
+            input_prompt_fn=self._get_prompt_text,
+            live_display_state=self.live_state,
+        )
+
+        @self.tui_app.key_bindings.add("tab")
+        def _tab(event):  # noqa: ANN001 - prompt_toolkit signature
+            buffer = event.app.current_buffer
+            if buffer.complete_state:
+                cs = buffer.complete_state
+                comp = cs.current_completion
+                if comp is not None:
+                    buffer.apply_completion(comp)
+                else:
+                    buffer.complete_next()
+                    cs = buffer.complete_state
+                    if cs and cs.current_completion is not None:
+                        buffer.apply_completion(cs.current_completion)
+            else:
+                buffer.start_completion(select_first=True)
+
+        @self.tui_app.key_bindings.add("s-tab")
+        def _s_tab(event):  # noqa: ANN001
+            """Shift+Tab: Toggle Plan Mode on/off.
+
+            Unlike the PromptSession handler, the TUI must not call
+            ``event.app.exit()`` — that would tear down the persistent
+            Application. Instead the REPL just flips the flag and asks the
+            layout to repaint; the status-bar's ``PLAN`` segment is driven
+            by :meth:`StatusBarState.to_formatted_tokens` so a single
+            ``invalidate`` is enough to reflect the change.
+            """
+            from datus.cli.tui.console_bridge import run_in_terminal_sync
+
+            self.plan_mode_active = not self.plan_mode_active
+            active = self.plan_mode_active
+
+            def _announce() -> None:
+                if active:
+                    self.console.print("[green]Plan Mode Activated![/]")
+                    self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
+                else:
+                    self.console.print("[yellow]Plan Mode Deactivated[/]")
+
+            # Printing via ``run_in_terminal`` keeps the pinned status-bar +
+            # input intact: prompt_toolkit temporarily moves them out of the
+            # way, emits the message, then restores them at the bottom.
+            run_in_terminal_sync(_announce)
+            event.app.invalidate()
+
+        @self.tui_app.key_bindings.add("c-o")
+        def _c_o(event):  # noqa: ANN001
+            """Ctrl+O: toggle verbose during a live stream, or expand the
+            last chat's inline trace details when idle."""
+            from datus.cli.tui.console_bridge import run_in_terminal_sync
+
+            chat_commands = getattr(self, "chat_commands", None)
+            if chat_commands is None:
+                return
+
+            # Live stream active: toggle verbose on the streaming context
+            # (mirrors the key_callbacks entry the termios listener used to
+            # wire for Ctrl+O outside the TUI).
+            streaming_ctx = getattr(chat_commands, "current_streaming_ctx", None)
+            if streaming_ctx is not None:
+                try:
+                    streaming_ctx.toggle_verbose()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(f"toggle_verbose failed: {exc}")
+                return
+
+            last_actions = getattr(chat_commands, "last_actions", None)
+            if not last_actions:
+                return
+
+            def _show() -> None:
+                chat_commands.display_inline_trace_details(last_actions)
+
+            run_in_terminal_sync(_show)
+
+        @self.tui_app.key_bindings.add("escape")
+        def _esc(event):  # noqa: ANN001
+            """Escape: interrupt the running agent loop.
+
+            prompt_toolkit debounces ESC so this handler only fires for a
+            standalone key press, not for the leading byte of arrow-key
+            escape sequences (``\\x1b[A`` etc.). While idle the binding is
+            a no-op so default Buffer behavior (no-op for ESC in insert
+            mode) is preserved.
+            """
+            if not self.tui_app._agent_running.is_set():
+                return
+            self._interrupt_agent()
+
+        @self.tui_app.key_bindings.add("c-c")
+        def _c_c(event):  # noqa: ANN001
+            """Ctrl+C: double-press within 1s exits; single press interrupts
+            a running agent or clears the buffer when idle.
+            """
+            now = time.monotonic()
+            if now - self._last_ctrl_c_time < 1.0:
+                self._last_ctrl_c_time = 0.0
+                self._interrupt_agent()
+                self.tui_app.exit(0)
+                return
+            self._last_ctrl_c_time = now
+
+            if self.tui_app._agent_running.is_set():
+                self._interrupt_agent()
+                self.tui_app.show_ctrl_c_hint()
+                return
+
+            self.tui_app.clear_paste_state()
+            event.app.current_buffer.reset()
+            self.tui_app.show_ctrl_c_hint()
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
@@ -299,44 +639,121 @@ class DatusCLI:
             enable_history_search=True,
             search_ignore_case=True,
             erase_when_done=True,
-            style=merge_styles(
-                [
-                    style_from_pygments_cls(CustomPygmentsStyle),
-                    Style.from_dict(
-                        {
-                            "prompt": "ansigreen bold",
-                        }
-                    ),
-                ]
-            ),
+            style=self._build_app_style(),
             complete_while_typing=True,
         )
 
     # Create combined completer
     def create_combined_completer(self):
-        """Create combined completer: SubagentCompleter + AtReferenceCompleter + SqlCompleter"""
+        """Build SlashCommandCompleter + AtReferenceCompleter + SqlCompleter."""
         from datus.cli.autocomplete import SQLCompleter
 
         sql_completer = SQLCompleter()
+        self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
             self.agent_config, available_subagents=self.available_subagents
-        )  # Router completer
-        self.subagent_completer = SubagentCompleter(self.agent_config)  # Subagent completer
+        )  # Router for @Table / @Metrics / @Sql inline references
+        self.slash_completer = SlashCommandCompleter()
 
         # Use merge_completers to combine completers
         from prompt_toolkit.completion import merge_completers
 
         return merge_completers(
             [
-                self.subagent_completer,  # Subagent completer (highest priority)
-                self.at_completer,  # @ reference completer
+                self.service_completer,  # .<service>.<method> dispatcher completer (highest priority)
+                self.slash_completer,  # Top-level slash commands
+                self.at_completer,  # @Table / @Metrics / @Sql inline references
                 sql_completer,  # SQL keyword completer (lowest priority)
             ]
         )
 
+    def _dispatch_command_text(self, user_input_raw: str) -> Optional[str]:
+        """Parse and execute a single user command.
+
+        Shared by both the PromptSession loop and the TUI worker thread. When
+        invoked from the TUI, this function runs on a :class:`ThreadPoolExecutor`
+        worker so ``asyncio.run(...)`` inside chat commands does not collide
+        with the prompt_toolkit Application's event loop on the main thread.
+
+        Returns :data:`EXIT_SENTINEL` when the user requested an exit so the
+        caller can tear down the TUI; returns ``None`` otherwise.
+        """
+        if user_input_raw is None:
+            return None
+        user_input = user_input_raw.strip()
+        if not user_input:
+            return None
+
+        # Re-echo user input with syntax highlighting. In TUI mode the input
+        # TextArea clears on Enter, so echoing via the patched stdout keeps a
+        # transcript of what was submitted. In PromptSession mode
+        # ``erase_when_done=True`` removes the prompt line, so the echo is
+        # still useful.
+        prompt_text = self._get_prompt_text()
+        try:
+            lines = user_input.split("\n")
+            if len(lines) > PASTE_COLLAPSE_THRESHOLD:
+                summary_line = f"[Pasted content: {len(lines)} lines]"
+                self._echo_user_input(prompt_text, summary_line)
+                preview = "\n".join(lines[:3]) + "\n..."
+                self.console.print(f"[dim]{preview}[/]")
+            else:
+                self._echo_user_input(prompt_text, user_input)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"echo_user_input failed: {e}")
+
+        try:
+            cmd_type, cmd, args = self._parse_command(user_input)
+            if cmd_type == CommandType.EXIT:
+                return EXIT_SENTINEL
+            if cmd_type == CommandType.SQL:
+                self._execute_sql(user_input)
+            elif cmd_type == CommandType.TOOL:
+                self._execute_tool_command(cmd, args)
+            elif cmd_type == CommandType.SLASH:
+                slash_result = self._execute_slash_command(cmd, args)
+                # ``/rewind`` sets ``_prefill_input`` from inside the handler.
+                # In TUI mode the buffer was already drained before dispatch,
+                # so push the rewound message back into the live input area
+                # here. ``set_input_text`` schedules the mutation onto the
+                # prompt_toolkit loop, so it is safe from the worker.
+                if self._use_tui and self.tui_app is not None and self._prefill_input:
+                    self.tui_app.set_input_text(self._prefill_input)
+                    self._prefill_input = None
+                if slash_result == EXIT_SENTINEL:
+                    return EXIT_SENTINEL
+            elif cmd_type == CommandType.CHAT:
+                self._execute_chat_command(args, subagent_name=cmd)
+            elif cmd_type == CommandType.UNKNOWN:
+                # ``cmd`` carries the full rejected token, ``args`` the hint
+                # (renamed target or empty). Rendering lives here so parsing
+                # stays side-effect free.
+                self._render_unknown_command(cmd, args)
+        except KeyboardInterrupt:
+            # Interrupt during a single command dispatch is non-fatal: the
+            # outer loop (or TUI event loop) stays alive.
+            pass
+        except Exception as e:
+            if "exit" in str(e).lower() and "app" in str(e).lower():
+                # Shift+Tab plan-mode toggle historically surfaced as an app
+                # exit event; treat it as benign.
+                pass
+            else:
+                logger.error(f"Error: {str(e)}")
+                self.console.print(f"[red]Error:[/] {str(e)}")
+        return None
+
     def run(self):
         """Run the REPL loop."""
+        if self._use_tui and self.tui_app is not None:
+            return self._run_tui()
+        return self._run_prompt_session()
+
+    def _run_prompt_session(self):
+        """Classic ``PromptSession`` main loop (used for non-TTY fallback)."""
         self._print_welcome()
+        self._warn_no_model()
+        self._warn_no_datasource()
 
         while True:
             try:
@@ -346,7 +763,7 @@ class DatusCLI:
                 # Get user input (with optional prefill from rewind)
                 prefill = self._prefill_input or ""
                 user_input_raw = self.session.prompt(
-                    message=prompt_text,
+                    message=lambda pt=prompt_text: self._build_prompt_message(pt),
                     default=prefill,
                 )
                 if user_input_raw is None:
@@ -356,58 +773,117 @@ class DatusCLI:
                         self.chat_commands.display_inline_trace_details(self.chat_commands.last_actions)
                     continue
                 self._prefill_input = None
-                user_input = user_input_raw.strip()
 
-                if not user_input:
-                    continue
-
-                # Re-echo user input with syntax highlighting (prompt_toolkit erased on submit)
-                self._echo_user_input(prompt_text, user_input)
-
-                # Parse and execute the command
-                cmd_type, cmd, args = self._parse_command(user_input)
-                if cmd_type == CommandType.EXIT:
+                result = self._dispatch_command_text(user_input_raw)
+                if result == EXIT_SENTINEL:
                     return True
 
-                # Execute the command based on type
-                if cmd_type == CommandType.SQL:
-                    self._execute_sql(user_input)
-                elif cmd_type == CommandType.TOOL:
-                    self._execute_tool_command(cmd, args)
-                elif cmd_type == CommandType.CONTEXT:
-                    self._execute_context_command(cmd, args)
-                elif cmd_type == CommandType.CHAT:
-                    self._execute_chat_command(args, subagent_name=cmd)
-                elif cmd_type == CommandType.INTERNAL:
-                    self._execute_internal_command(cmd, args)
-
             except KeyboardInterrupt:
+                now = time.monotonic()
+                if now - self._last_ctrl_c_time < 1.0:
+                    return 0
+                self._last_ctrl_c_time = now
+                self.console.print("[dim]Press Ctrl+C again to exit[/]")
                 continue
             except EOFError:
                 return 0
             except Exception as e:
-                # Check if this is an exit event (for plan mode toggle)
                 if "exit" in str(e).lower() and "app" in str(e).lower():
-                    # This is expected from shift+tab toggle, continue loop
                     continue
                 logger.error(f"Error: {str(e)}")
-                self.console.print(f"[bold red]Error:[/] {str(e)}")
+                self.console.print(f"[red]Error:[/] {str(e)}")
+
+    def _pin_tui_to_bottom(self) -> None:
+        """No-op kept for subclass compatibility."""
+
+    def _run_tui(self):
+        """Persistent TUI main loop.
+
+        The prompt_toolkit Application owns the main thread; user input is
+        dispatched to :meth:`_dispatch_command_text` on a worker thread so
+        long-running agent loops do not block UI redraws, and so that
+        ``asyncio.run(...)`` inside those handlers does not collide with the
+        Application's event loop.
+        """
+        self._pin_tui_to_bottom()
+        self._print_welcome()
+        self._warn_no_model()
+        self._warn_no_datasource()
+
+        # Prefill support mirrors the PromptSession path: ``.rewind`` stores
+        # the replayed user message in ``_prefill_input`` and expects the
+        # next prompt to display it as pre-filled editable text.
+        if self._prefill_input:
+            self.tui_app.set_input_text(self._prefill_input)
+            self._prefill_input = None
+
+        try:
+            self.tui_app.run()
+        except KeyboardInterrupt:
+            return 0
+        return True
 
     def _async_init_agent(self):
-        """Initialize the agent asynchronously in a background thread."""
+        """Initialize the agent asynchronously as a background coroutine.
+
+        The work itself is blocking (agent construction + storage pre-load),
+        so it runs via ``loop.run_in_executor`` inside the coroutine.  Wrapping
+        it in a coroutine lets us schedule it on our managed background loop
+        and carry the caller's ContextVar snapshot across execution units,
+        which the previous naked-``threading.Thread`` approach did not do.
+        """
         if self.agent_initializing or self.agent_ready:
             return
 
         self.agent_initializing = True
-        self.console.print("[dim]Initializing AI capabilities in background...[/]")
 
-        # Start initialization in a separate thread
-        thread = threading.Thread(target=self._background_init_agent)
-        thread.daemon = True  # Daemon thread will exit when main thread exits
-        thread.start()
+        # Capture the current ContextVar state so the background task sees
+        # ``set_current_path_manager`` bindings made in the main thread.
+        ctx = contextvars.copy_context()
+
+        async def _runner() -> None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, ctx.run, self._background_init_agent)
+
+        # Schedule the coroutine on the managed background loop.  call_soon_threadsafe
+        # is the standard way to bridge from a foreign thread into an asyncio loop.
+        self._bg_loop.call_soon_threadsafe(lambda: self._bg_loop.create_task(_runner()))
+
+    def run_on_bg_loop(self, coro):
+        """Run a coroutine on the persistent background event loop and block until done.
+
+        ``asyncio.run(coro)`` creates and then tears down a fresh loop on every
+        call. When a chat turn leaves asyncio Tasks owned by ``prompt_toolkit``
+        (for example the ``wait_for_cpr_responses`` Task created while rendering
+        an interactive ``ask_user`` prompt), the Future those Tasks await lives
+        on the short-lived loop. Subsequent turns tear that loop down while the
+        Task is still pending — Python's GC then raises
+        ``got Future pending attached to a different loop`` when finalizing the
+        orphaned Task. Routing chat stream coroutines through this single
+        persistent background loop keeps every Future/Task on the same loop
+        across turns, eliminating the cross-loop GC warning and the
+        ``Press ENTER to continue`` terminal hang it triggers.
+
+        Args:
+            coro: Coroutine to execute on ``_bg_loop``.
+
+        Returns:
+            The coroutine's return value.
+        """
+        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
+        try:
+            return future.result()
+        except KeyboardInterrupt:
+            # Main thread received Ctrl+C while the coroutine was running on
+            # _bg_loop. Propagate cancellation to the bg loop so the running
+            # Task stops promptly, then re-raise so callers still see the
+            # KeyboardInterrupt they already handle.
+            self._bg_loop.call_soon_threadsafe(future.cancel)
+            raise
 
     def _background_init_agent(self):
-        """Background thread function to initialize the agent."""
+        """Background function that initializes the agent (runs inside the
+        background loop's executor)."""
         try:
             # Create a mock args object based on CLI args
             from argparse import Namespace
@@ -433,10 +909,11 @@ class DatusCLI:
             self.agent_commands.update_agent_reference()
             self._pre_load_storage()
             self._workflow_runner = self._create_workflow_runner()
+            self._maybe_schedule_startup_sync()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
-            self.console.print(f"[bold red]Error:[/]Failed to initialize agent in background: {str(e)}")
-            logger.error(f"[bold red]Failed to initialize agent in background: {e}")
+            self.console.print(f"[red]Error:[/]Failed to initialize agent in background: {str(e)}")
+            logger.error(f"Failed to initialize agent in background: {e}")
             self.agent_initializing = False
             self.agent = None
 
@@ -444,6 +921,29 @@ class DatusCLI:
         """Preload rag to avoid unnecessary printing"""
         if self.at_completer:
             self.at_completer.reload_data()
+
+    def _maybe_schedule_startup_sync(self) -> None:
+        """Kick off a one-shot background metadata sync for the default
+        datasource so the first ``@Table`` completion after launch reflects
+        any tables added since the last ``datus agent init``. Gated by
+        ``agent.autocomplete.background_sync_on_startup``.
+        """
+        bg_sync = getattr(self, "bg_sync", None)
+        if bg_sync is None:
+            return
+        ac = getattr(self.agent_config, "autocomplete", None)
+        if ac is None or not getattr(ac, "background_sync_on_startup", False):
+            return
+        current = getattr(self.agent_config, "current_datasource", "")
+        if not current:
+            return
+        bg_sync.schedule(datasource=current, reason="startup")
+
+    # Historical ``_rebuild_llm_after_switch`` removed. ``/model`` now persists
+    # the new target via :meth:`AgentConfig.set_active_*` and the Agent reads
+    # :meth:`AgentConfig.active_model` lazily each time it needs an LLM, so
+    # there is nothing to rebuild on a switch — see ``datus/agent/agent.py``
+    # ``llm`` property for the dispatch point.
 
     def check_agent_available(self):
         """Check if agent is available, and inform the user if it's still initializing."""
@@ -455,19 +955,8 @@ class DatusCLI:
             )
             return False
         else:
-            self.console.print("[bold red]Error:[/] AI features are not available. Agent initialization failed.")
+            self.console.print("[red]Error:[/] AI features are not available. Agent initialization failed.")
             return False
-
-    def _cmd_list_namespaces(self):
-        table = Table(show_header=True, header_style="bold green")
-        table.add_column("Namespace")
-        for namespace in self.agent_config.namespaces.keys():
-            if self.agent_config.current_database == namespace:
-                table.add_row(f"[bold green]{namespace}[/]")
-            else:
-                table.add_row(namespace)
-        self.console.print(table)
-        return
 
     def _cmd_mcp(self, args):
         from datus.cli.mcp_commands import MCPCommands
@@ -568,104 +1057,326 @@ class DatusCLI:
             # Perhaps we should reload the data here.
             self.at_completer.reload_data()
 
-    def _cmd_switch_namespace(self, args: str):
-        if args.strip() == "":
-            self._cmd_list_namespaces()
-        elif self.agent_config.current_database == args.strip():
-            self.console.print(
-                (
-                    f"[yellow]It's now under the namespace [bold]{self.agent_config.current_database}[/]"
-                    " and doesn't need to be switched[/]"
-                )
-            )
-            self._cmd_list_namespaces()
+    def _visible_subagents_for_default(self) -> set[str]:
+        """Filter ``self.available_subagents`` to those eligible as default agent.
+
+        Drops :data:`HIDDEN_SYS_SUB_AGENTS` (internal meta agents such as
+        ``feedback``) and scoped agents whose datasource doesn't match the
+        current one. Mirrors the previous ``SubagentCompleter._load_subagents``
+        behaviour now that the completer no longer surfaces agents directly.
+        """
+
+        visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+        if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
+            current_db = getattr(self.agent_config, "current_datasource", None)
+            for name, sub_config in self.agent_config.agentic_nodes.items():
+                sc = (sub_config or {}).get("scoped_context", {})
+                scoped_ns = sc.get("datasource")
+                if scoped_ns and scoped_ns != current_db:
+                    visible.discard(name)
+        return visible
+
+    def _cmd_agent(self, args: str):
+        """Open the unified agent management TUI (Built-in tab seed).
+
+        ``/agent`` with no args lands on the Built-in tab so users can
+        tweak ``model`` / ``max_turns`` overrides for system subagents.
+        ``/agent <name>`` keeps the legacy direct-setter shortcut for
+        scripting — no TUI is launched.
+        """
+        name = args.strip()
+        if name:
+            self._set_default_agent_by_name(name)
             return
+        self._open_agent_app(seed_tab="builtin")
+
+    def _cmd_subagent(self, args: str):
+        """Open the unified agent management TUI (Custom tab seed).
+
+        Any arguments are ignored: the legacy ``add|list|remove|update``
+        subcommands were removed and all operations now live inside the
+        TUI (``a`` to add, ``d`` to delete, ``Enter`` to edit, ``s`` to
+        set as default).
+        """
+        if args and args.strip():
+            self.console.print("[dim]/subagent no longer accepts subcommands — opening the unified agent TUI.[/]")
+        self._open_agent_app(seed_tab="custom")
+
+    def _set_default_agent_by_name(self, name: str) -> None:
+        visible = self._visible_subagents_for_default()
+        if name not in visible:
+            self.console.print(f"[red]Error:[/] Unknown agent '{name}'. Run '/agent' to see available agents.")
+            return
+        if name == "chat":
+            self.default_agent = ""
+            self.console.print("[green]Default agent reset to: chat[/]")
         else:
-            self.agent_config.current_database = args.strip()
-            name, self.db_connector = self.db_manager.first_conn_with_name(self.agent_config.current_database)
-            db_name = self.db_connector.database_name
-            db_logic_name = name or self.agent_config.current_database
-            self.cli_context.update_database_context(
-                catalog=self.db_connector.catalog_name,
-                db_name=db_name,
-                schema=self.db_connector.schema_name,
-                db_logic_name=db_logic_name,
+            self.default_agent = name
+            self.console.print(f"[green]Default agent set to: {name}[/]")
+
+    def _open_agent_app(self, *, seed_tab: str = "builtin") -> None:
+        """Drive the unified :class:`AgentApp` with the follow-up handlers.
+
+        The app itself only persists Built-in overrides internally. All
+        other outcomes (wizard launch, deletion, default switch) are
+        applied here so we never nest prompt_toolkit Applications.
+        """
+        from datus.cli.agent_app import AgentApp
+
+        current_seed = seed_tab
+        while True:
+            visible_custom = self._visible_subagents_for_default() - SYS_SUB_AGENTS - {"chat"}
+            app = AgentApp(
+                agent_config=self.agent_config,
+                console=self.console,
+                default_agent=self.default_agent,
+                visible_custom_agents=visible_custom,
+                seed_tab=current_seed,
             )
-            self.reset_session()
-            self.chat_commands.update_chat_node_tools()
-            self.console.print(f"[bold green]Namespace changed to: {self.agent_config.current_database}[/]")
+            tui_app = getattr(self, "tui_app", None)
+            if tui_app is not None:
+                with tui_app.suspend_input():
+                    sel = app.run()
+            else:
+                sel = app.run()
+            if sel is None:
+                return
+            if sel.kind == "set_default":
+                self._set_default_agent_by_name(sel.name or "chat")
+                return
+            if sel.kind == "edit_custom" and sel.name:
+                self._launch_sub_agent_wizard(existing=sel.name)
+            elif sel.kind == "new_custom":
+                self._launch_sub_agent_wizard(existing=None)
+            elif sel.kind == "delete_custom" and sel.name:
+                self._delete_custom_agent(sel.name)
+            current_seed = sel.return_to_tab or "custom"
+
+    def _launch_sub_agent_wizard(self, *, existing: Optional[str]) -> None:
+        """Run :class:`SubAgentWizard` and persist the result.
+
+        ``existing=None`` starts with an empty form; passing a name
+        pre-fills the wizard from the current configuration. System
+        subagents are never routed here — the unified TUI's Built-in tab
+        handles them — so no :data:`SYS_SUB_AGENTS` guard is needed.
+        """
+        from datus.cli.cli_styles import print_error, print_success, print_warning
+        from datus.cli.sub_agent_wizard import run_wizard
+        from datus.schemas.agent_models import SubAgentConfig
+        from datus.utils.sub_agent_manager import SubAgentManager
+
+        sub_agent_manager = SubAgentManager(
+            configuration_manager=self.configuration_manager,
+            datasource=self.agent_config.current_datasource,
+            agent_config=self.agent_config,
+        )
+
+        data: Optional[Dict[str, Any]] = None
+        original_name: Optional[str] = None
+        if existing:
+            data = sub_agent_manager.get_agent(existing)
+            if data is None:
+                print_error(self.console, f"Agent '{existing}' not found.")
+                return
+            original_name = existing
+
+        try:
+            result = run_wizard(self, data)
+        except Exception as exc:  # pragma: no cover - defensive
+            print_error(self.console, f"An error occurred while running the wizard: {exc}", prefix=False)
+            logger.error("Sub-agent wizard failed: %s", exc)
+            return
+
+        if result is None:
+            print_warning(self.console, f"Agent cancelled {'creation' if not data else 'modification'}.")
+            return
+
+        agent_name = result.system_prompt
+        if agent_name in SYS_SUB_AGENTS:
+            print_error(
+                self.console,
+                f"'{agent_name}' is reserved for built-in sub-agents and cannot be used.",
+            )
+            return
+
+        if original_name is None and isinstance(data, SubAgentConfig):
+            original_name = data.system_prompt
+        elif original_name is None and isinstance(data, dict):
+            original_name = data.get("system_prompt")
+
+        try:
+            save_result = sub_agent_manager.save_agent(result, previous_name=original_name)
+        except Exception as exc:
+            print_error(self.console, f"Failed to persist sub-agent: {exc}", prefix=False)
+            logger.error("Failed to persist sub-agent '%s': %s", agent_name, exc)
+            return
+
+        changed = save_result.get("changed", True)
+        if not changed:
+            print_warning(self.console, "No changes detected; skipping save.")
+            return
+
+        self._refresh_agent_config_after_subagent_change(sub_agent_manager)
+
+        config_path = save_result.get("config_path")
+        prompt_path = save_result.get("prompt_path")
+        if config_path:
+            self.console.print(f"- Updated configuration file: [cyan]{config_path}[/]")
+        if prompt_path:
+            self.console.print(f"- Created prompt template: [cyan]{prompt_path}[/]")
+        if save_result.get("kb_action") == "cleared":
+            print_warning(self.console, "- Cleared scoped knowledge base for previous configuration.")
+
+        print_success(
+            self.console,
+            f"Sub-agent {agent_name} {'created' if not data else 'modified'} successfully.",
+        )
+
+    def _delete_custom_agent(self, name: str) -> None:
+        from datus.cli.cli_styles import print_error, print_success
+        from datus.utils.sub_agent_manager import SubAgentManager
+
+        if name in SYS_SUB_AGENTS:
+            print_error(self.console, f"System sub-agent '{name}' cannot be removed.")
+            return
+        sub_agent_manager = SubAgentManager(
+            configuration_manager=self.configuration_manager,
+            datasource=self.agent_config.current_datasource,
+            agent_config=self.agent_config,
+        )
+        try:
+            removed = sub_agent_manager.remove_agent(name)
+        except Exception as exc:
+            print_error(self.console, f"Error removing agent: {exc}", prefix=False)
+            logger.error("Failed to remove agent '%s': %s", name, exc)
+            return
+        if not removed:
+            print_error(self.console, f"Agent '{name}' not found.")
+            return
+        print_success(self.console, f"- Removed agent '{name}' from configuration.")
+        self._refresh_agent_config_after_subagent_change(sub_agent_manager)
+
+    def _refresh_agent_config_after_subagent_change(self, sub_agent_manager) -> None:
+        """Mirror :meth:`SubAgentCommands._refresh_agent_config` from the
+        retired text-based command so in-memory state stays consistent
+        after wizard / delete flows."""
+        try:
+            if hasattr(self.agent_config, "agentic_nodes"):
+                self.agent_config.agentic_nodes = sub_agent_manager.list_agents()
+            if hasattr(self, "available_subagents"):
+                self.available_subagents = set(SYS_SUB_AGENTS)
+                self.available_subagents.add("chat")
+                if self.agent_config.agentic_nodes:
+                    self.available_subagents.update(
+                        name for name in self.agent_config.agentic_nodes.keys() if name != "chat"
+                    )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to refresh in-memory agent config: %s", exc)
+
+    def _run_profile_picker(self, current: str) -> Optional[str]:
+        """Run the standalone ProfilePickerApp; return selection or None."""
+        from datus.cli.profile_picker_app import ProfilePickerApp
+
+        app = ProfilePickerApp(console=self.console, current=current)
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is not None:
+            with tui_app.suspend_input():
+                return app.run()
+        return app.run()
+
+    def _run_dangerous_confirm(self) -> bool:
+        """Run the standalone DangerousConfirmApp; return True only if
+        the user explicitly enabled Dangerous."""
+        from datus.cli.profile_picker_app import DangerousConfirmApp
+
+        app = DangerousConfirmApp(console=self.console)
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is not None:
+            with tui_app.suspend_input():
+                return app.run()
+        return app.run()
 
     def _parse_command(self, text: str) -> Tuple[CommandType, str, str]:
-        """
-        Parse the command and determine its type.
+        """Classify raw user input into a ``CommandType`` + canonical cmd + args.
+
+        All side-effects (printing hints, running handlers) live in the
+        dispatcher so this function stays deterministic and trivially
+        unit-testable.
 
         Returns:
-            Tuple containing (command_type, command, arguments)
+            Tuple ``(command_type, command, arguments)``:
+
+            * ``SQL``    — ``command`` empty, ``arguments`` is the raw SQL
+            * ``TOOL``   — ``command`` is ``"!name"`` (lowercased)
+            * ``SLASH``  — ``command`` is the canonical ``"/name"`` (aliases resolved)
+            * ``CHAT``   — ``command`` is the default agent, ``arguments`` is the message
+            * ``EXIT``   — both empty
+            * ``UNKNOWN`` — ``command`` is the rejected token, ``arguments`` is a hint
         """
+
         text = text.strip()
 
         # Remove trailing semicolons (common in SQL)
         if text.endswith(";"):
             text = text[:-1].strip()
 
-        # Exit commands
-        if text.lower() in [".exit", ".quit", "exit", "quit"]:
+        # Exit: bare ``exit`` / ``quit`` still work; ``/exit`` and ``/quit`` flow
+        # through the SLASH branch via the registry's alias map.
+        if text.lower() in ("exit", "quit"):
             return CommandType.EXIT, "", ""
 
-        # Tool commands (!prefix)
+        # Tool commands (!prefix). Unchanged by this refactor.
         if text.startswith("!"):
             parts = text.split(maxsplit=1)
             cmd = parts[0].lower()
             args = parts[1] if len(parts) > 1 else ""
             return CommandType.TOOL, cmd, args
 
-        # Context commands (@prefix)
-        if text.startswith("@"):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
-            args = parts[1] if len(parts) > 1 else ""
-            return CommandType.CONTEXT, cmd, args
-
-        # Chat commands (/prefix)
+        # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
+        # selection is now exclusively handled by ``/agent``. Unknown tokens
+        # surface as ``UNKNOWN`` rather than silently flowing to chat so typos
+        # fail loudly.
         if text.startswith("/"):
-            message = text[1:].strip()
-            parts = message.split(maxsplit=1)
-            if len(parts) > 1:
-                # Check if first part is a valid subagent
-                potential_subagent = parts[0]
-                if potential_subagent in self.available_subagents:
-                    # Sub-agent syntax: /subagent_name message
-                    subagent_name = potential_subagent
-                    actual_message = parts[1]
-                    return CommandType.CHAT, subagent_name, actual_message
-                else:
-                    # Regular chat: /message (first part is not a valid subagent)
-                    return CommandType.CHAT, "", message
-            else:
-                # Regular chat: /message
-                return CommandType.CHAT, "", message
-
-        # Internal commands (.prefix)
-        if text.startswith("."):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
+            parts = text[1:].split(maxsplit=1)
+            raw_token = parts[0] if parts and parts[0] else ""
+            token = raw_token.lower()
             args = parts[1] if len(parts) > 1 else ""
-            return CommandType.INTERNAL, cmd, args
+            spec = lookup(token) if token else None
+            if spec is not None:
+                # ``/exit`` / ``/quit`` flow through SLASH dispatch so
+                # ``_cmd_exit`` gets to close the DB connector before the
+                # handler returns ``EXIT_SENTINEL`` to the outer loop.
+                return CommandType.SLASH, f"/{spec.name}", args
+            # Dynamic service routes (``/<service>`` for method listing or
+            # ``/<service>.<method>`` for invocation) are resolved in
+            # ``_execute_slash_command`` via ``ServiceCommands.dispatch``.
+            # Preserve the raw token's casing because service / method
+            # registry lookups respect the user's configured names.
+            if raw_token:
+                return CommandType.SLASH, f"/{raw_token}", args
+            return CommandType.UNKNOWN, "/", ""
+
+        # Legacy prefix hints: ``.xxx`` / ``@catalog`` / ``@subject`` used to
+        # be live commands. Surface a rename hint instead of running them so
+        # shell-history replay reports a clear error.
+        first_token = text.split(maxsplit=1)[0].lower()
+        legacy_target = _LEGACY_PREFIX_HINTS.get(first_token)
+        if legacy_target is not None:
+            return CommandType.UNKNOWN, first_token, legacy_target
 
         # Determine if text is SQL or chat using parse_sql_type
         try:
-            # Get current database dialect from agent_config.db_type (set from current namespace)
+            # Get current database dialect from agent_config.db_type (set from current datasource)
             dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
             sql_type = parse_sql_type(text, dialect)
 
             # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
             if sql_type != SQLType.UNKNOWN:
                 return CommandType.SQL, "", text
-            else:
-                return CommandType.CHAT, "", text.strip()
+            return CommandType.CHAT, self.default_agent, text.strip()
         except Exception:
             # If any exception occurs, treat as chat
-            return CommandType.CHAT, "", text.strip()
+            return CommandType.CHAT, self.default_agent, text.strip()
 
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
@@ -684,7 +1395,7 @@ class DatusCLI:
         try:
             if not self.db_connector:
                 error_msg = "No database connection. Please initialize a connection first."
-                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                self.console.print(f"[red]Error:[/] {error_msg}")
 
                 # Update action with error
                 self.actions.update_action_by_id(
@@ -705,7 +1416,7 @@ class DatusCLI:
 
             if not result:
                 error_msg = "No result from the query."
-                self.console.print(f"[bold red]Error:[/] {error_msg}")
+                self.console.print(f"[red]Error:[/] {error_msg}")
 
                 # Update action with error
                 self.actions.update_action_by_id(
@@ -765,7 +1476,7 @@ class DatusCLI:
                             f"Query execution failed - received string instead of Arrow data:"
                             f" {result.error or 'Unknown error'}"
                         )
-                        self.console.print(f"[bold red]Error:[/] {error_msg}")
+                        self.console.print(f"[red]Error:[/] {error_msg}")
 
                         # Update action with error
                         self.actions.update_action_by_id(
@@ -806,7 +1517,7 @@ class DatusCLI:
 
             else:
                 error_msg = result.error or "Unknown SQL error"
-                self.console.print(f"[bold red]SQL Error:[/] {error_msg}")
+                self.console.print(f"[red]SQL Error:[/] {error_msg}")
 
                 # Update action with SQL error
                 self.actions.update_action_by_id(
@@ -826,7 +1537,7 @@ class DatusCLI:
                     self._workflow_runner.workflow.context.sql_contexts.append(new_record)
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
             # Update action with exception
             self.actions.update_action_by_id(
@@ -841,29 +1552,44 @@ class DatusCLI:
         if cmd in self.commands:
             self.commands[cmd](args)
         else:
-            self.console.print(f"[bold red]Unknown command:[/] {cmd}")
-
-    def _execute_context_command(self, cmd: str, args: str):
-        """Execute a context command (@ prefix)."""
-        if cmd in self.commands:
-            self.commands[cmd](args)
-        else:
-            self.console.print(f"[bold red]Unknown command:[/] {cmd}")
+            self.console.print(f"[red]Unknown command:[/] {cmd}")
 
     def _execute_chat_command(self, message: str, subagent_name: str = None):
-        """Execute a chat command (/ prefix) using ChatAgenticNode."""
+        """Route free-form chat text to the configured default agent."""
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
 
-    def _execute_internal_command(self, cmd: str, args: str):
-        """Execute an internal command (. prefix)."""
-        logger.debug(f"Executing internal command: '{cmd}' with args: '{args}'")
-        if cmd in self.commands:
-            result = self.commands[cmd](args)
-            # cmd_rewind returns a user message to prefill in input buffer
-            if cmd == ".rewind" and result is not None:
-                self._prefill_input = result
+    def _execute_slash_command(self, cmd: str, args: str):
+        """Execute a slash command resolved via ``SLASH_COMMANDS`` registry.
+
+        Falls back to :meth:`ServiceCommands.dispatch` for dynamic
+        ``/<service>.<method>`` routes (BI / scheduler / semantic methods
+        enumerated at runtime, not statically registered in the registry).
+
+        Returns ``EXIT_SENTINEL`` when the handler requested shutdown (``/exit``
+        / ``/quit``) so the dispatcher can forward it to the outer loop.
+        """
+        logger.debug(f"Executing slash command: '{cmd}' with args: '{args}'")
+        handler = self.commands.get(cmd)
+        if handler is None:
+            if self.service_commands.dispatch(cmd, args):
+                return None
+            self.console.print(f"[red]Unknown command:[/] {cmd}. Type /help.")
+            return None
+        result = handler(args)
+        # ``/rewind`` returns a user message to prefill in the input buffer.
+        if cmd == "/rewind" and result is not None:
+            self._prefill_input = result
+            return None
+        if result == EXIT_SENTINEL:
+            return EXIT_SENTINEL
+        return None
+
+    def _render_unknown_command(self, token: str, hint: str):
+        """Report an unrecognised slash or renamed legacy prefix to the user."""
+        if hint:
+            self.console.print(f"[red]Unknown command:[/] '{token}' has been renamed to '{hint}'. Type /help.")
         else:
-            self.console.print(f"[bold red]Unknown command:[/] {cmd}")
+            self.console.print(f"[red]Unknown command:[/] {token}. Type /help.")
 
     def _wait_for_agent_available(self, max_attempts=5, delay=1):
         """Wait for the agent to become available, with timeout."""
@@ -879,7 +1605,7 @@ class DatusCLI:
             if self.check_agent_available():
                 return True
 
-        self.console.print("[bold red]Agent initialization timed out. Try again later.[/]")
+        self.console.print("[red]Agent initialization timed out. Try again later.[/]")
         return False
 
     def _cmd_bash(self, args: str):
@@ -897,7 +1623,7 @@ class DatusCLI:
 
         if base_cmd not in whitelist:
             self.console.print(
-                f"[bold red]Security:[/] Command '{base_cmd}' not in whitelist. Allowed: {', '.join(whitelist)}"
+                f"[red]Security:[/] Command '{base_cmd}' not in whitelist. Allowed: {', '.join(whitelist)}"
             )
             return
 
@@ -911,116 +1637,173 @@ class DatusCLI:
                 if result.stdout:
                     self.console.print(result.stdout)
             else:
-                self.console.print(f"[bold red]Command failed with code {result.returncode}:[/]\n{result.stderr}")
+                self.console.print(f"[red]Command failed with code {result.returncode}:[/]\n{result.stderr}")
 
         except subprocess.TimeoutExpired:
-            self.console.print("[bold red]Error:[/] Command timed out after 10 seconds.")
+            self.console.print("[red]Error:[/] Command timed out after 10 seconds.")
         except Exception as e:
-            self.console.print(f"[bold red]Error:[/] {str(e)}")
+            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def _cmd_help(self, args: str):
-        """Display help information with aligned command explanations."""
+        """Display help for all CLI commands.
+
+        Slash commands are rendered from :data:`SLASH_COMMANDS`. Tool commands
+        and chat behaviour are described inline; use ``/<command>`` help output
+        from the command itself for deeper usage (e.g. ``/mcp`` without args).
+        """
+
         CMD_WIDTH = 30
-        lines = []
-        lines.append("[bold green]Datus-CLI Help[/]\n")
-        lines.append("[bold]SQL Commands:[/]")
-        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly\n")
+        lines: list[str] = ["[green]Datus-CLI Help[/]\n"]
+        lines.append("[bold]SQL:[/]")
+        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly")
+        lines.append("")
+
+        lines.append("[bold]Chat:[/]")
+        lines.append(f"    {'<message>':<{CMD_WIDTH}}Chat with the default agent (configure via /agent)")
+        lines.append("")
 
         lines.append("[bold]Tool Commands (! prefix):[/]")
         tool_cmds = [
-            # ("!run <query>", "Run a natural language query with live workflow status display"),
-            ("!sl/!schema_linking", "Schema linking: show list of recommended tables and values"),
-            ("!sm/!search_metrics", "Use natural language to search for corresponding metrics"),
-            ("!sq/!search_sql", "Use natural language to search for reference SQL"),
-            ("!sd/!search_document", "Search platform documentation by keywords"),
-            # ("!gen", "Generate SQL, optionally with table constraints"),
-            # ("!fix <description>", "Fix the last SQL query"),
+            ("!sl, !schema_linking", "Schema linking: recommended tables and values"),
+            ("!sm, !search_metrics", "Search metrics by natural language"),
+            ("!sq, !search_sql", "Search reference SQL by natural language"),
+            ("!sd, !search_document", "Search platform documentation by keywords"),
             ("!save", "Save the last result to a file"),
             ("!bash <command>", "Execute a bash command (limited to safe commands)"),
-            # remove this when sub agent is ready
-            # ("!reason", "Run SQL reasoning with streaming output"),
-            # ("!compare", "Compare SQL results with streaming output"),
         ]
         for cmd, desc in tool_cmds:
             lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
         lines.append("")
 
-        lines.append("[bold]Context Commands (@ prefix):[/]")
-        context_cmds = [
-            ("@catalog", "Display database catalog"),
-            ("@subject", "Display Semantic Model, Metrics etc."),
-        ]
-        for cmd, desc in context_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        lines.append("")
+        by_group: dict[str, list] = {group: [] for group in GROUP_ORDER}
+        for spec in iter_visible():
+            by_group.setdefault(spec.group, []).append(spec)
+        for group in GROUP_ORDER:
+            specs = by_group.get(group) or []
+            if not specs:
+                continue
+            title = GROUP_TITLES.get(group, group.title())
+            lines.append(f"[bold]{title} (/ prefix):[/]")
+            for spec in specs:
+                token = f"/{spec.name}"
+                if spec.aliases:
+                    token = token + ", " + ", ".join(f"/{alias}" for alias in spec.aliases)
+                lines.append(f"    {token:<{CMD_WIDTH}}{spec.summary}")
+            lines.append("")
 
-        lines.append("[bold]Chat Commands (/ prefix):[/]")
-        chat_cmds = [
-            ("/<message>", "Chat with the AI assistant"),
-        ]
-        for cmd, desc in chat_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        lines.append("")
+        self.console.print("\n".join(lines).rstrip())
 
-        lines.append("[bold]Internal Commands (. prefix):[/]")
-        internal_cmds = [
-            (".help", "Display this help message"),
-            (".exit, .quit", "Exit the CLI"),
-            (".clear", "Clear console and chat session"),
-            (".chat_info", "Show current chat session information"),
-            (".compact", "Compact chat session by summarizing conversation history"),
-            (".sessions", "List all stored SQLite sessions with detailed information"),
-            (".resume [session_id]", "Resume a previous chat session"),
-            (".rewind [turn]", "Rewind current session to a specific turn, creating a new branch"),
-            (".bootstrap_bi", "Extract BI dashboard assets to assemble sub-agent context"),
-            (".databases", "List all databases"),
-            (".database database_name", "Switch current database"),
-            (".tables", "List all tables"),
-            (".schemas", "List all schemas or show detailed schema information"),
-            (".schema schema_name", "Switch current schema"),
-            (".table_schema table_name", "Show table field details"),
-            (".indexes table_name", "Show indexes for a table"),
-            (".namespace namespace", "Switch current namespace"),
-            (".mcp", "Manage MCP (Model Configuration Protocol) servers"),
-            ("     .mcp list", "List all MCP servers"),
-            (
-                "     .mcp add --transport \\[stdio/sse/http] <name> <command> \\[args1 args2 ...]",
-                "Add a new MCP server configuration",
-            ),
-            ("     .mcp remove <name>", "Remove an MCP server configuration"),
-            ("     .mcp check <name>", "Check connectivity to an MCP server"),
-            ("     .mcp call <server.tool> \\[params]", "Call a tool on an MCP server"),
-            ("     .mcp filter", "Manage tool filters for MCP servers"),
-            (
-                "       .mcp filter set <server> \\[--allowed tool1,tool2] "
-                + "\\[--blocked tool3,tool4] \\[--enabled true/false]",
-                "Set tool filter",
-            ),
-            ("       .mcp filter get <server>", "Get current tool filter configuration"),
-            ("       .mcp filter remove <server>", "Remove tool filter configuration"),
-            (".skill", "Manage skills and marketplace"),
-            ("     .skill list", "List locally installed skills"),
-            ("     .skill search <query>", "Search skills in marketplace"),
-            ("     .skill install <name> [version]", "Install skill from marketplace"),
-            ("     .skill publish <path>", "Publish local skill to marketplace"),
-            ("     .skill info <name>", "Show skill details"),
-            ("     .skill update", "Update all marketplace skills to latest"),
-            ("     .skill remove <name>", "Remove a locally installed skill"),
-        ]
-        for cmd, desc in internal_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
-        help_text = "\n".join(lines)
-        self.console.print(help_text)
+    def _cmd_exit(self, args: str) -> str:
+        """Exit the CLI.
 
-    def _cmd_exit(self, args: str):
-        """Exit the CLI."""
+        Closes the DB connector and returns ``EXIT_SENTINEL`` so the dispatcher
+        can signal both the PromptSession loop and the TUI application to shut
+        down cleanly. Returning the sentinel (rather than calling
+        ``sys.exit(0)``) matters in TUI mode where ``_cmd_exit`` runs on a
+        worker thread — ``sys.exit`` would only kill the worker while the main
+        prompt_toolkit Application kept running.
+        """
         if self.db_connector:
             try:
                 # Close the connection
                 self.db_connector.close()
             except Exception as e:
                 logger.warning(f"Database connection closed failed, reason:{e}")
-        sys.exit(0)
+        bg_sync = getattr(self, "bg_sync", None)
+        if bg_sync is not None:
+            bg_sync.shutdown()
+        return EXIT_SENTINEL
+
+    def _cmd_profile(self, args: str) -> None:
+        """Open the profile selection picker and apply the choice.
+
+        Delegates to ``_run_profile_picker`` / ``_run_dangerous_confirm``
+        (inline prompt_toolkit pickers mirroring ``/agent``). Selecting
+        ``dangerous`` triggers a second confirmation every session
+        transition per spec decision #5.
+        """
+        from datus.tools.permission.permission_config import PermissionConfig
+        from datus.tools.permission.profiles import PROFILE_NAMES, build_effective_config, get_profile
+
+        current = getattr(self.agent_config, "active_profile_name", self.active_profile)
+        choice = self._run_profile_picker(current)
+
+        if choice is None:
+            return
+
+        if choice not in PROFILE_NAMES:
+            print_error(self.console, f"Unknown profile: {choice}")
+            return
+
+        if choice == current:
+            print_info(self.console, f"Already on {choice}.")
+            return
+
+        # Dangerous second confirmation — every session transition re-confirms.
+        if choice == "dangerous":
+            confirmed = self._run_dangerous_confirm()
+            if not confirmed:
+                print_warning(self.console, "Dangerous mode cancelled.")
+                return
+
+        # Rebuild the user rules (exclude the profile key) and preserve the
+        # new profile's default unless the user explicitly set one.
+        # Mirrors build_effective_config in profiles.py. If you change one,
+        # change both.
+        raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
+        raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
+        try:
+            new_effective = build_effective_config(choice, raw_user)
+        except Exception as e:
+            # Mirror startup: if ``permissions.rules`` can't be parsed, refuse
+            # to install a permissive profile base that would silently drop
+            # restrictive overrides. Fail closed to ``normal`` with a clear
+            # user-facing message instead of silently expanding privileges.
+            logger.warning(f"Failed to rebuild effective permissions for {choice!r}: {e}. Falling back to 'normal'.")
+            print_error(
+                self.console,
+                f"permissions.rules in agent.yml is malformed ({e}); refusing to switch to "
+                f"{choice!r} and falling back to 'normal'.",
+            )
+            choice = "normal"
+            new_effective = get_profile("normal")
+
+        # Reconstruct the user_rules_cfg for switch_profile (it takes a
+        # separable override, not a pre-merged config).
+        user_rules_cfg: Optional[PermissionConfig] = None
+        if raw_user:
+            if "default" not in raw_user and "default_permission" not in raw_user:
+                base = get_profile(choice)
+                dp = base.default_permission
+                raw_user = {
+                    **raw_user,
+                    "default_permission": dp.value if hasattr(dp, "value") else dp,
+                }
+            try:
+                user_rules_cfg = PermissionConfig.from_dict(raw_user)
+            except Exception as e:
+                logger.warning(f"Malformed user rules for {choice!r}: {e}. Applying profile base only.")
+                user_rules_cfg = None
+
+        # Apply the runtime switch FIRST. If ``switch_profile`` raises
+        # (unknown profile, malformed override, etc.) the config still
+        # reports the *old* profile so the status bar and PermissionManager
+        # stay consistent instead of publishing a half-applied state.
+        prior_approvals = 0
+        current_node = getattr(self.chat_commands, "current_node", None)
+        if current_node is not None and hasattr(current_node, "permission_manager"):
+            prior_approvals = len(getattr(current_node.permission_manager, "_session_approvals", {}))
+            try:
+                current_node.permission_manager.switch_profile(choice, user_overrides=user_rules_cfg)
+            except Exception as e:
+                print_error(self.console, f"Profile switch failed: {e}")
+                return
+
+        self.agent_config.permissions_config = new_effective
+        self.agent_config.active_profile_name = choice
+        self.active_profile = choice
+        print_success(self.console, f"Profile switched: {current} → {choice}")
+        print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:
@@ -1028,66 +1811,73 @@ class DatusCLI:
         self.selected_catalog_path = selected_path
         self.selected_catalog_data = selected_data
 
-    def _confirm_trust_directory(self):
-        """Ask user to trust the current working directory for filesystem operations.
+    def _build_banner_panel(self) -> Panel:
+        """Build the unified startup banner as a Rich Panel."""
+        database = getattr(self.args, "datasource", "") or getattr(self.agent_config, "current_datasource", "")
+        db_type = getattr(self.agent_config, "db_type", "") or ""
 
-        Similar to Claude Code's directory trust prompt. The agent can read/write
-        files in the trusted directory (used by skills like /init).
-        """
-        import os
+        if self.db_connector and database:
+            db_line = f"[green]{database}[/]"
+            if db_type:
+                db_line += f"  [dim]({db_type})[/]"
+            if self.cli_context.current_db_name and self.cli_context.current_db_name != database:
+                db_line += f"  [dim]using {self.cli_context.current_db_name}[/]"
+        elif database:
+            db_line = f"[green]{database}[/]  [yellow]not connected[/]"
+        else:
+            db_line = "[yellow]not selected  (use /database to choose)[/]"
 
-        cwd = os.getcwd()
-        self.console.print(f"\n[bold]Working directory:[/bold] {cwd}")
+        context_summary = self.cli_context.get_context_summary() if self.db_connector else "No context available"
+        show_context = context_summary and context_summary != "No context available"
 
-        from rich.prompt import Confirm
+        use_art = self.console.width >= _BANNER_MIN_WIDTH
+        body = Table.grid(padding=(0, 0))
+        body.add_column()
 
-        trust = Confirm.ask("Do you trust files in this directory?", default=True)
-        if not trust:
-            # Fall back to ~/.datus/workspace (safe default)
-            fallback = os.path.expanduser("~/.datus/workspace")
-            os.makedirs(fallback, exist_ok=True)
-            self.console.print(f"[dim]Using {fallback} as workspace instead.[/dim]")
-            # Override workspace_root in agent config so filesystem_tools uses it
-            if hasattr(self.agent_config, "workspace_root"):
-                self.agent_config.workspace_root = fallback
-            if hasattr(self.agent_config, "storage_configs"):
-                storage = getattr(self.agent_config, "storage_configs", {})
-                if isinstance(storage, dict):
-                    storage["workspace_root"] = fallback
+        if use_art:
+            body.add_row(Text(DATUS_BANNER_TEXT, style="bold"))
+        else:
+            body.add_row(Text(f"DATUS v{__version__}", style="bold"))
+        body.add_row(Text(""))
+        body.add_row(Text("Data engineering agent builds evolvable context for your data system", style="bold"))
+        body.add_row(Text(""))
+
+        info = Table.grid(padding=(0, 2))
+        info.add_column(style="dim", justify="left", no_wrap=True)
+        info.add_column()
+        info.add_row("Datasource", Text.from_markup(db_line))
+        if show_context:
+            info.add_row("Context", Text.from_markup(f"[dim]{context_summary}[/]"))
+        body.add_row(info)
+        body.add_row(Text(""))
+        body.add_row(Text.from_markup("[dim]Type / for commands, /help for the full list, /exit to quit[/]"))
+
+        return Panel(
+            body,
+            title=f"v{__version__}",
+            title_align="left",
+            padding=(1, 2),
+        )
 
     def _print_welcome(self):
-        """Print the welcome message."""
-        welcome_text = """
-[bold green]Datus[/] - [bold]AI-powered SQL command-line interface[/]
-Type '.help' for a list of commands or '.exit' to quit.
-"""
-        self.console.print(welcome_text)
+        """Print the unified startup banner.
 
-        database = (
-            getattr(self.args, "database", "")
-            or getattr(self.args, "namespace", "")
-            or getattr(self.agent_config, "current_database", "")
-        )
-        if database:
-            self.console.print(f"Database [bold green]{database}[/] selected")
-        else:
-            self.console.print("[yellow]Warning: No database selected, please use .database to select a database[/]")
-        # Display connection info
-        if self.db_connector:
-            db_info = f"Connected to [bold green]{self.agent_config.db_type}[/]"
-            if self.cli_context.current_db_name:
-                db_info += f" using database [bold]{self.cli_context.current_db_name}[/]"
+        Also used as the Ctrl+O clear-screen header callback so the banner
+        reappears at the top after verbose-mode toggles redraw the terminal.
+        """
+        self.console.print(self._build_banner_panel())
 
-            self.console.print(db_info)
+    def _warn_no_model(self):
+        """Print a one-time hint when no active model is configured."""
+        try:
+            self.agent_config.active_model()
+        except Exception:
+            self.console.print("[yellow]No model configured. Use /model to set up a model.[/]")
 
-            # Show CLI context summary
-            context_summary = self.cli_context.get_context_summary()
-            if context_summary != "No context available":
-                self.console.print(f"[dim]Context: {context_summary}[/]")
-
-            self.console.print("Type SQL statements or use ! @ . commands to interact.")
-        else:
-            self.console.print("[yellow]Warning: No database connection initialized.[/]")
+    def _warn_no_datasource(self):
+        """Print a one-time hint when no datasource is configured."""
+        if not self.agent_config.services.datasources:
+            self.console.print("[yellow]No datasources configured. Use /datasource to add one.[/]")
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """
@@ -1113,15 +1903,18 @@ Type '.help' for a list of commands or '.exit' to quit.
         Args:
             timeout_seconds: Maximum time to wait for connection (default: 30 seconds)
         """
-        current_database = self.agent_config.current_database
+        current_datasource = self.agent_config.current_datasource
+        if not current_datasource:
+            self.db_connector = None
+            return
 
         def _do_init_connection():
             """Inner function to perform connection initialization."""
             if not self.cli_context.current_db_name:
-                db_name, connector = self.db_manager.first_conn_with_name(current_database)
+                db_name, connector = self.db_manager.first_conn_with_name(current_datasource)
                 return db_name, connector
             else:
-                connector = self.db_manager.get_conn(current_database, self.cli_context.current_db_name)
+                connector = self.db_manager.get_conn(current_datasource, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
 
         try:
@@ -1132,16 +1925,16 @@ Type '.help' for a list of commands or '.exit' to quit.
                     db_name, self.db_connector = future.result(timeout=timeout_seconds)
                 except FuturesTimeoutError:
                     self.console.print(
-                        f"[bold red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                        f"Please check if the database server for namespace '{current_database}' is running "
+                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
+                        f"Please check if the database server for datasource '{current_datasource}' is running "
                         "and accessible."
                     )
-                    logger.error(f"Database connection timeout for namespace: {current_database}")
+                    logger.error(f"Database connection timeout for datasource: {current_datasource}")
                     self.db_connector = None
                     return
 
             if not self.db_connector:
-                self.console.print("[bold red]Error:[/] No database connection.")
+                self.console.print("[red]Error:[/] No database connection.")
                 return
 
             # Update context based on dialect
@@ -1151,7 +1944,7 @@ Type '.help' for a list of commands or '.exit' to quit.
                 self.cli_context.update_database_context(
                     catalog=self.db_connector.catalog_name,
                     db_name=self.db_connector.database_name,
-                    db_logic_name=db_name or self.db_connector.database_name or current_database,
+                    db_logic_name=db_name or self.db_connector.database_name or current_datasource,
                 )
 
             # Test the connection with timeout
@@ -1162,15 +1955,15 @@ Type '.help' for a list of commands or '.exit' to quit.
                     logger.debug(f"Connection test result: {connection_result}")
                 except FuturesTimeoutError:
                     self.console.print(
-                        f"[bold red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                        f"The database server for namespace '{current_database}' may be unresponsive."
+                        f"[red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
+                        f"The database server for datasource '{current_datasource}' may be unresponsive."
                     )
-                    logger.error(f"Connection test timeout for namespace: {current_database}")
+                    logger.error(f"Connection test timeout for datasource: {current_datasource}")
                     self.db_connector = None
 
         except Exception as e:
-            self.console.print(f"[bold red]Error:[/] Failed to connect to database: {str(e)}")
-            logger.error(f"Database connection failed for namespace {current_database}: {e}")
+            self.console.print(f"[red]Error:[/] Failed to connect to database: {str(e)}")
+            logger.error(f"Database connection failed for datasource {current_datasource}: {e}")
             self.db_connector = None
 
     def _create_workflow_runner(self) -> WorkflowRunner:

@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple, Union
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -99,10 +99,10 @@ class BiDashboardCommands:
             self._configuration_manager = None
         self._adapter_registry = self._discover_adapters()
         self._force = force
-        self.db_manager = db_manager_instance(self.agent_config.namespaces)
+        self.db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
-    def current_database_context(self) -> Tuple[str, str, str]:
-        current_con = self.db_manager.get_conn(self.agent_config.current_database)
+    def current_datasource_context(self) -> Tuple[str, str, str]:
+        current_con = self.db_manager.get_conn(self.agent_config.current_datasource)
         return (
             getattr(current_con, "catalog_name", ""),
             getattr(current_con, "database_name", ""),
@@ -137,7 +137,7 @@ class BiDashboardCommands:
                 return
 
             with self.console.status("Loading charts..."):
-                chart_metas = adapter.list_charts(dashboard_id)
+                chart_metas = self._items_from_adapter_result(adapter.list_charts(dashboard_id))
             if not chart_metas:
                 self.console.print("[yellow]No charts found in this dashboard.[/]")
                 return
@@ -177,7 +177,7 @@ class BiDashboardCommands:
                 return
 
             with self.console.status("Loading datasets..."):
-                datasets = adapter.list_datasets(dashboard_id)
+                datasets = self._items_from_adapter_result(adapter.list_datasets(dashboard_id))
 
             result = assembler.assemble(dashboard, chart_selections_ref, chart_selections_metrics, datasets)
 
@@ -196,7 +196,9 @@ class BiDashboardCommands:
     def _prompt_options(self) -> DashboardCliOptions:
         platforms = sorted(self._adapter_registry)
         if not platforms:
-            raise ValueError("No BI adapter implementations found. Install one with: pip install datus-agent[bi]")
+            raise ValueError(
+                "No BI adapter implementations found. Install the Superset adapter with: pip install datus-bi-superset"
+            )
         platform = self._prompt_input("Select BI platform", default=platforms[0], choices=platforms)
         if platform not in self._adapter_registry:
             raise ValueError(f"Unsupported platform '{platform}'")
@@ -325,7 +327,8 @@ class BiDashboardCommands:
         adapter_cls = self._adapter_registry.get(options.platform)
         if adapter_cls is None:
             raise ValueError(
-                f"Unsupported platform '{options.platform}'. Install it with: pip install datus-bi-{options.platform}"
+                f"Unsupported platform '{options.platform}'. "
+                "Install the Superset adapter with: pip install datus-bi-superset"
             )
         return adapter_cls(
             api_base_url=options.api_base_url, auth_params=options.auth_params, dialect=self.agent_config.db_type
@@ -350,7 +353,7 @@ class BiDashboardCommands:
 
         if not (catalog and database and schema):
             try:
-                db_config = self.agent_config.current_db_config(self.agent_config.current_database)
+                db_config = self.agent_config.current_db_config(self.agent_config.current_datasource)
             except Exception:
                 db_config = None
             if db_config:
@@ -413,6 +416,14 @@ class BiDashboardCommands:
                     chart_detail = None
                 charts.append(chart_detail or chart_meta)
         return charts
+
+    def _items_from_adapter_result(self, result: Any) -> list[Any]:
+        if result is None:
+            return []
+        items = getattr(result, "items", None)
+        if items is not None and not callable(items):
+            return list(items or [])
+        return list(result)
 
     def _load_chart_selections(
         self,
@@ -483,8 +494,8 @@ class BiDashboardCommands:
         dashboard: DashboardInfo,
         result: DashboardAssemblyResult,
     ) -> None:
-        if not getattr(self.agent_config, "current_database", ""):
-            self.console.print("[yellow]No namespace set. Skipping sub-agent save.[/]")
+        if not getattr(self.agent_config, "current_datasource", ""):
+            self.console.print("[yellow]No datasource set. Skipping sub-agent save.[/]")
             return
 
         sub_agent_name = self._build_sub_agent_name(platform, dashboard.name or "")
@@ -535,7 +546,7 @@ class BiDashboardCommands:
 
         manager = SubAgentManager(
             configuration_manager=self._configuration_manager or configuration_manager(),
-            namespace=self.agent_config.current_database,
+            datasource=self.agent_config.current_datasource,
             agent_config=self.agent_config,
         )
         self._do_save_sub_agent(
@@ -653,7 +664,7 @@ class BiDashboardCommands:
         database, schema) from the live connection, then rebuilds via
         ``metadata_identifier`` so the bootstrap's right-alignment matches.
         """
-        catalog, database, schema = self.current_database_context()
+        catalog, database, schema = self.current_datasource_context()
         dialect = self.agent_config.db_type or ""
         qualified: List[str] = []
         for name in table_names:
@@ -861,11 +872,18 @@ class BiDashboardCommands:
 
         metrics = set()
         if files := metrics_result.get("semantic_models", []):
-            # Get base directory for semantic models
-            base_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_database)
+            # Resolve via the KB sandbox helper so paths like
+            # "subject/semantic_models/metrics/foo.yml" normalize correctly
+            # (stripping the leading "subject/" to avoid double-prefix drift).
+            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+            knowledge_base_dir = str(self.agent_config.path_manager.subject_dir)
             for file in files:
-                # Convert relative path to absolute path if needed
-                file_path = file if Path(file).is_absolute() else base_dir / file
+                resolved = resolve_kb_sandbox_path(file, "metric", knowledge_base_dir)
+                if not resolved:
+                    self.console.log(f"[yellow]Skipping metric file outside sandbox: {file!r}[/]")
+                    continue
+                file_path = resolved
                 with open(file_path, "r", encoding="utf-8") as f:
                     # multi documents
                     for metrics_meta in yaml.safe_load_all(f):
@@ -952,7 +970,7 @@ class BiDashboardCommands:
             if self.cli and hasattr(self.cli, "db_manager"):
                 db_manager = self.cli.db_manager
             else:
-                db_manager = db_manager_instance(self.agent_config.namespaces)
+                db_manager = db_manager_instance(self.agent_config.datasource_configs)
 
             # Create metadata store
             metadata_store = SchemaWithValueRAG(self.agent_config)
@@ -981,12 +999,12 @@ class BiDashboardCommands:
             True if validation passed, False otherwise
         """
         try:
-            # Get adapter_type from agentic_nodes config, default to metricflow
-            adapter_type = "metricflow"
+            adapter_type = None
             agentic_nodes = getattr(self.agent_config, "agentic_nodes", None) or {}
             node_config = agentic_nodes.get("gen_semantic_model", {})
             if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                 adapter_type = node_config.get("semantic_adapter")
+            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
 
             semantic_tools = SemanticTools(
                 agent_config=self.agent_config,

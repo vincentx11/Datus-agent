@@ -108,10 +108,11 @@ class TestDBFuncTool:
         expected_base_tools = {"list_tables", "describe_table", "read_query", "get_table_ddl"}
 
         assert expected_base_tools.issubset(tool_names)
-        if connector_registry.support_database(mock_connector.dialect):
-            assert "list_databases" in tool_names
-        if connector_registry.support_schema(mock_connector.dialect):
-            assert "list_schemas" in tool_names
+        # Tool presence must exactly match dialect dispatch — no silent branch skipping.
+        supports_databases = connector_registry.support_database(mock_connector.dialect)
+        supports_schemas = connector_registry.support_schema(mock_connector.dialect)
+        assert ("list_databases" in tool_names) is supports_databases
+        assert ("list_schemas" in tool_names) is supports_schemas
         assert "search_table" not in tool_names
 
     def test_list_databases_success(self, db_func_tool, mock_connector):
@@ -1240,12 +1241,11 @@ class TestDBFuncToolIntegration:
         assert hasattr(tool, "description")
         assert hasattr(tool, "params_json_schema")
 
-        # Verify the schema doesn't contain 'self'
+        # Verify the schema is a dict and doesn't contain 'self'.
         schema = tool.params_json_schema
-        if isinstance(schema, dict):
-            assert "self" not in schema.get("properties", {})
-            if "required" in schema:
-                assert "self" not in schema["required"]
+        assert isinstance(schema, dict), f"Expected dict schema, got {type(schema).__name__}"
+        assert "self" not in schema.get("properties", {})
+        assert "self" not in schema.get("required", [])
 
     def test_compression_integration(self, db_func_tool, mock_connector):
         """Test that read_query properly uses compression."""
@@ -1293,7 +1293,7 @@ class TestDBFuncToolMultiConnector:
     def mock_agent_config(self):
         """Create a mock AgentConfig for multi-connector tests."""
         config = Mock()
-        config.current_database = "db1"
+        config.current_datasource = "db1"
         # Return multiple databases to trigger multi-connector mode
         config.current_db_configs.return_value = {"db1": {}, "db2": {}}
         return config
@@ -1302,7 +1302,7 @@ class TestDBFuncToolMultiConnector:
     def mock_single_db_agent_config(self):
         """Create a mock AgentConfig with single database."""
         config = Mock()
-        config.current_database = "db1"
+        config.current_datasource = "db1"
         # Return single database to trigger single connector mode
         config.current_db_configs.return_value = {"db1": {}}
         return config
@@ -1340,14 +1340,13 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
             connector_cache_size=4,
         )
 
         # Verify multi-connector mode
         assert tool._db_manager is mock_db_manager
-        assert tool._namespace == "db1"
-        assert tool._default_database == "db1"
+        assert tool._default_datasource == "db1"
         assert tool._connector_cache_size == 4
         assert tool._primary_connector is mock_connector
         mock_db_manager.first_conn.assert_called_once_with("db1")
@@ -1358,11 +1357,11 @@ class TestDBFuncToolMultiConnector:
 
         mock_db_manager = Mock(spec=DBManager)
 
-        with pytest.raises(ValueError, match="AgentConfiguration is required"):
+        with pytest.raises(ValueError, match="agent_config is required"):
             DBFuncTool(mock_db_manager)
 
-    def test_single_db_config_uses_single_connector_mode(self, mock_single_db_agent_config):
-        """Test that single db config falls back to single connector mode."""
+    def test_single_db_config_uses_multi_connector_mode(self, mock_single_db_agent_config):
+        """Test that single db config with DBManager still uses multi-connector mode."""
         from datus.tools.db_tools.db_manager import DBManager
 
         mock_db_manager = Mock(spec=DBManager)
@@ -1378,10 +1377,9 @@ class TestDBFuncToolMultiConnector:
             agent_config=mock_single_db_agent_config,
         )
 
-        # Should be in single connector mode (not multi-connector)
-        assert tool._db_manager is None
+        assert tool._db_manager is mock_db_manager
         assert tool._primary_connector is mock_connector
-        assert not tool._is_multi_connector
+        assert tool._is_multi_connector
 
     def test_get_connector_cache_hit(self, mock_agent_config):
         """Test that _get_connector uses cache for repeated calls."""
@@ -1399,12 +1397,14 @@ class TestDBFuncToolMultiConnector:
         mock_connector2.database_name = "db2"
 
         mock_db_manager.first_conn.return_value = mock_connector1
-        mock_db_manager.get_conn.side_effect = lambda ns, db: mock_connector2 if db == "db2" else mock_connector1
+        mock_db_manager.get_conn.side_effect = lambda datasource, db: (
+            mock_connector2 if db == "db2" else mock_connector1
+        )
 
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
         # First call should fetch from db_manager
@@ -1433,7 +1433,7 @@ class TestDBFuncToolMultiConnector:
 
         connectors = {f"db{i}": make_connector(f"db{i}") for i in range(5)}
         mock_db_manager.first_conn.return_value = connectors["db0"]
-        mock_db_manager.get_conn.side_effect = lambda ns, db: connectors.get(db, connectors["db0"])
+        mock_db_manager.get_conn.side_effect = lambda datasource, db: connectors.get(db, connectors["db0"])
 
         # Update agent_config to have more databases
         mock_agent_config.current_db_configs.return_value = {f"db{i}": {} for i in range(5)}
@@ -1441,7 +1441,7 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db0",
+            default_datasource="db0",
             connector_cache_size=3,  # Small cache for testing
         )
 
@@ -1483,7 +1483,7 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
         result = tool.list_tables(database="db1")
@@ -1515,13 +1515,13 @@ class TestDBFuncToolMultiConnector:
         tool = DBFuncTool(
             mock_db_manager,
             agent_config=mock_agent_config,
-            default_database="db1",
+            default_datasource="db1",
         )
 
-        result = tool.read_query("SELECT * FROM test", database="db2")
+        result = tool.read_query("SELECT * FROM test", datasource="db2")
 
         assert result.success == 1
-        # In cross-database mode, db_name is used as both namespace and logic_name
+        # In cross-datasource mode, db_name is used as both datasource and logic_name
         mock_db_manager.get_conn.assert_called_with("db2", "db2")
         mock_connector.execute_query.assert_called_once()
 
@@ -1554,11 +1554,9 @@ class TestReadQueryWithSqlFilePath:
         sql_file = tmp_path / "query.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        # Set workspace_root to tmp_path via agent_config
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        # Make storage attr not exist so it falls to legacy path
-        del mock_config.storage
+        # Set project_root to tmp_path via agent_config
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql=str(sql_file.relative_to(tmp_path)))
@@ -1577,9 +1575,8 @@ class TestReadQueryWithSqlFilePath:
         sql_file = sql_dir / "task.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="sql/session_1/task.sql")
@@ -1591,9 +1588,8 @@ class TestReadQueryWithSqlFilePath:
     @pytest.mark.ci
     def test_read_query_with_nonexistent_file(self, db_func_tool, tmp_path):
         """Non-existent SQL file should return error."""
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="nonexistent/query.sql")
@@ -1618,9 +1614,8 @@ class TestReadQueryWithSqlFilePath:
         sql_file = tmp_path / "query.sql"
         sql_file.write_text(sql_content, encoding="utf-8")
 
-        mock_config = Mock()
-        mock_config.workspace_root = str(tmp_path)
-        del mock_config.storage
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = str(tmp_path)
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool.read_query(sql="  query.sql  ")
@@ -1646,32 +1641,21 @@ class TestReadQueryWithSqlFilePath:
         assert actual_sql == sql_content
 
     @pytest.mark.ci
-    def test_resolve_workspace_root_priority(self, db_func_tool):
-        """Test workspace_root resolution priority: storage > legacy > default."""
-        # Priority 1: storage.workspace_root
-        mock_config = Mock()
-        mock_config.storage.workspace_root = "/from/storage"
-        mock_config.workspace_root = "/from/legacy"
+    def test_resolve_workspace_root_uses_project_root(self, db_func_tool):
+        """Test workspace_root resolution: project_root > default."""
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = "/from/project"
         db_func_tool.agent_config = mock_config
-        assert db_func_tool._resolve_workspace_root() == "/from/storage"
+        assert db_func_tool._resolve_workspace_root() == "/from/project"
 
-        # Priority 2: legacy workspace_root
-        mock_config2 = Mock()
-        del mock_config2.storage
-        mock_config2.workspace_root = "/from/legacy"
-        db_func_tool.agent_config = mock_config2
-        assert db_func_tool._resolve_workspace_root() == "/from/legacy"
-
-        # Priority 3: default "."
         db_func_tool.agent_config = None
         assert db_func_tool._resolve_workspace_root() == "."
 
     @pytest.mark.ci
     def test_resolve_workspace_root_expands_tilde(self, db_func_tool):
-        """Test that ~ in workspace_root is expanded to user home."""
-        mock_config = Mock()
-        del mock_config.storage
-        mock_config.workspace_root = "~/workspace"
+        """Test that ~ in project_root is expanded to user home."""
+        mock_config = Mock(spec=["project_root"])
+        mock_config.project_root = "~/workspace"
         db_func_tool.agent_config = mock_config
 
         result = db_func_tool._resolve_workspace_root()

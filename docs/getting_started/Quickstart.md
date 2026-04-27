@@ -2,9 +2,49 @@
 
 Get started with Datus Agent in just a few minutes. This guide will walk you through installation, setup, and your first interactions with Datus.
 
+!!! tip "Need the full warehouse workflow?"
+    For an end-to-end example that covers layered warehouse design, ETL generation, Airflow scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
+
 ## Step 1: Installation & Setup
 
-### Install Python 3.12
+### Option A — One-liner (Linux / macOS, recommended)
+
+Stable install from PyPI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
+```
+
+Dev install from GitHub source (unreleased changes on `main`, or any branch/tag/commit):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | sh
+# or pin to a specific ref
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
+```
+
+Both scripts bootstrap `uv`, create a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and write `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+
+To install additional Python packages into the global venv later, use:
+
+```bash
+datus-pip install <package>
+# equivalent to ~/.datus/venv/bin/pip install <package>
+```
+
+Pin a released version with the stable installer — note the variable is passed to the receiving shell, not to `curl`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+```
+
+Other variables supported by both scripts: `DATUS_HOME`, `DATUS_BIN_DIR`, `DATUS_FORCE=1`, `DATUS_NO_MODIFY_PATH=1`.
+
+Once the script finishes, skip the rest of this step and go straight to **Configure LLM & Database** below.
+
+### Option B — Manual install
+
+#### Install Python 3.12
 
 Datus requires a Python 3.12 environment. Choose your preferred method:
 
@@ -133,10 +173,10 @@ datus-agent init
 
 This generates an `AGENTS.md` file describing your project's architecture, directory structure, services, and data assets. The LLM analyzes your directory and README to produce the content.
 
-You can also use `--database` to include database schema information:
+You can also use `--datasource` to include datasource schema information:
 
 ```bash
-datus-agent init --database demo
+datus-agent init --datasource duckdb-demo
 ```
 
 ## Step 2: Launch Datus CLI
@@ -147,13 +187,13 @@ Start the Datus CLI with your configured database:
     You can add more databases anytime with `datus-agent configure`. Use `datus-agent service list` to see all configured databases.
 
 ```bash title="Terminal"
-datus-cli --database duckdb-demo
+datus-cli --datasource duckdb-demo
 ```
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...
 
-Datus - AI-powered SQL command-line interface
-Type '.help' for a list of commands or '.exit' to quit.
+Datus - Data engineering agent builds evolvable context for your data system
+Type '/help' for a list of commands or '/exit' to quit.
 
 Database duckdb-demo selected
 Connected to duckdb-demo using database duckdb-demo
@@ -170,7 +210,7 @@ Datus>
 List all tables:
 
 ```bash title="Terminal"
-Datus> .tables
+Datus> /tables
 ```
 ```{ .yaml .no-copy }
 Tables in Database duckdb-demo
@@ -596,12 +636,13 @@ Datus will automatically analyze the table and add metadata to the context.
     ```
 
 !!! tip
-    For more command references and options, see [CLI](../cli/introduction.md) or simply type `.help`.
+    For more command references and options, see [CLI](../cli/introduction.md) or simply type `/help`.
 
 ## Next Steps
 
 Now that you're up and running with Datus, explore more advanced features:
 
+- **[Data Engineering Quickstart](./data_engineering_quickstart.md)** - Build a layered warehouse from DAComp, schedule it in Airflow, and publish it to Superset
 - **[Contextual Data Engineering](./contextual_data_engineering.md)** - Learn how to use data assets as context
 - **[Configuration Guide](../configuration/introduction.md)** - Connect to your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** - Discover all available commands and options

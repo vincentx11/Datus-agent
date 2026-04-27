@@ -47,7 +47,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 ![Context Tree Structure](../assets/context_tree.png)
 
-- 在 [Datus CLI](../cli/introduction.md) 中，可以通过 `@catalog` 与 `@subject` 浏览和编辑
+- 在 [Datus CLI](../cli/introduction.md) 中，可以通过 `/catalog` 与 `/subject` 浏览和编辑
 - 使用 `datus-agent bootstrap-kb` 批量初始化并冷启动知识库
 - 借助子代理（Subagent），你可以定义**范围化上下文**——从全局存储中挑选一个精心整理的子集，实现精准、具领域感知的交付
 
@@ -59,7 +59,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **命令驱动的迭代**
 
-使用 `/gen_semantic_model`、`/gen_metrics`、`/gen_sql_summary` 等命令创建或更新资产；`@catalog` 和 `@subject` 页面支持就地编辑。
+使用 `/gen_semantic_model`、`/gen_metrics`、`/gen_sql_summary` 等命令创建或更新资产；`/catalog` 和 `/subject` 页面支持就地编辑。
 
 **反馈驱动持续改进**
 
@@ -143,7 +143,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **人工在环的策划**
 
-完善 domain → layer_1 → layer_2 描述；统一命名规范；在 `@catalog` / `@subject` 中直接编辑[元数据](../knowledge_base/metadata.md)。
+完善 domain → layer_1 → layer_2 描述；统一命名规范；在 `/catalog` / `/subject` 中直接编辑[元数据](../knowledge_base/metadata.md)。
 
 **示例：**
 
@@ -156,7 +156,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **定义具领域感知的聊天机器人**
 
-使用 `.subagent add <name>` 为特定场景（如“商业化分析”）创建子代理。
+使用 `/subagent add <name>` 为特定场景（如“商业化分析”）创建子代理。
 
 **打包核心要素**
 
@@ -169,7 +169,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 **示例：**
 
 ```bash
-.subagent add california_schools
+/subagent add california_schools
 ```
 
 ### 交付与迭代
@@ -179,7 +179,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 将子代理发布为轻量级聊天界面，供分析师进行多轮分析与报表预览。
 
 ```bash
-datus-agent --namespace schools --web
+datus-cli --datasource schools --web
 ```
 
 随后可访问 `http://localhost:8501/?subagent=california_schools`（若对外部署，请将 `localhost` 替换为外网可访问的地址）。
@@ -236,6 +236,4 @@ datus-agent --namespace schools --web
 - [指标定义](../knowledge_base/metrics.md) —— 定义可复用的业务指标
 - [Reference SQL 追踪](../knowledge_base/reference_sql.md) —— 捕获并利用历史查询模式
 - [上下文命令参考](../cli/context_command.md) —— CLI 上下文命令全览
-
-
 

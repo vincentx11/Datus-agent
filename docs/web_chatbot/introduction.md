@@ -8,14 +8,14 @@ The Datus Web Chatbot provides a user-friendly web interface for interacting wit
 
 ### Launch the Web Interface
 
-**With Namespace**:
+**With Datasource**:
 ```bash
-datus --web --database <your_namespace>
+datus --web --datasource <your_datasource>
 ```
 
 **With Custom Configuration**:
 ```bash
-datus --web --config path/to/agent.yml --database snowflake
+datus --web --config path/to/agent.yml --datasource snowflake
 ```
 
 **Custom Port and Host**:
@@ -52,18 +52,22 @@ The assistant will:
 
 Access specialized subagents for different tasks directly from the web interface.
 
-**Available Subagents** (shown in expandable section):
+**Available Subagents**:
 
-- `gen_semantic_model`: Generate semantic models from database tables
-- `gen_metrics`: Convert SQL queries to MetricFlow metrics
-- `gen_sql_summary`: Analyze and classify SQL queries
+The available list comes from built-in subagents plus any custom entries under `agent.agentic_nodes` for the current database. Common examples include:
+
+- `gen_sql`
+- `gen_report`
+- `gen_semantic_model`
+- `gen_metrics`
+- `gen_dashboard`
+- `scheduler`
 
 **How to Use**:
 
-1. Click "🔧 Access Specialized Subagents" on the main page
-2. Select the subagent you need
-3. Click "🚀 Use [subagent_name]"
-4. Chat with the specialized assistant
+1. Open the main chatbot page
+2. Switch to the subagent you need
+3. Chat with the specialized assistant
 
 **Direct URL Access**:
 
@@ -72,6 +76,13 @@ You can bookmark subagent URLs for quick access:
 ```
 http://localhost:8501/?subagent=gen_metrics
 http://localhost:8501/?subagent=gen_semantic_model
+http://localhost:8501/?subagent=finance_report
+```
+
+You can also launch the web UI directly into a subagent from the CLI:
+
+```bash
+datus --web --datasource production --subagent finance_report
 ```
 
 ### 3. Session Management
@@ -80,16 +91,14 @@ http://localhost:8501/?subagent=gen_semantic_model
 
 The sidebar shows your recent chat sessions with:
 
-- Session ID (shortened)
+- Session name
 - Creation time
-- Message count
-- Latest user message preview
 
 **Load Previous Sessions**:
 
 1. Find the session in the sidebar
-2. Click "🔗 Load Session"
-3. View the conversation in read-only mode
+2. Click the session name
+3. Open the session to review its history or continue the conversation
 
 **Session Sharing**:
 
@@ -99,14 +108,14 @@ Each session has a unique URL that can be shared:
 http://localhost:8501?session=abc123def456...
 ```
 
-### 4. Success Story Tracking
+### 4. Success Story Archive
 
 **Mark Successful Queries**:
 
 When the AI generates a SQL query that works well:
 
 1. Review the generated SQL
-2. Click the "👍 Success" button
+2. Click the "Save to success story" button
 3. The query is saved to `~/.datus/benchmark/[subagent]/success_story.csv`
 
 ![Save Generated SQL](../assets/geneated_sql_save.png)
@@ -120,18 +129,6 @@ http://localhost:8501?session=...,abc123...,chatbot,"Show revenue by category",S
 
 This helps track effective queries for benchmarking and improvement.
 
-### 5. Report Issues
-
-**Share Problems Easily**:
-
-1. Click "🐛 Report Issue" in the sidebar
-2. Session link is automatically copied to clipboard
-3. Paste the link when reporting issues to developers
-
-The session link includes full conversation context, making debugging easier.
-
-![Report Issue](../assets/report_issue_sessionid_copied.png){ width="50%" }
-
 ## Summary
 
 The Datus Web Chatbot provides:
@@ -142,4 +139,4 @@ The Datus Web Chatbot provides:
 - **Success Tracking**: Mark and collect effective queries
 - **Easy Sharing**: One-click session link copying
 - **Visual Execution**: See step-by-step query generation
-- **Multi-Namespace Support**: Switch between databases easily
+- **Multi-Datasource Support**: Switch between databases easily

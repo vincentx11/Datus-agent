@@ -55,20 +55,19 @@ def create_interactive_node(
                 node_name=subagent_name, agent_config=agent_config, execution_mode="interactive", scope=scope
             )
 
-        elif subagent_name == "gen_table":
+        elif subagent_name == "gen_table" or node_class_type == "gen_table":
             from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
 
-            return GenTableAgenticNode(agent_config=agent_config, execution_mode="interactive")
+            return GenTableAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_name=subagent_name if node_class_type == "gen_table" else None,
+            )
 
         elif subagent_name == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
             return GenJobAgenticNode(agent_config=agent_config, execution_mode="interactive")
-
-        elif subagent_name == "migration":
-            from datus.agent.node.migration_agentic_node import MigrationAgenticNode
-
-            return MigrationAgenticNode(agent_config=agent_config, execution_mode="interactive")
 
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -104,17 +103,48 @@ def create_interactive_node(
                 node_name=subagent_name,
             )
 
-        elif subagent_name == "gen_skill":
+        elif subagent_name == "gen_skill" or node_class_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
-                node_id=f"gen_skill{node_id_suffix}",
-                description="Skill generation node",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                description=f"Skill generation node for {subagent_name}",
                 node_type="gen_skill",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
-                node_name="gen_skill",
+                node_name=subagent_name if node_class_type == "gen_skill" else "gen_skill",
+            )
+
+        elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
+            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+            return GenDashboardAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                node_name=subagent_name if node_class_type == "gen_dashboard" else None,
+                scope=scope,
+            )
+
+        elif subagent_name == "scheduler" or node_class_type == "scheduler":
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            return SchedulerAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                node_id=f"{subagent_name}{node_id_suffix}",
+                node_name=subagent_name if node_class_type == "scheduler" else None,
+                scope=scope,
+            )
+
+        elif subagent_name == "feedback":
+            from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+            return FeedbackAgenticNode(
+                agent_config=agent_config,
+                execution_mode="interactive",
+                scope=scope,
             )
 
         else:
@@ -156,6 +186,7 @@ def create_node_input(
     at_sqls=None,
     prompt_language: str = "en",
     plan_mode: bool = False,
+    source_session_id: Optional[str] = None,
 ):
     """Create node input based on node type.
 
@@ -170,6 +201,8 @@ def create_node_input(
         at_sqls: @-referenced SQL queries.
         prompt_language: Language for prompts (default "en").
         plan_mode: Whether to enable plan mode.
+        source_session_id: Source session the feedback node should copy from.
+            Only consumed by :class:`FeedbackAgenticNode`.
     """
     from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
@@ -178,7 +211,6 @@ def create_node_input(
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
-    from datus.agent.node.migration_agentic_node import MigrationAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
     if isinstance(
@@ -188,7 +220,6 @@ def create_node_input(
             GenMetricsAgenticNode,
             GenTableAgenticNode,
             GenJobAgenticNode,
-            MigrationAgenticNode,
         ),
     ):
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
@@ -270,6 +301,20 @@ def create_node_input(
         from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 
         return SkillCreatorNodeInput(user_message=user_message)
+
+    from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+    if isinstance(node, FeedbackAgenticNode):
+        from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+        # CLI path leaves source_session_id=None because _copy_session_for_switch
+        # seeds the feedback node's session directly. API/Gateway paths pass a
+        # real source_session_id so the node copies the source session itself.
+        return FeedbackNodeInput(
+            user_message=user_message,
+            database=database,
+            source_session_id=source_session_id,
+        )
 
     else:
         from datus.schemas.chat_agentic_node_models import ChatNodeInput

@@ -24,7 +24,7 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
 def _make_args():
     return argparse.Namespace(
-        namespace="test_ns",
+        datasource="test_ns",
         config=None,
         max_steps=20,
         workflow="fixed",
@@ -40,7 +40,7 @@ def _make_service(args=None):
 def _make_request(**kwargs):
     defaults = dict(
         workflow="nl2sql",
-        namespace="test_ns",
+        datasource="test_ns",
         task="find all users",
     )
     defaults.update(kwargs)
@@ -91,7 +91,10 @@ class TestDatusAPIServiceInitialize:
 
         with patch("datus.api.service.load_agent_config", return_value=mock_cfg):
             with patch("datus.api.service.TaskStore", return_value=mock_task_store):
-                await service.initialize()  # should not raise
+                await service.initialize()
+
+        mock_task_store.cleanup_old_tasks.assert_called_once()
+        assert service.agent_config is mock_cfg
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +166,7 @@ class TestGetAgent:
             service.get_agent("test_ns")
         assert exc_info.value.status_code == 500
 
-    def test_creates_agent_for_new_namespace(self):
+    def test_creates_agent_for_new_datasource(self):
         service = _make_service()
         service.agent_config = MagicMock()
         mock_agent = MagicMock()
@@ -174,7 +177,7 @@ class TestGetAgent:
         assert agent is mock_agent
         assert "new_ns" in service.agents
 
-    def test_returns_cached_agent_for_existing_namespace(self):
+    def test_returns_cached_agent_for_existing_datasource(self):
         service = _make_service()
         service.agent_config = MagicMock()
         mock_agent = MagicMock()
@@ -211,7 +214,7 @@ class TestCreateSqlTask:
 
     def test_defaults_when_optional_fields_absent(self):
         service = _make_service()
-        request = RunWorkflowRequest(workflow="nl2sql", namespace="ns", task="q")
+        request = RunWorkflowRequest(workflow="nl2sql", datasource="ns", task="q")
         mock_agent = MagicMock()
         mock_agent.global_config.output_dir = "/tmp/out"
 
@@ -469,7 +472,7 @@ class TestHealthCheck:
     async def test_healthy_when_agent_config_available(self):
         service = _make_service()
         service.agent_config = MagicMock()
-        service.agent_config.current_database = "ns"
+        service.agent_config.current_datasource = "ns"
 
         mock_agent = MagicMock()
         mock_agent.check_db.return_value = {"status": "success"}

@@ -5,7 +5,7 @@ validation chain is used:
 
 1. Write YAML to a temp file
 2. ``ConfigLinter.lint_file()`` -- structure / field checks
-3. ``collect_yaml_config_file_paths()`` -- gather all namespace YAML files
+3. ``collect_yaml_config_file_paths()`` -- gather all datasource YAML files
 4. ``parse_yaml_file_paths_to_model()`` -- cross-file reference resolution
 5. ``ModelValidator().validate_model()`` -- semantic consistency
 
@@ -51,7 +51,7 @@ def validate_semantic_yaml(
     yaml_content: str,
     file_path: str,
     datus_home: str,
-    namespace: str,
+    datasource: str,
 ) -> Tuple[bool, List[str]]:
     """Validate semantic model / metric YAML content.
 
@@ -63,13 +63,13 @@ def validate_semantic_yaml(
         file_path: The target file path (used to determine filename and
             for replacement in the collected file list).
         datus_home: Datus home directory path.
-        namespace: Current namespace for semantic model directory.
+        datasource: Current datasource for semantic model directory.
 
     Returns:
         ``(is_valid, error_messages)``
     """
     if _check_metricflow():
-        return _validate_deep(yaml_content, file_path, datus_home, namespace)
+        return _validate_deep(yaml_content, file_path, datus_home, datasource)
     return _validate_yaml_format(yaml_content)
 
 
@@ -80,7 +80,7 @@ def _validate_deep(
     yaml_content: str,
     file_path: str,
     datus_home: str,
-    namespace: str,
+    datasource: str,
 ) -> Tuple[bool, List[str]]:
     from metricflow.model.model_validator import ModelValidator
     from metricflow.model.parsing.config_linter import ConfigLinter
@@ -88,8 +88,6 @@ def _validate_deep(
         collect_yaml_config_file_paths,
         parse_yaml_file_paths_to_model,
     )
-
-    from datus.utils.path_manager import DatusPathManager
 
     temp_dir = None
     temp_file_path = None
@@ -108,9 +106,18 @@ def _validate_deep(
         if lint_issues:
             return False, [issue.as_readable_str() for issue in lint_issues]
 
-        # Step 3: Collect all existing semantic model files in the namespace
-        path_manager = DatusPathManager(datus_home=Path(datus_home))
-        semantic_yaml_dir = path_manager.semantic_model_path(namespace)
+        # Step 3: Collect all existing semantic model files from the same
+        # project tree as ``file_path``. Resolving via the CWD-based
+        # ``DatusPathManager.semantic_model_path()`` would make validation
+        # nondeterministic when the calling process's CWD does not match
+        # the project that owns ``file_path``.
+        del datasource  # unused after refactor; kept in signature for compatibility
+        del datus_home  # resolution below is file_path-relative
+        target_path = Path(file_path).resolve()
+        semantic_yaml_dir = next(
+            (p for p in [target_path.parent, *target_path.parents] if p.name == "semantic_models"),
+            target_path.parent,
+        )
         file_paths = collect_yaml_config_file_paths(directory=str(semantic_yaml_dir))
 
         # Replace the original file with the temp file for validation

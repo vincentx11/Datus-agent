@@ -48,32 +48,52 @@ pip install -e ../datus-semantic-adapter/datus-semantic-metricflow
 
 ## 配置
 
-在 `config.yaml` 文件的 `semantic` 部分配置语义层：
+在 `agent.yml` 的 `agent.services.semantic_layer` 中配置语义层适配器：
+
+如果你使用的是 MetricFlow 的默认配置，整个 `semantic_layer` 段也可以省略；此时 Datus 会自动默认使用 `metricflow`。
 
 ### MetricFlow
 
 ```yaml
-semantic:
-  type: metricflow
-  namespace: my_project
-  timeout: 300  # 可选，默认 300 秒
-  config_path: /path/to/agent.yml  # 可选，未指定时使用默认查找路径
+agent:
+  services:
+    semantic_layer:
+      metricflow:
+        timeout: 300  # 可选，默认 300 秒
+        config_path: /path/to/agent.yml  # 可选的高级覆盖项
+
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: metricflow
+    gen_metrics:
+      semantic_adapter: metricflow
 ```
 
 **语义模型文件位置**：
-MetricFlow 自动在以下位置查找语义模型文件：
+默认情况下，Datus 会把 MetricFlow 指向当前项目的语义模型目录：
 ```text
-{agent.home}/semantic_models/{namespace}/
+{project_root}/subject/semantic_models/
 ```
-- `agent.home` 从 `agent.yml` 读取（默认为 `~/.datus`）
+- `project_root` 是当前 Datus 项目的根目录。
+- 配置中的语义模型目录会被视为权威来源。即使生成的 YAML 位于项目本地或被 gitignore 忽略的目录中，也会参与 MetricFlow 验证。
 
-### 配置查找优先级
+### 选择规则
 
-初始化 MetricFlow 适配器时：
+- `services.semantic_layer` 下的 key **必须等于 adapter type**（例如 `metricflow`）。如果同时写了 `type:` 字段，其值必须与 key 一致，否则 Datus 会在启动时抛出配置错误。比较时会先对 key 与 `type` 做 lowercase + trim 处理，因此 `MetricFlow` 或 ` metricflow ` 也会被视为与 `metricflow` 匹配。
+- 语义相关节点通过 `semantic_adapter` 选择适配器。
+- 如果 `services.semantic_layer` 和 `semantic_adapter` 都省略，Datus 会默认使用 `metricflow`。
+- 如果只配置了一个 semantic layer，省略 `semantic_adapter` 时会自动使用它。
+- 如果配置了多个 semantic layer，则必须显式填写 `semantic_adapter`。
 
-1. `config_path` 参数（如果显式提供）
-2. `./conf/agent.yml`（当前目录）
-3. `~/.datus/conf/agent.yml`（主目录）
+### 关于 `config_path`
+
+`config_path` 是可选项。正常运行时，Datus 会从以下上下文构造 MetricFlow 配置：
+
+1. `services.datasources` 中当前选中的数据源
+2. 当前项目的语义模型目录
+3. 当前生效的 `agent.home`
+
+只有在你明确希望 MetricFlow 从另一份 agent 配置文件初始化时，才需要填写 `config_path`。
 
 ## 核心接口
 
@@ -115,7 +135,7 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.config import MetricFlowConfig
 
 async def main():
-    config = MetricFlowConfig(namespace="my_project")
+    config = MetricFlowConfig(datasource="my_project")
     adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
     metrics = await adapter.list_metrics(limit=10)
@@ -140,7 +160,7 @@ asyncio.run(dry_run_example())
 ### 从适配器同步数据
 
 ```bash
-datus-agent bootstrap-kb --namespace my_project --components metrics \
+datus-agent bootstrap-kb --datasource my_project --components metrics \
   --from_adapter metricflow --kb-update-strategy overwrite
 ```
 
@@ -161,6 +181,7 @@ datus-agent bootstrap-kb --namespace my_project --components metrics \
 - 完整的 MetricFlow API 集成
 - 基于 YAML 的语义模型文件
 - 三阶段验证（lint、parse、semantic）
+- 即使无效 YAML 导致 MetricFlow client 无法完整初始化，验证也会返回具体 YAML 问题
 - SQL 生成和执行计划
 - 支持时间粒度的时间范围过滤
 
@@ -215,7 +236,7 @@ myservice = "datus_semantic_myservice:register"
 | 问题 | 解决方案 |
 |------|---------|
 | 适配器未找到 | 安装适配器：`pip install datus-semantic-metricflow` |
-| 连接问题 | 验证 `agent.yml` 配置，检查 namespace 与语义模型目录匹配 |
+| 连接问题 | 验证 `agent.yml` 配置，检查当前数据库选择与语义模型目录 |
 | 验证错误 | 运行 `adapter.validate_semantic()` 检查配置 |
 
 ## 下一步

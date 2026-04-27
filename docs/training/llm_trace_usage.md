@@ -12,13 +12,13 @@ Add the `--save_llm_trace` parameter to any Datus command:
 
 ```bash
 # CLI mode
-datus-cli --database spidersnow --save_llm_trace
+datus-cli --datasource spidersnow --save_llm_trace
 
 # Main program mode
-python datus/main.py run --database bird_sqlite --task "Query all users" --task_db_name test.db --save_llm_trace
+python -m datus.main run --datasource bird_sqlite --task_db_name test.db --task "Query all users" --save_llm_trace
 
 # Benchmark mode
-python datus/main.py benchmark --database bird_sqlite --benchmark bird_dev --save_llm_trace
+python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --save_llm_trace
 ```
 
 ### 2. Configuration File
@@ -38,7 +38,7 @@ agent:
 
 ## Output Format
 
-Trace files are saved in the `trajectory_dir/{task_id}/` directory (`trajectory_dir` is the configured trace output base directory, typically `{agent.home}/trajectory/{namespace}/{timestamp}/`), with each node generating a `{node_id}.yml` file.
+Trace files are saved in the `trajectory_dir/{task_id}/` directory (`trajectory_dir` is the configured trace output base directory, typically `{agent.home}/trajectory/{datasource}/{timestamp}/`), with each node generating a `{node_id}.yml` file.
 
 ### YAML File Structure
 
@@ -83,28 +83,28 @@ Below, `<trajectory_dir>` represents the configured trace output base directory:
 
 ```bash
 # Enable tracing during development to debug prompts
-datus-cli --database local_duckdb --save_llm_trace
+datus-cli --datasource local_duckdb --save_llm_trace
 ```
 
 ### 2. Performance Analysis
 
 ```bash
 # Analyze LLM input/output for different nodes
-python datus/main.py benchmark --database bird_sqlite --benchmark bird_dev --save_llm_trace
+python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --save_llm_trace
 ```
 
 ### 3. Auditing and Compliance
 
 ```bash
 # Record all LLM interactions for auditing
-python datus/main.py run --database prod --task "sensitive query" --save_llm_trace
+python -m datus.main run --datasource prod --task_db_name analytics --task "sensitive query" --save_llm_trace
 ```
 
 ### 4. MCP Call Tracing
 
 ```bash
 # Enable detailed tracing of MCP calls, including the entire function call process
-python datus/main.py run --database bird_sqlite --task "Complex query" --save_llm_trace
+python -m datus.main run --datasource bird_sqlite --task_db_name test.db --task "Complex query" --save_llm_trace
 ```
 
 ## Important Notes

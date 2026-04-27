@@ -10,15 +10,16 @@ scheduler subagent 是一个专用节点（`SchedulerAgenticNode`），它：
 
 - 通过 `datus-scheduler-airflow` 包连接到已配置的 Airflow 实例
 - 提供 12 个工具，覆盖完整的作业生命周期：提交、触发、暂停、恢复、更新、删除和监控
+- 提供文件系统工具，可先把生成的 SQL 写入项目文件再提交作业
 - 支持 SQL 和 SparkSQL 两种作业类型
 - 支持获取日志并对失败或运行中的作业进行排查
 
 ## 快速开始
 
-确保已在 `agent.yml` 中配置 `agent.scheduler` 并安装了所需包：
+确保已在 `agent.yml` 中配置 `agent.services.schedulers` 并安装了所需包：
 
 ```bash
-pip install datus-scheduler-core datus-scheduler-airflow
+pip install datus-scheduler-airflow
 ```
 
 从对话界面调用 subagent：
@@ -56,11 +57,12 @@ graph LR
 提交新作业时：
 
 1. LLM 从用户请求中识别 SQL 文件路径、连接名和调度计划
-2. 调用 `list_scheduler_connections` 发现可用的 Airflow 连接
-3. `submit_sql_job` 或 `submit_sparksql_job` 读取 `.sql` 文件并使用指定的 cron 调度创建 Airflow DAG
-4. 作业 ID 和状态以 `scheduler_result` 形式返回
+2. 如果 SQL 是对话过程中生成的，先用 `write_file` 写到项目路径，例如 `jobs/<job_name>.sql`
+3. 调用 `list_scheduler_connections` 发现可用的 Airflow 连接
+4. `submit_sql_job` 或 `submit_sparksql_job` 读取 `.sql` 文件并使用指定的 cron 调度创建 Airflow DAG
+5. 作业 ID 和状态以 `scheduler_result` 形式返回
 
-> **注意：** `submit_sql_job` 和 `submit_sparksql_job` 需要一个 `sql_file_path` 参数，指向主机上已有的 `.sql` 文件。scheduler 节点不包含文件系统工具（write_file 等），因此 SQL 文件必须在调用 scheduler subagent 之前准备好。
+> **注意：** `submit_sql_job` 和 `submit_sparksql_job` 需要一个 `sql_file_path` 参数，指向主机上已有的 `.sql` 文件。scheduler subagent 可以在提交前用文件系统工具创建或更新该文件。
 
 ## 可用工具
 
@@ -78,6 +80,7 @@ graph LR
 | `list_scheduler_connections` | 列出可用于作业配置的 Airflow 连接 |
 | `list_job_runs` | 列出特定作业的近期运行记录 |
 | `get_run_log` | 获取特定作业运行的执行日志 |
+| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
 
 ## 配置
 
@@ -85,20 +88,22 @@ graph LR
 
 ```yaml
 agent:
+  services:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"       # 例如 http://localhost:8080/api/v1
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"   # 生成的 DAG 文件写入目录
+        dag_discovery_timeout: 60            # 可选：等待 DAG 发现的超时秒数
+        dag_discovery_poll_interval: 5       # 可选：轮询间隔秒数
+
   agentic_nodes:
     scheduler:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"       # 例如 http://localhost:8080/api/v1
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"   # 生成的 DAG 文件写入目录
-    dag_discovery_timeout: 60            # 可选：等待 DAG 发现的超时秒数
-    dag_discovery_poll_interval: 5       # 可选：轮询间隔秒数
+      model: claude                  # 可选：默认使用已配置的模型
+      max_turns: 30                  # 可选：默认为 30
+      scheduler_service: airflow_prod
 ```
 
 ### 配置参数
@@ -107,21 +112,24 @@ agent:
 |------|------|------|--------|
 | `model` | 否 | 使用的 LLM 模型 | 使用已配置的默认模型 |
 | `max_turns` | 否 | 最大对话轮数 | 30 |
-| `scheduler.name` | 是 | 此调度器的人类可读名称 | — |
-| `scheduler.type` | 是 | 调度器类型（目前为 `airflow`） | — |
-| `scheduler.api_base_url` | 是 | Airflow REST API 基础 URL | — |
-| `scheduler.username` | 是 | Airflow 登录用户名 | — |
-| `scheduler.password` | 是 | Airflow 登录密码 | — |
-| `scheduler.dags_folder` | 是 | 生成的 DAG 文件目录 | — |
-| `scheduler.dag_discovery_timeout` | 否 | 等待 Airflow 发现新 DAG 的超时秒数 | 60 |
-| `scheduler.dag_discovery_poll_interval` | 否 | DAG 发现的轮询间隔 | 5 |
+| `scheduler_service` | 否 | `services.schedulers` 中的 scheduler 服务键名 | 仅配置一个 scheduler 时自动选择，或使用唯一的 `default: true` |
+| `services.schedulers.<name>.type` | 是 | 调度器类型（目前为 `airflow`） | — |
+| `services.schedulers.<name>.api_base_url` | 是 | Airflow REST API 基础 URL | — |
+| `services.schedulers.<name>.username` | 是 | Airflow 登录用户名 | — |
+| `services.schedulers.<name>.password` | 是 | Airflow 登录密码 | — |
+| `services.schedulers.<name>.dags_folder` | 是 | 生成的 DAG 文件目录 | — |
+| `services.schedulers.<name>.dag_discovery_timeout` | 否 | 等待 Airflow 发现新 DAG 的超时秒数 | 60 |
+| `services.schedulers.<name>.dag_discovery_poll_interval` | 否 | DAG 发现的轮询间隔 | 5 |
+| `services.schedulers.<name>.default` | 否 | 多实例场景下标记唯一默认 scheduler | `false` |
 
 所有敏感值支持 `${ENV_VAR}` 环境变量替换。
 
 **前置条件**：
-- 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
+- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
 - Agent 主机可访问 Airflow 实例
 - `dags_folder` 目录对 agent 进程可写，且 Airflow scheduler 可访问
+
+`services.schedulers` 是 scheduler 配置的唯一运行时来源。顶层 `scheduler:` 已不再读取。
 
 ## 常用 Cron 表达式
 
@@ -206,6 +214,7 @@ agent:
     etl_scheduler:
       node_class: scheduler
       max_turns: 30
+      scheduler_service: airflow_prod
 ```
 
 然后通过 `/etl_scheduler 提交每周日午夜运行的 ETL 汇总作业` 调用。

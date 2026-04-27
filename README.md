@@ -50,7 +50,37 @@ Built-in evaluation framework supporting **BIRD** and **Spider 2.0-Snow** datase
 
 ### Install
 
-**Requirements:** Python >= 3.12
+**Requirements:** Linux or macOS. Python 3.12 is installed automatically when you use the one-liner.
+
+#### One-liner (Linux / macOS)
+
+Stable install from PyPI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
+```
+
+This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus-agent init`.
+
+To install additional Python packages into the global venv later, use `datus-pip install <package>` (it is a shim for `~/.datus/venv/bin/pip`).
+
+Dev install from GitHub source (picks up unreleased changes):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | sh
+# or pin to a branch / tag / commit
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install-dev.sh | DATUS_REF=feature/foo sh
+```
+
+Pin a PyPI version (stable installer only):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | DATUS_VERSION=0.2.6 sh
+```
+
+Other variables supported by both installers: `DATUS_HOME` (default `~/.datus`), `DATUS_BIN_DIR` (default `~/.local/bin`), `DATUS_FORCE=1` to recreate the venv, `DATUS_NO_MODIFY_PATH=1` to skip shell rc edits.
+
+#### Manual install
 
 ```bash
 pip install datus-agent
@@ -63,12 +93,12 @@ datus-agent init
 
 | Interface | Command | Use Case |
 |-----------|---------|----------|
-| **CLI** (Interactive REPL) | `datus-cli --namespace demo` | Data engineers exploring data, building context, creating subagents |
-| **Web Chatbot** (Streamlit) | `datus-cli --web --namespace demo` | Analysts chatting with subagents via browser (`http://localhost:8501`) |
-| **API Server** (FastAPI) | `datus-api --namespace demo` | Applications consuming data services via REST (`http://localhost:8000`) |
-| **MCP Server** | `datus-mcp --namespace demo` | MCP-compatible clients (Claude Desktop, Cursor, etc.) |
+| **CLI** (Interactive REPL) | `datus-cli --datasource demo` | Data engineers exploring data, building context, creating subagents |
+| **Web Chatbot** (Streamlit) | `datus-cli --web --datasource demo` | Analysts chatting with subagents via browser (`http://localhost:8501`) |
+| **API Server** (FastAPI) | `datus-api --datasource demo` | Applications consuming data services via REST (`http://localhost:8000`) |
+| **MCP Server** | `datus-mcp --datasource demo` | MCP-compatible clients (Claude Desktop, Cursor, etc.) |
 
-> **Tip:** Use `datus-cli --print --namespace demo` for JSON streaming to stdout — useful for piping into other tools.
+> **Tip:** Use `datus-cli --print --datasource demo` for JSON streaming to stdout — useful for piping into other tools.
 
 ## Architecture
 
@@ -113,7 +143,7 @@ The knowledge base is powered by **LanceDB** and organizes context into multiple
 Build the knowledge base with:
 
 ```bash
-datus-agent bootstrap-kb --namespace demo --components metadata,reference_sql,ext_knowledge
+datus-agent bootstrap-kb --datasource demo --components metadata,reference_sql,ext_knowledge
 ```
 
 ## Configuration
@@ -124,7 +154,7 @@ Datus is configured via `agent.yml`. Run `datus-agent init` to generate a starte
 |---------|---------|
 | `agent.models` | LLM provider definitions (API keys, model IDs, base URLs) |
 | `agent.nodes` | Per-node model assignment and tuning parameters |
-| `agent.namespace` | Database connections (SQLite, DuckDB, Snowflake, etc.) |
+| `agent.services.datasources` | Database connections (SQLite, DuckDB, Snowflake, etc.) |
 | `agent.storage` | Embedding models, vector DB, and RAG configuration |
 | `agent.workflow` | Execution plans with sequential, parallel, and sub-workflow steps |
 | `agent.agentic_nodes` | Configuration for agentic nodes (semantic model gen, metrics gen) |
@@ -176,7 +206,7 @@ See [Database Adapters documentation](https://docs.datus.ai/adapters/db_adapters
 **Explore** — Chat with your database, test queries, and ground prompts with `@table` or `@file` references.
 
 ```bash
-datus-cli --namespace demo
+datus-cli --datasource demo
 /Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 

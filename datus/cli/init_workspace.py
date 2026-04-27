@@ -7,7 +7,7 @@
 Workspace initialization command for Datus Agent.
 
 Generates AGENTS.md in the current project directory. Requires a configured
-LLM (run `datus configure` first). Reads configured services from agent.yml,
+LLM (use `/model` inside the CLI). Reads configured services from agent.yml,
 scans the directory structure, and uses the LLM to produce a project-level
 AGENTS.md with Architecture, Directory Map, Services, and Artifacts sections.
 """
@@ -83,13 +83,13 @@ def _detect_project_type(root: str) -> str:
     return ", ".join(detected) if detected else "Unknown"
 
 
-def _build_services_section(databases: Dict[str, Any]) -> str:
-    """Build Services section from configured databases."""
-    if not databases:
-        return "No services configured. Run `datus configure` to add databases.\n"
+def _build_services_section(datasources: Dict[str, Any]) -> str:
+    """Build Services section from configured datasources."""
+    if not datasources:
+        return "No services configured. Use `/datasource` inside the CLI to add datasources.\n"
 
     lines = ["| Name | Type | Connection |", "|------|------|------------|"]
-    for name, cfg in databases.items():
+    for name, cfg in datasources.items():
         conn = ""
         if hasattr(cfg, "uri") and cfg.uri:
             conn = cfg.uri
@@ -123,7 +123,7 @@ class InitWorkspace:
                 )
             except Exception as e:
                 self.console.print(f"[red]Failed to load configuration: {e}[/red]")
-                self.console.print("Run 'datus configure' first to set up LLM and database connections.")
+                self.console.print("Run 'datus init' first to set up the configuration.")
                 return 1
 
             # Check for existing AGENTS.md
@@ -146,11 +146,11 @@ class InitWorkspace:
             project_type = _detect_project_type(self.project_dir)
 
             # Build services section from config
-            services_section = _build_services_section(agent_config.service.databases)
+            services_section = _build_services_section(agent_config.services.datasources)
 
-            # Probe database schema if --database specified
+            # Probe database schema if --datasource specified
             db_schema_info = ""
-            db_name = getattr(self.args, "database", "")
+            db_name = getattr(self.args, "datasource", "")
             if db_name:
                 db_schema_info = self._probe_database(agent_config, db_name)
 
@@ -182,13 +182,13 @@ class InitWorkspace:
             from datus.tools.db_tools.db_manager import DBManager
 
             self.console.print(f"[dim]Probing database '{db_name}'...[/dim]")
-            db_config = agent_config.service.databases.get(db_name)
+            db_config = agent_config.services.datasources.get(db_name)
             if not db_config:
                 self.console.print(f"[yellow]Database '{db_name}' not found in config, skipping probe.[/yellow]")
                 return ""
 
-            namespaces = {db_name: {db_name: db_config}}
-            db_manager = DBManager(namespaces)
+            datasource_configs = {db_name: {db_name: db_config}}
+            db_manager = DBManager(datasource_configs)
             connector = db_manager.get_conn(db_name, db_name)
 
             tables = connector.get_tables()

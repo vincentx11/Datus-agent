@@ -18,7 +18,8 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
-from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
@@ -26,6 +27,30 @@ from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalize_dimension_rows(raw) -> list:
+    """Normalize dimension payload into ``List[Dict[str, Any]]`` for the envelope.
+
+    Adapters (MetricFlow) return pydantic ``DimensionInfo`` objects with a
+    full schema; storage may hold bare strings (dimension name only) or
+    dicts. FuncToolListResult.items must be ``List[Dict]`` either way, so
+    wrap naked strings into ``{"name": str}`` and leave structured rows
+    untouched.
+    """
+    if not raw:
+        return []
+    normalized = []
+    for d in raw:
+        if hasattr(d, "model_dump"):
+            normalized.append(d.model_dump())
+        elif isinstance(d, dict):
+            normalized.append(d)
+        elif isinstance(d, str):
+            normalized.append({"name": d})
+        else:
+            normalized.append({"name": str(d)})
+    return normalized
 
 
 def _run_async(coro):
@@ -68,6 +93,7 @@ class SemanticTools:
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
         adapter_type: Optional[str] = None,
+        generation_evidence: Optional[GenerationEvidence] = None,
     ):
         """
         Initialize semantic function tool.
@@ -76,10 +102,13 @@ class SemanticTools:
             agent_config: Agent configuration
             sub_agent_name: Optional sub-agent name for scoped storage
             adapter_type: Optional adapter type (e.g., "metricflow"). If not provided, tools will use storage only.
+            generation_evidence: Optional shared tracker for validate_semantic and query_metrics(dry_run=True)
+                publish-gate evidence.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.adapter_type = adapter_type
+        self.generation_evidence = generation_evidence
 
         # Initialize storage RAG interfaces
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
@@ -90,50 +119,70 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
 
-    def _extract_db_config(self, namespace: str) -> Optional[dict]:
-        """Extract db_config dict from AgentConfig.namespaces for the given namespace."""
-        ns_configs = self.agent_config.namespaces.get(namespace)
-        if not ns_configs:
+    def _extract_db_config(self, datasource: str) -> Optional[dict]:
+        """Extract db_config dict from the selected database config."""
+        try:
+            db_config_obj = self.agent_config.current_db_config(datasource)
+        except Exception:
             return None
-        db_config_obj = list(ns_configs.values())[0]
+        if db_config_obj is None:
+            return None
         raw = db_config_obj.to_dict()
-        return {
+        extra = raw.get("extra")
+        db_config = {
             k: str(v)
             for k, v in raw.items()
-            if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog")
+            if v is not None and v != "" and k not in ("extra", "logic_name", "path_pattern", "catalog", "default")
         }
+        # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                if v is None or v == "":
+                    continue
+                db_config.setdefault(k, str(v))
+        return db_config
 
     @property
     def adapter(self) -> Optional[BaseSemanticAdapter]:
         """Lazy load semantic adapter if configured."""
-        if self._adapter is None and self.adapter_type:
+        if self._adapter is None:
             try:
-                # Try to get adapter-specific config from agent_config
-                adapter_config = getattr(self.agent_config, f"{self.adapter_type}_config", None)
+                resolved_adapter = self.adapter_type
+                resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+                if callable(resolver):
+                    resolved_adapter = resolver(self.adapter_type)
+                if not resolved_adapter:
+                    return None
+
+                metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
+                builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
+                adapter_config = builder(resolved_adapter) if callable(builder) else None
                 if adapter_config is None:
-                    # Get namespace from agent_config
-                    namespace = getattr(self.agent_config, "namespace", None) or self.agent_config.current_database
+                    datasource = self.agent_config.current_datasource
+                    db_config = self._extract_db_config(datasource)
+                    semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
 
-                    # Extract db_config to pass to adapter (avoids re-reading agent.yml)
-                    db_config = self._extract_db_config(namespace)
-                    agent_home = getattr(self.agent_config, "home", None)
-
-                    # Get the registered config class for this adapter type
-                    metadata = semantic_adapter_registry.get_metadata(self.adapter_type)
                     if metadata and metadata.config_class:
                         adapter_config = metadata.config_class(
-                            namespace=namespace,
+                            datasource=datasource,
                             db_config=db_config,
-                            agent_home=agent_home,
+                            semantic_models_path=semantic_models_path,
                         )
                     else:
-                        # Fallback to base config
                         from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                        adapter_config = SemanticAdapterConfig(namespace=namespace)
+                        adapter_config = SemanticAdapterConfig(datasource=datasource)
+                elif isinstance(adapter_config, dict):
+                    if metadata and metadata.config_class:
+                        adapter_config = metadata.config_class(**adapter_config)
+                    else:
+                        from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
-                self._adapter = semantic_adapter_registry.create_adapter(self.adapter_type, adapter_config)
-                logger.info(f"Loaded semantic adapter: {self.adapter_type}")
+                        adapter_config = SemanticAdapterConfig(**adapter_config)
+
+                self.adapter_type = resolved_adapter
+                self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
+                logger.info(f"Loaded semantic adapter: {resolved_adapter}")
             except Exception as e:
                 logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
                 self._adapter = None
@@ -215,11 +264,21 @@ class SemanticTools:
             offset: Number of metrics to skip
 
         Returns:
-            FuncToolResult with list of metric dicts, each containing:
-                - name, description, type, dimensions, measures, unit, format, path
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): metric rows, each with name, description, type,
+                dimensions, measures, unit, format, path
+              - total (int | None): full metric count before pagination
+              - has_more (bool | None): True when offset + len(items) < total
+              - extra (dict | None): {"next_offset": int} when has_more is True
+
+            Pagination: call again with offset=extra.next_offset until
+            has_more is False. Default limit=100; override if you need bigger
+            pages. list_metrics never compresses — use the limit to control
+            response size.
         """
         # Normalize null values from LLM
         path = normalize_null(path)
+        logger.info(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
         try:
             # Try storage first
             all_metrics = self.metric_rag.search_all_metrics()
@@ -232,7 +291,6 @@ class SemanticTools:
             paginated_metrics = all_metrics[offset : offset + limit]
 
             if paginated_metrics:
-                # Format storage results
                 formatted_metrics = [
                     {
                         "name": m.get("name"),
@@ -246,21 +304,16 @@ class SemanticTools:
                     }
                     for m in paginated_metrics
                 ]
-                return FuncToolResult(
-                    success=1,
-                    result=self.compressor.compress(formatted_metrics),
-                )
+                return self._build_metrics_envelope(formatted_metrics, total=len(all_metrics), offset=offset)
 
-            # Fallback to adapter if storage is empty
+            # Empty storage AND no adapter → empty envelope (total still reflects
+            # the filtered all_metrics, which may be >0 if offset overshot).
             if not self.adapter:
-                return FuncToolResult(
-                    success=1,
-                    result=self.compressor.compress([]),
-                )
+                return self._build_metrics_envelope([], total=len(all_metrics), offset=offset)
 
             logger.info("Storage empty, falling back to adapter")
             async_result = _run_async(self.adapter.list_metrics(path=path, limit=limit, offset=offset))
-            paginated_metrics = [
+            adapter_metrics = [
                 {
                     "name": m.name,
                     "description": m.description,
@@ -273,11 +326,9 @@ class SemanticTools:
                 }
                 for m in async_result
             ]
-
-            return FuncToolResult(
-                success=1,
-                result=self.compressor.compress(paginated_metrics),
-            )
+            # Adapter path has no upstream total — leave it None so consumers
+            # know to use has_more / len(items) < limit as the pagination hint.
+            return self._build_metrics_envelope(adapter_metrics, total=None, offset=offset, limit=limit)
 
         except Exception as e:
             logger.error(f"Error listing metrics: {e}")
@@ -285,6 +336,33 @@ class SemanticTools:
                 success=0,
                 error=f"Failed to list metrics: {str(e)}",
             )
+
+    @staticmethod
+    def _build_metrics_envelope(
+        items: List[dict],
+        *,
+        total: Optional[int],
+        offset: int,
+        limit: Optional[int] = None,
+    ) -> FuncToolResult:
+        """Wrap paginated metric rows into a FuncToolListResult.
+
+        When ``total`` is known (storage path) ``has_more`` is exact. When
+        ``total`` is None (adapter path) ``has_more`` falls back to
+        ``len(items) == limit`` — a heuristic, but good enough for the LLM
+        to decide whether to fetch another page.
+        """
+        if total is not None:
+            has_more: Optional[bool] = offset + len(items) < total
+        elif limit is not None:
+            has_more = len(items) == limit
+        else:
+            has_more = None
+        extra = {"next_offset": offset + len(items)} if has_more else None
+        return FuncToolResult(
+            success=1,
+            result=FuncToolListResult(items=items, total=total, has_more=has_more, extra=extra).model_dump(),
+        )
 
     def get_dimensions(
         self,
@@ -301,17 +379,25 @@ class SemanticTools:
             path: Optional subject tree path (e.g., ["Finance", "Revenue"])
 
         Returns:
-            FuncToolResult with list of dimensions (names or objects depending on source)
+            FuncToolResult with result as FuncToolListResult:
+              - items (List[Dict]): dimension rows. Adapter dimensions expose
+                their full schema (name, type, expr, ...); storage dimensions
+                fall back to a minimal {"name": ...} shape when only names are
+                stored.
+              - total, has_more, extra: dimensions isn't paginated, so total
+                equals len(items) and has_more is False.
         """
         # Normalize null values from LLM
         path = normalize_null(path)
+        logger.info(f"get_dimensions called: metric={metric_name}, path={path}")
         try:
             # Get dimensions from adapter (MetricFlow) to ensure consistency with query execution
             if self.adapter:
                 dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path))
+                items = _normalize_dimension_rows(dimensions)
                 return FuncToolResult(
                     success=1,
-                    result=dimensions,
+                    result=FuncToolListResult(items=items, total=len(items), has_more=False).model_dump(),
                 )
 
             # Fallback to storage if no adapter configured
@@ -329,16 +415,17 @@ class SemanticTools:
                     metric_details = matching[0]
 
             if metric_details:
-                dimensions = metric_details.get("dimensions", [])
+                raw = metric_details.get("dimensions", [])
+                items = _normalize_dimension_rows(raw)
                 return FuncToolResult(
                     success=1,
-                    result=dimensions,
+                    result=FuncToolListResult(items=items, total=len(items), has_more=False).model_dump(),
                 )
 
             return FuncToolResult(
                 success=0,
                 error=f"Metric '{metric_name}' not found and no adapter configured",
-                result=[],
+                result=FuncToolListResult(items=[], total=0, has_more=False).model_dump(),
             )
 
         except Exception as e:
@@ -390,6 +477,11 @@ class SemanticTools:
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
+        logger.info(
+            f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
+            f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
+            f"limit={limit}, dry_run={dry_run}"
+        )
 
         try:
             # Execute query via adapter
@@ -408,16 +500,17 @@ class SemanticTools:
                 )
             )
 
-            # Format result — sanitize metadata to ensure JSON-serializable
-            # Adapters (e.g. MetricFlow) may put non-serializable objects
-            # like DataflowPlan into metadata; convert them to strings.
+            # Drop non-JSON-serializable metadata entries (MetricFlow puts a
+            # ``DataflowPlan`` object under ``dataflow_plan``). ``str(v)`` on
+            # those yields ``<... object at 0x...>`` which is useless to
+            # both LLM callers and humans.
             safe_metadata = {}
             for k, v in (result.metadata or {}).items():
                 try:
                     json.dumps(v)
                     safe_metadata[k] = v
                 except (TypeError, ValueError):
-                    safe_metadata[k] = str(v)
+                    continue
 
             result_dict = {
                 "columns": result.columns,
@@ -425,10 +518,13 @@ class SemanticTools:
                 "metadata": safe_metadata,
             }
 
-            return FuncToolResult(
+            tool_result = FuncToolResult(
                 success=1,
                 result=result_dict,
             )
+            if dry_run and self.generation_evidence:
+                self.generation_evidence.record_metric_dry_run(metrics, tool_result)
+            return tool_result
 
         except Exception as e:
             logger.error(f"Error querying metrics: {e}")
@@ -448,6 +544,7 @@ class SemanticTools:
         Returns:
             FuncToolResult with validation status and issues
         """
+        logger.info("validate_semantic called")
         if not self.adapter:
             return FuncToolResult(
                 success=0,
@@ -469,11 +566,14 @@ class SemanticTools:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
-            return FuncToolResult(
+            tool_result = FuncToolResult(
                 success=1 if validation_result.valid else 0,
                 result={"valid": validation_result.valid, "issues": issues_data},
                 error=None if validation_result.valid else f"{len(validation_result.issues)} validation errors",
             )
+            if self.generation_evidence:
+                self.generation_evidence.record_validation_result(tool_result)
+            return tool_result
 
         except Exception as e:
             logger.error(f"Error validating semantic config: {e}", exc_info=True)

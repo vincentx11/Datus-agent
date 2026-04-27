@@ -15,9 +15,9 @@ Datus-CLI 是一款面向数据工程师设计的 AI 原生终端 SQL 客户端�
 除了三大命令，你还可以：
 
 - 像传统 SQL 客户端一样 [直接运行 SQL](sql_execution.md)
-- 使用 [会话命令](chat_command.md#session-commands)（如 `.compact`、`.clear`）管理或重置会话
-- 通过 `.tables`、`.databases` 等命令 [探索元数据](sql_execution.md#explore-metadata)
-- 使用 [`.mcp`](mcp_extensions.md) 添加、移除或测试 MCP 服务器，扩展能力边界
+- 使用 [会话命令](chat_command.md#session-commands)（如 `/compact`、`/clear`）管理或重置会话
+- 通过 `/tables`、`/databases` 等命令 [探索元数据](sql_execution.md#explore-metadata)
+- 使用 [`/mcp`](mcp_extensions.md) 添加、移除或测试 MCP 服务器，扩展能力边界
 - 借助 [计划模式](plan_mode.md) 在执行前把复杂任务拆解为可审阅的步骤
 
 ## 什么是 Vibe SQL？
@@ -45,6 +45,6 @@ CLI 提供了对上下文（不仅是代码）更细粒度的控制，使你在�
 完成安装与初始化后，可通过以下方式启动 Datus-CLI：
 
 ```bash
-datus-cli --namespace duckdb-demo
+datus-cli --datasource duckdb-demo
 ```
 

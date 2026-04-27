@@ -28,7 +28,7 @@ Here's a high-level summary of each module and how they relate:
 | **[Nodes](nodes.md)** | Task-level processing units | Each "node" handles a specific step (schema linking, SQL generation, reasoning, reflection, output formatting, chat, utilities) in the data-to-SQL pipeline |
 | **[Workflow](workflow.md)** | Orchestration of nodes | Defines execution plans (sequential, parallel, sub-workflows, reflection paths) that specify how nodes are chained to answer a user's query |
 | **[Storage](storage.md)** | Embeddings & vector store configuration | Manages embedding models, device settings, embedding storage paths, and how metadata / documents / metrics are embedded and retrieved |
-| **[Database](namespace.md)** | Database connection abstraction | Encapsulates configurations for different databases (Snowflake, StarRocks, SQLite, DuckDB, etc.), allowing multi-database support under logical "databases" |
+| **[Datasources](datasources.md)** | Datasource configuration | Defines database connections under `agent.services.datasources`; semantic adapters, BI platforms, and schedulers are documented on sibling pages |
 | **[Benchmark](benchmark.md)** | Evaluation & testing setup | Defines benchmark datasets (e.g. BIRD-DEV, Spider2, semantic layer) and paths to evaluate the SQL-generation performance of the agent |
 
 ## Configuration Structure
@@ -36,43 +36,57 @@ Here's a high-level summary of each module and how they relate:
 The main configuration file follows a hierarchical structure:
 
 ```yaml
-# Global agent target
 agent:
-  target: openai                     # Default model provider key
+  # Provider-level credentials (preferred)
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+    deepseek:
+      api_key: "${DEEPSEEK_API_KEY}"
 
-# Model providers
-models:
-  openai:
-    type: "openai"
-    base_url: "https://api.openai.com/v1"
-    api_key: "${OPENAI_API_KEY}"
-    model: "gpt-4-turbo"
+  # Custom / self-hosted models (optional)
+  models:
+    my-internal:
+      type: openai
+      base_url: "https://internal.example.com/v1"
+      api_key: "${MY_KEY}"
+      model: "internal-gpt-4"
 
-# Database connections
-namespace:
-  production:
-    type: snowflake
-    account: "${SNOWFLAKE_ACCOUNT}"
-    username: "${SNOWFLAKE_USER}"
-    password: "${SNOWFLAKE_PASSWORD}"
+  services:
+    datasources:
+      production:
+        type: snowflake
+        account: "${SNOWFLAKE_ACCOUNT}"
+        username: "${SNOWFLAKE_USER}"
+        password: "${SNOWFLAKE_PASSWORD}"
+        default: true
 
-# Workflow execution plans
-workflow:
-  plan: reflection
-  reflection:
-    - schema_linking
-      - generate_sql
-      - execute_sql
-      - reflect
-      - output
+    semantic_layer:
+      metricflow: {}
 
-# Node-specific configurations
-nodes:
-  schema_linking:
-    model: openai                    # References the provider key in models
-    matching_rate: fast
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
 
-# Storage and embeddings
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"
+
+  agentic_nodes:
+    gen_metrics:
+      semantic_adapter: metricflow
+    gen_dashboard:
+      bi_platform: superset
+    scheduler:
+      scheduler_service: airflow_prod
+
 storage:
   database:
     registry_name: sentence-transformers
@@ -89,6 +103,15 @@ storage:
 benchmark:
   my_custom_benchmark:
     benchmark_path: benchmark/my_custom
+```
+
+Additionally, each project directory can have a `.datus/config.yml` override for project-specific model and database selection:
+
+```yaml title=".datus/config.yml"
+target:
+  provider: openai
+  model: gpt-4.1
+default_database: production
 ```
 
 ## Environment Variable Support
@@ -124,7 +147,10 @@ conf/
 Explore the detailed configuration for each component:
 
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
-- **[Database Databases](namespace.md)**: Set up multi-database connections
+- **[Datasources](datasources.md)**: Set up database connections under `agent.services.datasources`
+- **[Semantic Layer](semantic_layer.md)**: Configure semantic adapters such as MetricFlow
+- **[BI Platforms](bi_platforms.md)**: Configure Superset or Grafana access
+- **[Schedulers](schedulers.md)**: Configure Airflow scheduler services
 - **[Database Adapters](../adapters/db_adapters.md)**: Install additional database connectors
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns
 - **[Node Configuration](nodes.md)**: Customize individual node behavior

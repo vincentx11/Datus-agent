@@ -10,18 +10,18 @@ semantic model generation with support for filesystem tools, generation tools,
 database tools, hooks, and metricflow MCP server integration.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.gen_semantic_model_tools import GenSemanticModelTools
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
@@ -44,12 +44,14 @@ class GenSemanticModelAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_semantic_model"
+    DEFAULT_SKILLS = "gen-semantic-model"
 
     def __init__(
         self,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenSemanticModelAgenticNode.
@@ -67,8 +69,11 @@ class GenSemanticModelAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 40)
 
-        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
-        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
+        self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_datasource))
+        # ``knowledge_base_dir`` is the sandbox root for FilesystemFuncTool. It
+        # now points at the project-scoped ``subject/`` directory so tools can
+        # browse all three KB subfolders but not escape the project.
+        self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
 
@@ -84,6 +89,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Setup tools
@@ -93,6 +99,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         self.gen_semantic_model_tools: Optional[GenSemanticModelTools] = None
         self.ask_user_tool = None
         self.hooks = None
+        self.generation_evidence = GenerationEvidence()
         self.setup_tools()
 
         # Debug: log hooks status after setup
@@ -131,12 +138,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_db_tools(self):
         """Setup database tools."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(
-                conn,
-                agent_config=self.agent_config,
-            )
+            self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
             # Add standard database tools
             self.tools.extend(self.db_func_tool.available_tools())
             logger.debug("Added database tools from DBFuncTool")
@@ -161,18 +163,19 @@ class GenSemanticModelAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            # Default to "metricflow", override from config if specified
-            adapter_type = "metricflow"
+            adapter_type = None
             if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
                 node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
                 if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                     adapter_type = node_config.get("semantic_adapter")
+            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
 
             # Initialize semantic func tool
             self.semantic_func_tool = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 adapter_type=adapter_type,
+                generation_evidence=self.generation_evidence,
             )
 
             # Add all available tools from semantic func tool
@@ -188,10 +191,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="semantic"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
             logger.debug("Added filesystem tools: read_file, write_file, edit_file, glob, grep")
@@ -203,7 +203,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config)
+            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
@@ -216,10 +216,41 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """Setup hooks for interactive mode."""
         try:
             broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
+            self.hooks = GenerationHooks(
+                broker=broker,
+                agent_config=self.agent_config,
+                generation_evidence=self.generation_evidence,
+            )
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Route tools to permission categories so profile rules apply."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
+        if getattr(self, "semantic_func_tool", None):
+            semantic_bucket.extend(self.semantic_func_tool.available_tools())
+        if self.generation_tools:
+            semantic_bucket.extend(
+                [
+                    trans_to_function_tool(self.generation_tools.check_semantic_object_exists),
+                    trans_to_function_tool(self.generation_tools.end_semantic_model_generation),
+                ]
+            )
+        if self.gen_semantic_model_tools:
+            semantic_bucket.extend(self.gen_semantic_model_tools.available_tools())
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -248,6 +279,8 @@ class GenSemanticModelAgenticNode(AgenticNode):
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         # Tool name lists for template display
@@ -255,9 +288,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.semantic_model_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "semantic_models"
-        context["current_database"] = self.agent_config.current_database
+        # Filesystem tool is now rooted at project_root (not subject/), so the
+        # LLM must pass the full ``subject/<kind>/…`` relative path.
+        context["kind_subdir"] = f"subject/semantic_models/{self.agent_config.current_datasource}"
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -374,12 +410,18 @@ class GenSemanticModelAgenticNode(AgenticNode):
             enhanced_message = user_input.user_message
             enhanced_parts = []
 
-            if user_input.catalog or user_input.database or user_input.db_schema:
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                user_input.database or "",
+            )
+            if user_input.catalog or effective_db or user_input.db_schema:
                 context_parts = []
                 if user_input.catalog:
                     context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
+                if effective_db:
+                    context_parts.append(f"database: {effective_db}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f"Context: {', '.join(context_parts)}"
@@ -413,7 +455,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=self.hooks if self.execution_mode == "interactive" else None,
+                hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
@@ -483,6 +525,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
                     logger.info(f"Auto-saved {len(semantic_model_files)} semantic models to database")
                 except Exception as e:
                     logger.error(f"Failed to auto-save to database: {e}")
+
+            if semantic_model_files and not self.generation_evidence.semantic_kb_sync_passed:
+                raise RuntimeError(
+                    "Semantic model generation did not publish to Knowledge Base. "
+                    "Call end_semantic_model_generation after validate_semantic succeeds."
+                )
 
             # Create final result
             result = SemanticNodeResult(
@@ -613,9 +661,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                semantic_model_file, "semantic", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(semantic_model_file, "semantic", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"Semantic model file rejected by sandbox check: {semantic_model_file!r}")
                 return
@@ -631,6 +677,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             )
 
             if result.get("success"):
+                self.generation_evidence.mark_kb_sync("semantic")
                 logger.info(f"Successfully saved to database: {result.get('message')}")
             else:
                 error = result.get("error", "Unknown error")

@@ -24,39 +24,27 @@ from datus.api.services.chat_task_manager import (
 
 
 class TestFillDatabaseContext:
-    """Tests for _fill_database_context — namespace/database resolution."""
+    """Tests for _fill_database_context — now a no-op (datasource resolved at bootstrap)."""
 
     def test_no_database_is_noop(self, real_agent_config):
-        """No database parameter leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database=None)
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original
 
     def test_empty_database_is_noop(self, real_agent_config):
-        """Empty string database leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database="")
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original
 
-    def test_known_database_updates_namespace_and_db(self, real_agent_config):
-        """Known database in namespaces updates current_namespace and current_database."""
-        # real_agent_config has "california_schools" in service.databases
-        # After the namespace→service.databases refactor, each DB is its own namespace key
+    def test_known_database_does_not_override_datasource(self, real_agent_config):
+        original = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database="california_schools")
-        assert real_agent_config.current_namespace == "california_schools"
-        assert real_agent_config.current_database == "california_schools"
-
-    def test_database_as_namespace_name(self, real_agent_config):
-        """Database matching a namespace name falls back to namespace lookup."""
-        # After refactor, namespace keys equal database names
-        _fill_database_context(real_agent_config, database="california_schools")
-        assert real_agent_config.current_namespace == "california_schools"
+        assert real_agent_config.current_datasource == original
 
     def test_unknown_database_leaves_unchanged(self, real_agent_config):
-        """Unknown database leaves config unchanged."""
-        original_ns = real_agent_config.current_namespace
+        original = real_agent_config.current_datasource
         _fill_database_context(real_agent_config, database="nonexistent_db")
-        assert real_agent_config.current_namespace == original_ns
+        assert real_agent_config.current_datasource == original
 
 
 class TestChatTaskInit:
@@ -174,12 +162,18 @@ class TestChatTaskManagerBehavior:
         """shutdown completes cleanly with no tasks."""
         manager = ChatTaskManager()
         await manager.shutdown()
+        assert manager._tasks == {}
+        assert manager._completed_tasks == {}
+        assert manager.has_active_tasks() is False
 
     @pytest.mark.asyncio
     async def test_wait_all_tasks_completes_without_tasks(self):
         """wait_all_tasks completes cleanly with no tasks."""
         manager = ChatTaskManager()
         await manager.wait_all_tasks()
+        assert manager._tasks == {}
+        assert manager._completed_tasks == {}
+        assert manager.has_active_tasks() is False
 
     @pytest.mark.asyncio
     async def test_push_event_appends_to_buffer(self):
@@ -268,7 +262,7 @@ class TestStartChat:
         request = StreamChatInput(message="hello", database="california_schools")
         task = await manager.start_chat(real_agent_config, request)
         assert task is not None
-        assert real_agent_config.current_database == "california_schools"
+        assert real_agent_config.current_datasource == "california_schools"
         await manager.shutdown()
 
     async def test_stop_running_task_with_node(self, real_agent_config, mock_llm_create):
@@ -297,10 +291,14 @@ class TestStartChat:
 
         manager = ChatTaskManager()
         request = StreamChatInput(message="wait test", session_id="wait-test")
-        await manager.start_chat(real_agent_config, request)
+        task = await manager.start_chat(real_agent_config, request)
 
         # wait_all_tasks should return (tasks may finish quickly with mock LLM)
         await manager.wait_all_tasks()
+        assert task.asyncio_task.done() is True
+        assert manager._tasks == {}
+        assert manager.get_task("wait-test") is task
+        assert manager.has_active_tasks() is False
         await manager.shutdown()
 
     async def test_consume_events_yields_ping_when_idle(self, monkeypatch):
@@ -516,6 +514,28 @@ class TestCreateNodeInput:
         assert result.catalog == "cat"
         assert result.database == "db"
         assert result.db_schema == "schema"
+
+    def test_feedback_node_input_with_source_session(self, real_agent_config, mock_llm_create):
+        """_create_node_input for FeedbackAgenticNode carries source_session_id through."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+        manager = ChatTaskManager()
+        node = manager._create_node(real_agent_config, "feedback", "test")
+        assert isinstance(node, FeedbackAgenticNode)
+
+        result = manager._create_node_input(
+            '[The user reacted to this message "reply" with [thumbsup]]',
+            node,
+            [],
+            [],
+            [],
+            database="db",
+            source_session_id="chat_session_xyz",
+        )
+        assert isinstance(result, FeedbackNodeInput)
+        assert result.source_session_id == "chat_session_xyz"
+        assert result.database == "db"
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +767,81 @@ class TestConsumeEventsCoalescing:
         assert task.consumer_offset == 3
 
 
+@pytest.mark.asyncio
+class TestRunLoopPathManagerContext:
+    """Regression: _run_loop must pin agent_config.path_manager into its own context.
+
+    The gateway bridge dispatches messages from a Feishu SDK worker thread via
+    ``asyncio.run_coroutine_threadsafe``. That thread never inherited the
+    ContextVar set by ``AgentConfig.__init__``, so the spawned task starts
+    with an empty ``_current_path_manager`` and downstream stores
+    (``BaseSubjectEmbeddingStore`` -> ``get_subject_tree_store``) would fall
+    back to a path manager with empty ``project_name``, raising
+    ``create_rdb_for_store requires a non-empty project``.
+    """
+
+    async def test_run_loop_sets_path_manager_when_context_is_empty(self, real_agent_config, mock_llm_create):
+        """Even when the calling context has no path manager, _run_loop binds
+        agent_config.path_manager so downstream get_path_manager() callers see
+        the right project_name."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.path_manager import (
+            _current_path_manager,
+            get_path_manager,
+            reset_path_manager,
+        )
+
+        captured: dict[str, str] = {}
+
+        original_create_node = ChatTaskManager._create_node
+
+        def _capturing_create_node(self, agent_config, subagent_id, session_id, **kwargs):
+            # Simulate what BaseSubjectEmbeddingStore.__init__ does at line 692:
+            # rely on the ambient ContextVar to find the project name.
+            captured["project_name"] = get_path_manager().project_name
+            return original_create_node(self, agent_config, subagent_id, session_id, **kwargs)
+
+        manager = ChatTaskManager()
+        manager._create_node = _capturing_create_node.__get__(manager, ChatTaskManager)  # type: ignore[method-assign]
+
+        # Wipe the ContextVar to mimic the Feishu-thread dispatch case. The
+        # task created by start_chat will inherit this empty context.
+        token = _current_path_manager.set(None)
+        try:
+            assert _current_path_manager.get() is None
+            request = StreamChatInput(message="hello", session_id="path-mgr-test")
+            task = await manager.start_chat(real_agent_config, request)
+            # Wait for the background loop to finish (mock LLM returns immediately).
+            await asyncio.wait_for(task.asyncio_task, timeout=5.0)
+        finally:
+            reset_path_manager(token)
+            await manager.shutdown()
+
+        expected = real_agent_config.project_name
+        assert expected, "real_agent_config.project_name must be non-empty for this test"
+        assert captured.get("project_name") == expected, (
+            f"_run_loop did not pin path_manager: got {captured.get('project_name')!r}, expected {expected!r}"
+        )
+
+    async def test_run_loop_does_not_leak_path_manager_to_caller(self, real_agent_config, mock_llm_create):
+        """The ContextVar.set inside _run_loop must stay scoped to its own task
+        and not bleed back into the calling context."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.path_manager import _current_path_manager, reset_path_manager
+
+        manager = ChatTaskManager()
+        token = _current_path_manager.set(None)
+        try:
+            request = StreamChatInput(message="hello", session_id="leak-test")
+            task = await manager.start_chat(real_agent_config, request)
+            await asyncio.wait_for(task.asyncio_task, timeout=5.0)
+            # Caller's view stays untouched: the spawned task has its own context.
+            assert _current_path_manager.get() is None
+        finally:
+            reset_path_manager(token)
+            await manager.shutdown()
+
+
 class _StubGenSQLNode:
     def __init__(self, **kwargs):
         self.node_name = kwargs.get("node_name")
@@ -783,3 +878,167 @@ class TestCreateNodeCustomSubAgent:
         node = ChatTaskManager()._create_node(agent_config, "unknown", "s1")
         assert isinstance(node, _StubGenSQLNode)
         assert node.node_name == "unknown"
+
+
+class TestStartChatLanguageOverride:
+    """``StreamChatInput.language`` must land on the cloned config's
+    ``language`` attribute so every downstream AgenticNode sees it.
+
+    We short-circuit the async loop to avoid spinning up real nodes: the
+    override happens synchronously inside ``start_chat`` before
+    ``_run_loop`` is awaited.
+    """
+
+    @pytest.mark.asyncio
+    async def test_request_language_overrides_cloned_config(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.language = "en"
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", language="zh")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task  # drain the fake loop
+        assert captured["agent_config"].language == "zh"
+        # Source config remains untouched because start_chat deep-copies.
+        assert real_agent_config.language == "en"
+
+    @pytest.mark.asyncio
+    async def test_missing_language_preserves_yaml_default(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        real_agent_config.language = "zh"
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi")  # no language field
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].language == "zh"
+
+
+class TestStartChatModelOverride:
+    """``ChatInput.model`` (format ``provider/model_id``) must override the
+    cloned config's active model with the highest priority.
+    """
+
+    @pytest.mark.asyncio
+    async def test_provider_model_override(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"]._target_provider == "openai"
+        assert captured["agent_config"]._target_model == "gpt-4.1"
+
+    @pytest.mark.asyncio
+    async def test_custom_model_override(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="custom/mock")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].target == "mock"
+        assert captured["agent_config"]._target_provider is None
+        assert captured["agent_config"]._target_model is None
+
+    @pytest.mark.asyncio
+    async def test_model_with_slash_in_id(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/org/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"]._target_provider == "openai"
+        assert captured["agent_config"]._target_model == "org/gpt-4.1"
+
+    @pytest.mark.asyncio
+    async def test_model_without_slash_raises(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="gpt-4.1")
+        with pytest.raises(ValueError, match="expected 'provider/model_id'"):
+            await manager.start_chat(real_agent_config, request)
+
+    @pytest.mark.asyncio
+    async def test_model_none_preserves_config(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert captured["agent_config"].target == real_agent_config.target
+
+    @pytest.mark.asyncio
+    async def test_model_override_does_not_mutate_source(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        original_target = real_agent_config.target
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="openai/gpt-4.1")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+        assert real_agent_config.target == original_target
+        assert real_agent_config._target_provider is None or real_agent_config._target_provider != "openai"
+
+    @pytest.mark.asyncio
+    async def test_custom_model_unknown_raises(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.exceptions import DatusException
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            pass
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", model="custom/nonexistent")
+        with pytest.raises(DatusException):
+            await manager.start_chat(real_agent_config, request)

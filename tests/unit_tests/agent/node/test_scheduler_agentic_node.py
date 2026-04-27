@@ -6,14 +6,14 @@
 Unit tests for SchedulerAgenticNode.
 
 Tests cover:
-- Node creation with/without scheduler_config
-- Tools setup (scheduler tools only, no DB/BI/filesystem tools exposed)
+- Node creation with/without scheduler service config
+- Tools setup (scheduler + filesystem tools, no DB/BI tools exposed)
 - Max turns configuration
 - Node name
 - Graceful handling when no scheduler config present
 - Registration in node.py, node_type.py, sub_agent_task_tool.py
 - execute_stream happy path, error handling, ExecutionInterrupted
-- _prepare_template_context and _fallback_system_prompt
+- _prepare_template_context and _get_system_prompt
 
 Design principle: Mock SchedulerTools since datus-scheduler-core is optional.
 - Real AgentConfig (from conftest `real_agent_config`)
@@ -60,9 +60,8 @@ def _make_mock_scheduler_tools():
     return mock_tools
 
 
-def _add_scheduler_config(agent_config, max_turns=25):
-    """Add scheduler config and scheduler agentic node config to an AgentConfig."""
-    agent_config.scheduler_config = {
+def _scheduler_service_config():
+    return {
         "name": "airflow_local",
         "type": "airflow",
         "api_base_url": "http://localhost:8080/api/v1",
@@ -70,9 +69,16 @@ def _add_scheduler_config(agent_config, max_turns=25):
         "password": "admin123",
         "dags_folder": "/tmp/dags",
     }
-    agent_config.agentic_nodes["scheduler"] = {
+
+
+def _add_scheduler_config(agent_config, max_turns=25, node_name="scheduler", scheduler_service="airflow_local"):
+    """Add scheduler service config and scheduler agentic node config to an AgentConfig."""
+    agent_config.services.schedulers = {scheduler_service: _scheduler_service_config()}
+    agent_config.init_scheduler_services(agent_config.services.schedulers)
+    agent_config.agentic_nodes[node_name] = {
         "system_prompt": "scheduler",
         "max_turns": max_turns,
+        "scheduler_service": scheduler_service,
     }
 
 
@@ -110,6 +116,14 @@ class TestSchedulerAgenticNodeInit:
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             assert node.id == "scheduler_node"
 
+    def test_scope_is_preserved(self, real_agent_config, mock_llm_create):
+        _add_scheduler_config(real_agent_config)
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow", scope="team-a")
+            assert node.scope == "team-a"
+
     def test_max_turns_from_config(self, real_agent_config, mock_llm_create):
         _add_scheduler_config(real_agent_config, max_turns=25)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
@@ -120,12 +134,9 @@ class TestSchedulerAgenticNodeInit:
 
     def test_max_turns_default(self, real_agent_config, mock_llm_create):
         """Default max_turns is 30 when scheduler not in agentic_nodes."""
-        # Add scheduler_config but no scheduler agentic node config
-        real_agent_config.scheduler_config = {
-            "name": "airflow_local",
-            "type": "airflow",
-            "api_base_url": "http://localhost:8080/api/v1",
-        }
+        # Add scheduler service config but no scheduler agentic node config
+        real_agent_config.services.schedulers = {"airflow_local": _scheduler_service_config()}
+        real_agent_config.init_scheduler_services(real_agent_config.services.schedulers)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
@@ -139,10 +150,10 @@ class TestSchedulerAgenticNodeInit:
 
 
 class TestSchedulerToolSetup:
-    """Tests for tool setup — scheduler tools only, no DB/BI/filesystem tools exposed."""
+    """Tests for tool setup — scheduler + filesystem tools, no DB/BI tools exposed."""
 
     def test_has_scheduler_tools_with_config(self, real_agent_config, mock_llm_create):
-        """With scheduler_config, node should have scheduler tools."""
+        """With scheduler service config, node should have scheduler tools."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -182,8 +193,8 @@ class TestSchedulerToolSetup:
             assert "list_dashboards" not in tool_names
             assert "create_dashboard" not in tool_names
 
-    def test_no_filesystem_tools(self, real_agent_config, mock_llm_create):
-        """Filesystem tools should NOT be in tools list."""
+    def test_has_filesystem_tools(self, real_agent_config, mock_llm_create):
+        """Filesystem tools are available so scheduler can write SQL files before submit/update."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -191,13 +202,15 @@ class TestSchedulerToolSetup:
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             tool_names = [tool.name for tool in node.tools]
 
-            assert "read_file" not in tool_names
-            assert "write_file" not in tool_names
+            assert "read_file" in tool_names
+            assert "write_file" in tool_names
+            assert "edit_file" in tool_names
 
-    def test_no_scheduler_config_no_tools(self, real_agent_config, mock_llm_create):
-        """Without scheduler_config, node should have 0 scheduler tools (graceful no-op)."""
-        # Ensure no scheduler_config
-        real_agent_config.scheduler_config = None
+    def test_no_scheduler_config_filesystem_tools_only(self, real_agent_config, mock_llm_create):
+        """Without scheduler service config, scheduler submission tools are absent
+        but filesystem tools remain available for SQL file staging."""
+        real_agent_config.services.schedulers = {}
+        real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
         node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
@@ -205,15 +218,33 @@ class TestSchedulerToolSetup:
 
         assert "submit_sql_job" not in tool_names
         assert "trigger_scheduler_job" not in tool_names
+        assert "write_file" in tool_names
 
     def test_import_error_yields_no_tools(self, real_agent_config, mock_llm_create):
-        """When scheduler tools import fails, node should have no scheduler tools."""
+        """When scheduler tools import fails, node should still keep filesystem tools."""
         _add_scheduler_config(real_agent_config)
         with patch(_SCHEDULER_TOOLS_PATCH, side_effect=ImportError("datus-scheduler-core not installed")):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            assert "submit_sql_job" not in [t.name for t in node.tools]
+            tool_names = [t.name for t in node.tools]
+            assert "submit_sql_job" not in tool_names
+            assert "write_file" in tool_names
+
+    def test_tool_category_map_registers_scheduler_tools(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` must place scheduler tools under ``scheduler_tools``
+        so ``scheduler_tools.delete_job`` DENY rule fires under normal profile."""
+        _add_scheduler_config(real_agent_config)
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+            mapping = node._tool_category_map()
+            tool_names = {t.name for t in mapping.get("scheduler_tools", [])}
+            assert "submit_sql_job" in tool_names
+            assert "trigger_scheduler_job" in tool_names
+            fs_tool_names = {t.name for t in mapping.get("filesystem_tools", [])}
+            assert "write_file" in fs_tool_names
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +326,7 @@ class TestSchedulerRegistration:
             result = tool._build_node_input(node, "List all jobs")
             assert isinstance(result, SchedulerNodeInput)
             assert result.user_message == "List all jobs"
-            assert result.database == real_agent_config.current_database
+            assert result.database == real_agent_config.current_datasource
 
     def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
         """Node.new_instance with input_data should set node.input."""
@@ -468,7 +499,7 @@ class TestSchedulerExecuteStream:
 
 
 class TestSchedulerTemplateContext:
-    """Tests for _prepare_template_context and _fallback_system_prompt."""
+    """Tests for _prepare_template_context and _get_system_prompt."""
 
     def test_context_with_tools(self, real_agent_config, mock_llm_create):
         """With scheduler tools, native_tools should list tool names."""
@@ -481,25 +512,16 @@ class TestSchedulerTemplateContext:
             assert "submit_sql_job" in ctx["native_tools"]
             assert ctx["has_ask_user_tool"] is False  # workflow mode
 
-    def test_context_without_tools(self, real_agent_config, mock_llm_create):
-        """Without scheduler config, native_tools should be 'None'."""
-        real_agent_config.scheduler_config = None
+    def test_context_without_scheduler_tools(self, real_agent_config, mock_llm_create):
+        """Without scheduler config, native_tools still includes filesystem tools."""
+        real_agent_config.services.schedulers = {}
+        real_agent_config.init_scheduler_services({})
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
         node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         ctx = node._prepare_template_context()
-        assert ctx["native_tools"] == "None"
-
-    def test_fallback_system_prompt(self, real_agent_config, mock_llm_create):
-        """Fallback prompt should mention scheduler specialist and Airflow."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            prompt = node._fallback_system_prompt({})
-            assert "scheduler" in prompt.lower()
-            assert "Airflow" in prompt
+        assert "submit_sql_job" not in ctx["native_tools"]
+        assert "write_file" in ctx["native_tools"]
 
 
 # ---------------------------------------------------------------------------
@@ -507,7 +529,6 @@ class TestSchedulerTemplateContext:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.ci
 class TestSchedulerCustomNodeName:
     """Tests for custom node_name support (e.g. my_scheduler: {node_class: scheduler})."""
 
@@ -526,6 +547,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["my_scheduler"] = {
             "system_prompt": "scheduler",
             "max_turns": 15,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -542,6 +564,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["etl_scheduler"] = {
             "system_prompt": "scheduler",
             "max_turns": 50,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -557,6 +580,7 @@ class TestSchedulerCustomNodeName:
         real_agent_config.agentic_nodes["my_jobs"] = {
             "system_prompt": "scheduler",
             "max_turns": 10,
+            "scheduler_service": "airflow_local",
         }
         with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
             from datus.agent.node.node import Node
@@ -572,13 +596,32 @@ class TestSchedulerCustomNodeName:
             assert node.get_node_name() == "my_jobs"
             assert node.max_turns == 10
 
+    def test_alias_system_prompt_template_name(self, real_agent_config, mock_llm_create):
+        """Alias config should be able to choose its own prompt template."""
+        _add_scheduler_config(real_agent_config)
+        real_agent_config.agentic_nodes["etl_scheduler"] = {
+            "system_prompt": "etl_scheduler",
+            "max_turns": 15,
+            "scheduler_service": "airflow_local",
+        }
+        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
+            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+
+            node = SchedulerAgenticNode(
+                agent_config=real_agent_config, execution_mode="workflow", node_name="etl_scheduler"
+            )
+            with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+                mock_pm.return_value.render_template.return_value = "test prompt"
+                node._get_system_prompt()
+                call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
+                assert call_kwargs["template_name"] == "etl_scheduler_system"
+
 
 # ---------------------------------------------------------------------------
 # prompt_version passthrough Tests (P3)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.ci
 class TestSchedulerPromptVersion:
     """Tests for prompt_version passthrough from input to _get_system_prompt."""
 
@@ -610,3 +653,103 @@ class TestSchedulerPromptVersion:
                 call_kwargs = mock_pm.return_value.render_template.call_args
                 version = call_kwargs.kwargs.get("version")
                 assert version == "1.5", f"Expected version '1.5', got '{version}'"
+
+
+# ---------------------------------------------------------------------------
+# Partial Resource Collection Tests
+# ---------------------------------------------------------------------------
+
+
+class TestCollectSubmittedJobs:
+    """Tests for SchedulerAgenticNode._collect_submitted_jobs."""
+
+    @staticmethod
+    def _make_action(action_type, status, output=None):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        return ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type=action_type,
+            messages="",
+            input_data={},
+            output_data=output,
+            status=ActionStatus.SUCCESS if status == "success" else ActionStatus.FAILED,
+        )
+
+    def test_collects_submitted_sql_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "daily_report", "job_name": "daily_report", "status": "active"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 1
+        assert result["submitted_jobs"][0]["job_id"] == "daily_report"
+
+    def test_collects_both_sql_and_sparksql_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "job1", "job_name": "job1", "status": "active"}},
+            )
+        )
+        ahm.add_action(
+            self._make_action(
+                "submit_sparksql_job",
+                "success",
+                {"result": {"job_id": "job2", "job_name": "job2", "status": "active"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 2
+
+    def test_skips_failed_submissions(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "success",
+                {"result": {"job_id": "ok_job", "job_name": "ok_job", "status": "active"}},
+            )
+        )
+        ahm.add_action(
+            self._make_action(
+                "submit_sql_job",
+                "failed",
+                {"result": {"job_id": "bad_job", "job_name": "bad_job", "status": "error"}},
+            )
+        )
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert len(result["submitted_jobs"]) == 1
+        assert result["submitted_jobs"][0]["job_id"] == "ok_job"
+
+    def test_returns_empty_dict_when_no_jobs(self):
+        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        from datus.schemas.action_history import ActionHistoryManager
+
+        ahm = ActionHistoryManager()
+        ahm.add_action(self._make_action("get_scheduler_job", "success", {"result": {"status": "active"}}))
+
+        result = SchedulerAgenticNode._collect_submitted_jobs(ahm)
+
+        assert result == {}

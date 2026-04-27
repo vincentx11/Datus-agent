@@ -1,88 +1,111 @@
 agent:
   home: ~/.datus
-  # Optional: override the root for knowledge-base directories
-  # (semantic_models, sql_summaries, ext_knowledge). When unset, falls back to `home`.
-  # Useful in SaaS / multi-tenant deployments where the KB is mounted from a shared volume.
-  # knowledge_base_home: /mnt/shared/datus-kb
-  target: anthropic
-  models:
+  # Storage layout (refactored):
+  #   * ~/.datus/sessions/{project_name}/        — sessions sharded per project
+  #   * ~/.datus/data/                           — storage-backend root; each
+  #       backend owns its project isolation (e.g. the built-in sqlite/lance
+  #       backends use a ``{project_name}/`` subdirectory, a future Postgres
+  #       backend could use a schema name instead)
+  #   * ~/.datus/{conf,logs,template,run,...}    — global, shared across projects
+  #   * {cwd}/subject/{semantic_models,sql_summaries,ext_knowledge}/ — project KB
+  #   * {cwd}/.datus/skills/                     — project-level skills (optional)
+  #
+  # ``project_name`` is derived from the current working directory (``/`` → ``-``)
+  # so every CWD gets its own sessions/data shard without extra configuration.
+  # Set ``agent.project_name`` to override — useful when running datus from
+  # symlinks, monorepo subdirs, or CI sandboxes that should share the same
+  # sessions/data shards.  Must match ``^[a-zA-Z0-9_-]+$`` and be ≤ 200 chars.
+  # project_name: my_project
+  #
+  # LLM configuration layout (v2)
+  #
+  # - ``agent.providers.<name>`` (preferred)
+  #   Provider-level credentials. Configure the API key (or rely on the env
+  #   var declared in ``conf/providers.yml``) once per provider; the ``/model``
+  #   slash command in the CLI can then switch between any model exposed by
+  #   that provider without rewriting YAML. Supported providers (keys) are
+  #   shipped in ``conf/providers.yml``: openai, claude, claude_subscription,
+  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, alibaba_coding,
+  #   glm_coding, minimax_coding, kimi_coding.
+  #
+  # - ``agent.models.<name>`` (legacy / custom)
+  #   Retained for self-hosted or private-deployment models — hand-edit this
+  #   section when you need a bespoke base_url / model SKU. The ``/model``
+  #   command surfaces entries here under the ``Custom`` group.
+  #
+  # The active selection lives in ``{project_root}/.datus/config.yml`` as:
+  #   target:
+  #     provider: openai        # key of agent.providers
+  #     model:    gpt-4.1       # concrete SKU
+  # or, for a custom entry:
+  #   target:
+  #     custom: my-internal-model
+  # The ``agent.target`` field below is still honored for backwards compat
+  # when no project-level override exists.
+
+  providers:
     openai:
-      type: openai
-      base_url: https://api.openai.com/v1
       api_key: ${OPENAI_API_KEY}
-      model: gpt-4-turbo
-
-    google:
-      type: gemini
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key: ${GEMINI_API_KEY}
-      model: gemini-2.0-flash-exp
-
-    anthropic:
-      type: claude
-      base_url: https://api.anthropic.com
+    claude:
       api_key: ${ANTHROPIC_API_KEY}
-      model: claude-haiku-4-5
-
-    deepseek_v3:
-      type: deepseek
-      base_url: https://api.deepseek.com
+    deepseek:
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
-
-    # OpenRouter (unified AI gateway - 300+ models via single API key)
-    # Get your API key at https://openrouter.ai/keys
-    openrouter:
-      type: openrouter
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${OPENROUTER_API_KEY}
-      model: anthropic/claude-sonnet-4  # any OpenRouter model: openai/gpt-4o, google/gemini-2.5-pro, etc.
-
-    # Claude Subscription (Pro/Max plan via setup-token)
-    # Run 'claude setup-token' to get an OAuth token, then set CLAUDE_CODE_OAUTH_TOKEN env var,
-    # or let it auto-detect from ~/.claude/.credentials.json
+    gemini:
+      api_key: ${GEMINI_API_KEY}
+    # Claude Pro/Max (subscription token via `claude setup-token`, auto-detected).
     claude_subscription:
-      type: claude
-      base_url: https://api.anthropic.com
-      api_key: ${CLAUDE_CODE_OAUTH_TOKEN}
-      model: claude-sonnet-4-20250514
       auth_type: subscription
-
-    # OpenAI Codex (ChatGPT subscription, OAuth authentication)
-    # Run `datus init` and select "codex" to complete OAuth login
+    # ChatGPT Plus/Pro (browser OAuth through `datus init`).
     codex:
-      type: codex
-      base_url: https://chatgpt.com/backend-api/codex
-      api_key: ""
-      model: gpt-5.3-codex
       auth_type: oauth
 
-    # Coding Plan - Alibaba (multi-model aggregation via Anthropic-compatible endpoint)
-    alibaba_coding:
-      type: claude
-      base_url: https://coding-intl.dashscope.aliyuncs.com/apps/anthropic
-      api_key: ${DASHSCOPE_API_KEY}
-      model: qwen3-coder-plus
+  # target: deepseek      # legacy — only read when .datus/config.yml is absent
 
-    # Coding Plan - GLM
-    glm_coding:
-      type: claude
-      base_url: https://open.bigmodel.cn/api/anthropic
-      api_key: ${GLM_API_KEY}
-      model: glm-5
+  # ``models`` is optional; use it for self-hosted or private-deployment
+  # endpoints that aren't covered by ``conf/providers.yml``. Each entry has
+  # the same shape as before:
+  #   <name>:
+  #     type: openai            # one of: openai|claude|deepseek|kimi|gemini|...
+  #     base_url: https://internal.example.com/v1
+  #     api_key: ${MY_KEY}
+  #     model: internal-gpt-4
+  # models: {}
+
+  # ``nodes.<name>.model`` refers to an entry in ``agent.models`` (custom models
+  # only). Leave it empty or omit to inherit whichever provider/model is
+  # active according to ``./.datus/config.yml`` + ``agent.providers``.
+
+  # ---------------------------------------------------------------------------
+  # Permission profile — pick a base security posture, layer user-defined
+  # rules on top via ``rules``. Override at runtime with ``/profile``.
+  #
+  # Profiles:
+  #   normal    — Read-only allowed; all writes prompt; named destructive deny
+  #   auto      — Normal + workspace writes auto; DB writes + destructives prompt (not deny)
+  #   dangerous — Nearly everything auto (writes outside workspace still prompt)
+  #
+  # User rules in ``rules:`` are evaluated after the profile base, so they
+  # override the profile via last-match-wins. See
+  # docs/superpowers/specs/2026-04-22-permission-profile-design.md
+  # for the full rule listing.
+  # ---------------------------------------------------------------------------
+  # permissions:
+  #   profile: normal
+  #   # rules:
+  #   #   - tool: db_tools
+  #   #     pattern: execute_ddl
+  #   #     permission: deny
+
 
   nodes:
     schema_linking:
-      model: openai
       matching_rate: fast
     generate_sql:
-      model: deepseek_v3
       max_table_schemas_length: 4000
       max_data_details_length: 2000
       max_context_length: 8000
       max_value_length: 500
     reasoning:
-      model: anthropic
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       max_table_schemas_length: 4000
       max_data_details_length: 2000
@@ -95,7 +118,6 @@ agent:
       check_result: true # Whether to check the results of the previous step, the default value is false
     chat:
       workspace_root: sql2
-      model: anthropic
       max_turns: 25
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
 
@@ -114,7 +136,7 @@ agent:
   #   my_benchmark:
   #       question_file: dev.json # Relative path to the benchmark question file, can be csv/json/json
   #       question_id_key: question_id # The question id, use the line number when empty; The default value is question_id
-  #       db_key: db_id # The key corresponding to database name; By default, the database of namespaces will be taken.
+  #       db_key: db_id # The key corresponding to database name; By default, the database of datasources will be taken.
   #       ext_knowledge_key: evidence # Optional, the key corresponding to external knowledge
   #       use_tables_key: tables # Optional: specify which tables to use
 
@@ -125,48 +147,69 @@ agent:
   #       gold_result_key: "" # Optional, the key corresponding to the standard answer. When `gold_result_path` is a file, this configuration cannot be empty
 
 
-  # local databases configuration
-  namespace:
-    snowflake:
-      type: snowflake
-      account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
-      username: ${SNWOFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
-      # database: BBC
-      # schema: BBC_NEWS
-    # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
-    #   type: sqlite
-    #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
-    #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
-    local_sqlite:
-      type: sqlite
-      # Only sqlite and duckdb support multiple data source configuration
-      dbs:
-        - name: ssb # sqlite and duckdb must have a name
-          uri: sqlite:////Users/xxx/benchmark/SSB.db
-    local_sqlite2:
-      type: sqlite
-      # Only sqlite and duckdb support multiple data source configuration
-      name: ssb # sqlite and duckdb must have a name
-      uri: sqlite:////Users/xxx/benchmark/SSB.db
-    local_duckdb:
-      type: duckdb
-      dbs:
-        - name: ssb
-          uri: duckdb:////absolute/path/to/db.db # absolute path
-        - name: abc
-          uri: duckdb:///relative/path/to/abc.duckdb # relative path
-    starrocks:
-      type: starrocks
-      host: ${STARROCKS_HOST}
-      port: ${STARROCKS_PORT}
-      username: ${STARROCKS_USER}
-      password: ${STARROCKS_PASSWORD}
-      database: ${STARROCKS_DATABASE}
+  # local datasources configuration
+  services:
+    datasources:
+      snowflake:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}  # Use environment variables or real values
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+        # database: BBC
+        # schema: BBC_NEWS
+      # bird_sqlite: # This section is configured for the bird-dev benchmarking, you should download the database file and unzip it before you can continue
+      #   type: sqlite
+      #   # just support glob pattern. Ensure that the corresponding database files exist in the configuration directory.
+      #   path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite # https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip
+      local_sqlite_ssb:
+        type: sqlite
+        uri: sqlite:////Users/xxx/benchmark/SSB.db
+      local_sqlite2:
+        type: sqlite
+        uri: sqlite:////Users/xxx/benchmark/SSB.db
+      local_duckdb_ssb:
+        type: duckdb
+        uri: duckdb:////absolute/path/to/db.db # absolute path
+      local_duckdb_abc:
+        type: duckdb
+        uri: duckdb:///relative/path/to/abc.duckdb # relative path
+      starrocks:
+        type: starrocks
+        host: ${STARROCKS_HOST}
+        port: ${STARROCKS_PORT}
+        username: ${STARROCKS_USER}
+        password: ${STARROCKS_PASSWORD}
+        database: ${STARROCKS_DATABASE}
+    semantic_layer:
+      metricflow: {}
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra: # Special configurations for different platforms
+          provider: db
+    schedulers:
+      airflow_local:
+        name: airflow_local
+        type: airflow
+        api_base_url: http://localhost:8080/api/v1
+        username: ${AIRFLOW_USERNAME}
+        password: ${AIRFLOW_PASSWORD}
+        dags_folder: /path/to/airflow/dags
+        dag_discovery_timeout: 60
+        dag_discovery_poll_interval: 5
+        # Available Airflow Connection IDs for scheduled jobs.
+        # Create these connections in Airflow (Admin > Connections) first,
+        # then list them here so the agent knows which conn_id to use.
+        connections:
+          starrocks_default: "StarRocks production database"
+          # pg_analytics: "PostgreSQL analytics warehouse"
 
   storage:
     # Data path is now fixed at {agent.home}/data
-    # Final storage paths: {home}/data/datus_db_{namespace}, {home}/data/sub_agents/{agent_name}, etc.
+    # Final storage paths: {home}/data/datus_db_{datasource}, {home}/data/sub_agents/{agent_name}, etc.
 
     # Storage backend configuration
     # The base storage layer is backend-agnostic; concrete implementations are pluggable.
@@ -279,7 +322,7 @@ agent:
       - reflect
 
   # Sub-workflow with config example
-   workflow:
+  workflow:
     plan: bird_para
 
     bird_para:
@@ -315,14 +358,31 @@ agent:
       - ~/.datus/skills
       - ./skills
 
+  autocomplete:
+    # After switching / adding / editing a datasource, refresh the LanceDB
+    # schema index in the background so @Table completion reflects new
+    # tables without a manual rebuild. Set to ``false`` to disable.
+    background_sync_enabled: true
+    # Also run the background sync once at REPL startup for the default
+    # datasource.
+    background_sync_on_startup: true
+    # Include sample rows in the sync. Enabling this makes the sync
+    # noticeably slower (seconds → tens of seconds on large schemas) in
+    # exchange for richer completion hints.
+    background_sync_include_values: false
+
   agentic_nodes:
+    # Built-in subagents ship with a ``DEFAULT_SKILLS`` class attribute so every
+    # node loads its canonical skills out of the box. Override ``skills:`` here
+    # only when you want to narrow or broaden the pattern; omit the key to keep
+    # the defaults. Set ``skills: ""`` to explicitly disable skill loading.
     gen_semantic_model:
       model: anthropic
 
     gen_metrics:
       model: anthropic
       max_turns: 40
-      skills: "gen-metrics"
+      # Default: "gen-metrics"
 
     gen_sql_summary:
       model: deepseek_v3
@@ -331,31 +391,21 @@ agent:
     gen_table:
       model: anthropic
       max_turns: 20
-      skills: "gen-table"
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra: # Special configurations for different platforms
-        provider: db
-  # Scheduler configuration for submitting and managing SQL/SparkSQL jobs
-  # Requires datus-scheduler-core and a platform adapter (e.g. datus-scheduler-airflow)
-  scheduler:
-    name: airflow_local
-    type: airflow
-    api_base_url: http://localhost:8080/api/v1
-    username: ${AIRFLOW_USERNAME}
-    password: ${AIRFLOW_PASSWORD}
-    dags_folder: /path/to/airflow/dags
-    dag_discovery_timeout: 60
-    dag_discovery_poll_interval: 5
-    # Available Airflow Connection IDs for scheduled jobs.
-    # Create these connections in Airflow (Admin > Connections) first,
-    # then list them here so the agent knows which conn_id to use.
-    connections:
-      starrocks_default: "StarRocks production database"
-      # pg_analytics: "PostgreSQL analytics warehouse"
-  # Platform documentation (namespace-independent, stored at {home}/data/document/{platform}/)
+      # Default: "gen-table, table-validation"
+
+    gen_job:
+      model: anthropic
+      max_turns: 40
+      # Default: "gen-table, table-validation, data-migration"
+
+    gen_dashboard:
+      model: anthropic
+      # Default: "bi-validation, grafana-dashboard, superset-dashboard"
+
+    gen_skill:
+      model: anthropic
+      # Default: "create-skill, optimize-skill"
+  # Platform documentation (datasource-independent, stored at {home}/data/document/{platform}/)
   # Each key under 'document' is either a reserved global setting (e.g. tavily_api_key)
   #
   # Common options:

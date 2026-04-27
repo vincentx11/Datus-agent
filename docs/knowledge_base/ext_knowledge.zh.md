@@ -27,14 +27,14 @@ Bootstrap-KB 外部知识是一个处理、存储和索引领域特定业务知�
 ```bash
 # 从 CSV（直接导入）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
 
 # 从 success story（AI 生成）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite
@@ -44,7 +44,7 @@ datus-agent bootstrap-kb \
 
 | 参数                   | 必需 | 描述                                                            | 示例                              |
 | ---------------------- | ---- | --------------------------------------------------------------- | --------------------------------- |
-| `--namespace`          | ✅   | 数据库命名空间                                                  | `analytics_db`                    |
+| `--datasource`          | ✅   | 数据库数据源                                                  | `analytics_db`                    |
 | `--components`         | ✅   | 要初始化的组件                                                  | `ext_knowledge`                   |
 | `--ext_knowledge`      | ⚠️   | 知识 CSV 文件路径（如果没有 `--success_story` 则必需）          | `/data/knowledge.csv`             |
 | `--success_story`      | ⚠️   | Success story CSV 文件路径（如果没有 `--ext_knowledge` 则必需） | `/data/success_story.csv`         |
@@ -121,7 +121,7 @@ success story 模式使用 GenExtKnowledgeAgenticNode，支持两种运行模式
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
@@ -133,7 +133,7 @@ datus-agent bootstrap-kb \
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy incremental
@@ -147,7 +147,7 @@ datus-agent bootstrap-kb \
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -239,7 +239,7 @@ question,sql,subject_path
 
 ```bash
 datus-agent bootstrap-kb \
-    --namespace california_schools \
+    --datasource california_schools \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -289,15 +289,15 @@ created_at: "2025-01-15T10:00:00Z"
 
 #### 步骤 5：验证结果
 
-启动 CLI，先用 `@subject` 浏览生成的知识条目，然后用原始问题测试：
+启动 CLI，先用 `/subject` 浏览生成的知识条目，然后用原始问题测试：
 
 ```bash
-datus-agent --namespace california_schools
+datus-cli --datasource california_schools
 ```
 
 ```
 # 浏览知识树和条目
-Datus> @subject
+Datus> /subject
 # 应显示 Education/SAT/Administrators 和 Education/SAT/Scores 及其生成的知识条目
 ```
 
@@ -319,7 +319,7 @@ Agent 应该：
 #### 步骤 1：启动 CLI
 
 ```bash
-datus-agent --namespace california_schools
+datus-cli --datasource california_schools
 ```
 
 #### 步骤 2：调用 Subagent
@@ -362,5 +362,5 @@ Sync this knowledge entry to the Knowledge Base? [y/n]: y
 ### 使用技巧
 
 1. **验证时强调使用知识库**：在 CLI 中测试时，在问题中加上"请先搜索知识库"，确保 Agent 使用已存储的知识而非仅依赖自身推理。
-2. **预构建主题树**：通过 `@subject` 提前创建主题树结构。后续不指定 `--subject_tree` 运行时，系统会自动复用已有分类（学习模式），无需在每行 CSV 中都指定 `subject_path`。
+2. **预构建主题树**：通过 `/subject` 提前创建主题树结构。后续不指定 `--subject_tree` 运行时，系统会自动复用已有分类（学习模式），无需在每行 CSV 中都指定 `subject_path`。
 3. **多次迭代提升稳定性**：使用 `incremental` 模式多次运行 bootstrap。每次运行可能生成更优的知识条目，upsert 机制确保已有条目以更好的内容更新。

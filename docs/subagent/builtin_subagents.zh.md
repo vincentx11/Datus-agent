@@ -4,7 +4,7 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十二个核心subagent：
+本文档涵盖十三个核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
@@ -14,8 +14,8 @@
 6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
 7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
 8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-9. **[gen_job](gen_job.zh.md)** — 单库 ETL 作业执行
-10. **[migration](migration.zh.md)** — 跨库迁移与对数校验
+9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+10. **[gen_skill](#gen_skill)** — skill 创建与优化
 11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
 12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
@@ -61,10 +61,13 @@ agent:
     gen_job:
       max_turns: 30     # 可选：默认为 30
 
+    gen_skill:
+      max_turns: 30     # 可选：默认为 30
+
     gen_dashboard:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（省略时从 dashboard 配置自动检测）
+      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
 
     scheduler:
       model: claude     # 可选：默认使用已配置的模型
@@ -78,10 +81,10 @@ agent:
 
 **内置配置**（无需设置）：
 - **工具**：根据 subagent 类型自动配置
-- **Hooks**：交互模式下的用户确认工作流
+- **Hooks**：按工作流启用验证和知识库同步
 - **MCP 服务器**：MetricFlow 验证（用于 gen_semantic_model 和 gen_metrics）
-- **系统提示**：内置模板版本 1.0
-- **工作空间**：`~/.datus/data/{namespace}/` 及 subagent 特定子目录
+- **系统提示**：内置模板；未设置 `prompt_version` 时使用最新可用版本
+- **工作空间**：`~/.datus/data/{datasource}/` 及 subagent 特定子目录
 
 ---
 
@@ -117,8 +120,7 @@ graph LR
     C --> D[生成唯一 ID]
     D --> E[创建 YAML]
     E --> F[保存文件]
-    F --> G[用户确认]
-    G --> H[同步到知识库]
+    F --> G[同步到知识库]
 ```
 
 **详细步骤**：
@@ -132,27 +134,11 @@ graph LR
 5. **分类查询**：按照现有模式分配域、layer1、layer2 和标签
 6. **生成 YAML**：创建结构化摘要文档
 7. **保存文件**：使用 `write_file()` 工具将 YAML 写入工作空间
-8. **用户确认**：显示生成的 YAML 并提示批准
-9. **同步到知识库**：存储到 LanceDB 用于语义搜索
+8. **同步到知识库**：存储到 LanceDB 用于语义搜索
 
-### 交互式确认
+### 同步行为
 
-生成后，你会看到：
-
-```
-==========================================================
-Generated Reference SQL YAML
-File: /path/to/sql_summary.yml
-==========================================================
-[带语法高亮的 YAML 内容]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
+在 interactive 模式下，YAML 文件写入成功后，generation hook 会自动把它同步到知识库。在 workflow/API 模式下，请使用对应的显式同步步骤或工具。
 
 ### 主题树分类
 
@@ -226,7 +212,7 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 
 ### 快速开始
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用subagent命令：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用subagent命令：
 
 ```bash
 /gen_semantic_model generate a semantic model for table <table_name>
@@ -242,7 +228,7 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 2. 检查是否已存在语义模型
 3. 生成全面的 YAML 文件
 4. 使用 MetricFlow 验证配置
-5. 提示你保存到知识库
+5. 验证通过后同步到知识库
 
 #### 生成工作流
 
@@ -251,33 +237,12 @@ graph LR
     A[用户请求] --> B[DDL 分析]
     B --> C[YAML 生成]
     C --> D[验证]
-    D --> E[用户确认]
-    E --> F[存储]
+    D --> E[知识库同步]
 ```
 
-### 交互式确认
+### 验证和同步
 
-生成语义模型后，你会看到：
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[带语法高亮的 YAML 内容]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**选项**：
-
-- **选项 1**：将语义模型保存到你的知识库（RAG 存储）用于 AI 驱动的查询
-- **选项 2**：仅保留 YAML 文件，不同步到知识库
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，`end_semantic_model_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。
 
 ### 语义模型结构
 
@@ -327,8 +292,8 @@ data_source:
 
 - ✅ 从表 DDL 自动生成 YAML
 - ✅ 交互式验证和错误修复
-- ✅ 存储前用户确认
-- ✅ 知识库集成
+- ✅ 验证通过后同步到知识库
+- ✅ interactive 自动同步，workflow/API 显式同步
 - ✅ 防止重复
 - ✅ MetricFlow 兼容性
 
@@ -353,7 +318,7 @@ data_source:
 
 ### 快速开始
 
-使用 `datus --namespace <namespace>` 启动 Datus CLI，然后使用指标生成subagent：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用指标生成subagent：
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
@@ -370,9 +335,9 @@ graph LR
     C --> D[读取度量]
     D --> E[检查重复]
     E --> F[生成指标 YAML]
-    F --> G[追加到文件]
+    F --> G[写入指标文件]
     G --> H[验证]
-    H --> I[用户确认]
+    H --> I[生成 dry-run SQL]
     I --> J[同步到知识库]
 ```
 
@@ -395,28 +360,9 @@ FROM orders o
 JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 ```
 
-### 交互式确认
+### 验证和同步
 
-生成后，你会看到：
-
-```
-==========================================================
-Generated YAML: transactions.yml
-Path: /Users/you/.datus/data/semantic_models/transactions.yml
-==========================================================
-[带语法高亮的 YAML 内容，显示新指标]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**选项**：
-- **选项 1**：将指标同步到你的知识库，用于 AI 驱动的语义搜索
-- **选项 2**：仅保留 YAML 文件，不同步到知识库
+发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。在 interactive 模式下，两项检查都通过后，`end_metric_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。
 
 ### 主题树分类
 
@@ -528,10 +474,13 @@ metric:
 
 #### 文件组织
 
-使用 YAML 文档分隔符 `---` 将指标追加到现有语义模型文件：
+指标存放在独立文件中，与语义模型文件分离：
 
+- **语义模型**：`{table_name}.yml` —— `data_source` 定义（measures、dimensions、identifiers）
+- **指标**：`metrics/{table_name}_metrics.yml` —— 一个或多个指标定义，使用 YAML 文档分隔符 `---` 分隔
+
+**语义模型文件** (`transactions.yml`)：
 ```yaml
-# 现有语义模型
 data_source:
   name: transactions
   sql_table: transactions
@@ -542,9 +491,10 @@ data_source:
   dimensions:
     - name: transaction_date
       type: TIME
+```
 
----
-# 第一个指标（追加）
+**指标文件** (`metrics/transactions_metrics.yml`)：
+```yaml
 metric:
   name: total_revenue
   type: measure_proxy
@@ -552,7 +502,6 @@ metric:
     measure: revenue
 
 ---
-# 第二个指标（追加）
 metric:
   name: avg_transaction_value
   type: ratio
@@ -561,14 +510,16 @@ metric:
     denominator: transaction_count
 ```
 
-**为什么追加而不是单独文件？**
-- 保持相关指标靠近其语义模型
-- 更易于维护和验证
-- MetricFlow 可以一起验证所有定义
+**为什么使用独立文件？**
+- 清晰分离 schema 定义与业务指标
+- 指标可以独立于底层语义模型维护
+- MetricFlow 会把 semantic_models 目录下所有 YAML 文档一起验证
+
+更多细节见 [gen_metrics](gen_metrics.zh.md)。
 
 #### 知识库存储
 
-当你选择 "1. Yes - Save to Knowledge Base" 时，指标会存储到向量数据库中，包含：
+验证和 dry-run SQL 通过后，指标会同步到知识库，包含：
 
 1. **元数据**：名称、描述、类型、域/层级分类
 2. **LLM 文本**：用于语义搜索的自然语言表示
@@ -584,9 +535,9 @@ metric:
 - ✅ **防止重复**：生成前检查现有指标
 - ✅ **主题树支持**：按 domain/layer1/layer2 组织，支持预定义或学习模式
 - ✅ **验证**：MetricFlow 验证确保正确性
-- ✅ **交互式工作流**：同步前审阅和批准
+- ✅ **发布门禁**：语义验证和 dry-run SQL 通过后才同步
 - ✅ **知识库集成**：语义搜索以发现指标
-- ✅ **文件管理**：安全地追加到现有语义模型文件
+- ✅ **文件管理**：在 `metrics/` 目录下维护独立的指标文件
 
 ---
 
@@ -639,8 +590,7 @@ graph LR
     D --> E[检查重复]
     E --> F[生成 YAML]
     F --> G[保存文件]
-    G --> H[用户确认]
-    H --> I[同步到知识库]
+    G --> H[同步到知识库]
 ```
 
 **详细步骤**：
@@ -652,31 +602,13 @@ graph LR
 5. **检查重复**：使用 `search_knowledge` 验证提取的知识是否已存在
 6. **生成 YAML**：通过 `generate_ext_knowledge_id()` 创建带有唯一 ID 的结构化知识条目
 7. **保存文件**：使用 `write_file(path, content, file_type="ext_knowledge")` 写入 YAML
-8. **用户确认**：审阅生成的 YAML 并批准
-9. **同步到知识库**：存储到向量数据库用于语义搜索
+8. **同步到知识库**：存储到向量数据库用于语义搜索
 
 > **重要**：如果未发现知识缺口（agent 的尝试与参考 SQL 匹配），则不生成知识文件。
 
-### 交互式确认
+### 同步行为
 
-生成后，你会看到：
-
-```
-============================================================
-Generated External Knowledge YAML
-File: /Users/liuyufei/DatusProject/bird/datus/ext_knowledge/bird_sqlite_with_knowledge/sat_school_administration_knowledge.yaml
-============================================================
-
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2] 1
-✓ Syncing to Knowledge Base...
-✓ Successfully synced external knowledge to Knowledge Base
-```
+在 interactive 模式下，YAML 文件写入成功后，generation hook 会自动把它同步到知识库。在 workflow/API 模式下，请使用显式同步步骤或工具。
 
 ### 主题路径分类
 
@@ -932,60 +864,112 @@ agent:
 
 ---
 
-## gen_dashboard
+## gen_skill
 
 ### 概览
 
-gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，通过 LLM function calling 驱动完整的仪表盘创建工作流。
+`gen_skill` subagent 用于引导用户创建或优化 Datus skill。它可以检查现有 skill、脚手架新的 skill 目录、编辑 `SKILL.md`、执行校验，并检索历史会话中的使用模式。
 
 ### 关键特性
 
-- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.dashboard` 配置自动检测
-- **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
-- **数据物化桥接**：`write_query` 将源数据库查询结果写入 BI 平台自有数据库，解耦源数据与可视化层
-- **Skill 引导工作流**：内置 `gen-dashboard` skill 为各平台提供分步工作流指导
+- **交互式 skill 编写**：通过 `ask_user` 进行访谈式创建
+- **受控文件系统权限**：对工作区只读，对配置的 skills 目录可写
+- **skill 感知编辑**：修改前先加载已有 skill
+- **内置校验**：结束前可调用 `validate_skill` 检查结果
 
 ### 配置
 
 ```yaml
 agent:
   agentic_nodes:
+    gen_skill:
+      model: claude
+      max_turns: 30
+```
+
+### 输出格式
+
+```json
+{
+  "response": "已创建一个用于财务仪表盘校验的新 skill。",
+  "skill_name": "finance-dashboard-validation",
+  "skill_path": "/path/to/skills/finance-dashboard-validation",
+  "tokens_used": 1980
+}
+```
+
+### 使用方式
+
+直接启动：
+
+```bash
+/gen_skill 创建一个在发布前校验每日收入仪表盘的 skill
+```
+
+也可以由聊天 agent 通过 `task(type="gen_skill")` 自动委派。
+
+---
+
+## gen_dashboard
+
+### 概览
+
+gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，基于已存在的 serving 表或 SQL dataset 创建 dashboard 资产。
+
+### 关键特性
+
+- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
+- **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
+- **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
+- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 在创建结束后自动运行
+
+### 配置
+
+```yaml
+agent:
+  services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: "${SERVING_WRITE_USER}"
+        password: "${SERVING_WRITE_PASSWORD}"
+
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
+        dataset_db:
+          datasource_ref: serving_pg
+          bi_database_name: examples
+
+  agentic_nodes:
     gen_dashboard:
       model: claude           # 可选：默认使用已配置的模型
       max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：从 dashboard 配置自动检测
-
-  dashboard:
-    superset:
-      api_url: "http://localhost:8088"
-      username: "${SUPERSET_USER}"
-      password: "${SUPERSET_PASSWORD}"
-      dataset_db:
-        uri: "${SUPERSET_DB_URI}"
-        schema: "public"
-    grafana:
-      api_url: "http://localhost:3000"
-      api_key: "${GRAFANA_API_KEY}"
-      dataset_db:
-        uri: "${GRAFANA_DB_URI}"
-        datasource_name: "PostgreSQL"
+      bi_platform: superset   # 可选：只配置一个 BI 平台时可自动检测
 ```
 
 **前置条件**：
-- `agent.yml` 中包含 `agent.dashboard` 配置段及平台凭据
-- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包（`pip install datus-agent[bi]`）
+- `agent.yml` 中包含 `agent.services.bi_platforms` 配置段及平台凭据
+- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包
 
 ### 工作原理
 
 ```mermaid
 graph LR
-    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
-    B --> C[_setup_bi_tools]
-    C --> D[adapter_registry.get platform]
-    D --> E[BIFuncTool.available_tools]
-    E --> F[LLM Function Calling]
-    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
-    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
+    C --> D[BIFuncTool.available_tools]
+    D --> E[LLM Function Calling]
+    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
+    E -->|Grafana| G[create_dashboard → create_chart]
+    F --> H[ValidationHook.on_end]
+    G --> H
 ```
 
 ### 可用工具
@@ -997,6 +981,8 @@ graph LR
 | `list_dashboards` | 所有 adapter | 列出/搜索仪表盘 |
 | `get_dashboard` | 所有 adapter | 获取仪表盘详情 |
 | `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
+| `get_chart` | 所有 adapter | 获取单个图表或面板详情 |
+| `get_chart_data` | 支持的 adapter | 获取图表查询结果，用于数值校验 |
 | `list_datasets` | 所有 adapter | 列出数据集/数据源 |
 | `create_dashboard` | `DashboardWriteMixin` | 创建仪表盘 |
 | `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题/描述 |
@@ -1008,7 +994,7 @@ graph LR
 | `create_dataset` | `DatasetWriteMixin` | 注册数据集 |
 | `list_bi_databases` | `DatasetWriteMixin` | 列出 BI 平台数据库连接 |
 | `delete_dataset` | `DatasetWriteMixin` | 删除数据集 |
-| `write_query` | 已配置 `dataset_db_uri` | 将查询结果物化到 BI 数据库 |
+| `get_bi_serving_target` | 已配置 `dataset_db` | 给编排层返回 serving DB 契约 |
 
 ### 输出格式
 
@@ -1054,6 +1040,7 @@ scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时
 
 - **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
 - **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
+- **SQL 文件管理**：提交前可用文件系统工具创建或更新作业 SQL 文件
 - **监控能力**：列出作业运行记录、获取运行日志、排查故障
 - **连接发现**：列出可用的 Airflow 连接，用于作业配置
 
@@ -1061,23 +1048,25 @@ scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时
 
 ```yaml
 agent:
+  services:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"
+
   agentic_nodes:
     scheduler:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"
+      model: claude                  # 可选：默认使用已配置的模型
+      max_turns: 30                  # 可选：默认为 30
+      scheduler_service: airflow_prod
 ```
 
 **前置条件**：
-- `agent.yml` 中包含 `agent.scheduler` 配置段及 Airflow 凭据
-- 已安装 `datus-scheduler-core` 和 `datus-scheduler-airflow` 包
+- `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
+- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
 
 ### 工作原理
 
@@ -1085,10 +1074,11 @@ agent:
 graph LR
     A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
     B --> C[LLM Function Calling]
-    C --> D[submit_sql_job / submit_sparksql_job]
-    C --> E[trigger_scheduler_job]
-    C --> F[pause_job / resume_job]
-    C --> G[list_job_runs / get_run_log]
+    C --> D[write_file / edit_file]
+    D --> E[submit_sql_job / submit_sparksql_job]
+    C --> F[trigger_scheduler_job]
+    C --> G[pause_job / resume_job]
+    C --> H[list_job_runs / get_run_log]
 ```
 
 ### 可用工具
@@ -1097,6 +1087,7 @@ graph LR
 |------|------|
 | `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
 | `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
+| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
 | `trigger_scheduler_job` | 手动触发一次现有作业运行 |
 | `pause_job` | 暂停定时作业 |
 | `resume_job` | 恢复已暂停的作业 |
@@ -1144,25 +1135,27 @@ agent:
 
 ## 总结
 
-| subagent | 用途 | 输出 | 存储位置 | 关键特性                      |
-|----------|---------|--------|-----------|---------------------------|
-| `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索             |
-| `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL → MetricFlow 模型、内置验证  |
-| `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL → MetricFlow 指标、主题树支持 |
-| `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 问题&SQL → 知识、主题树支持        |
-| `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、快速（15 轮）、三方向探索 |
-| `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专业知识、自动验证、基于文件的输出 |
-| `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 可配置工具、可扩展、自定义报告 subagent |
-| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | N/A | 动态工具暴露、数据物化、多平台支持 |
-| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | N/A | 提交/监控/更新/删除作业，支持 SQL 和 SparkSQL |
+| subagent | 用途 | 输出 | 存储位置 | 关键特性 |
+|----------|------|------|----------|----------|
+| `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
+| `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
+| `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
+| `gen_ext_knowledge` | 生成业务概念 | YAML（外部知识） | `/data/ext_knowledge` | 从问题与 SQL 中提取业务知识 |
+| `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
+| `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
+| `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
+| `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
+| `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
+| `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
+| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
+| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）
 - 自动工具设置、hooks 和 MCP 服务器集成
-- 内置系统提示（版本 1.0）
-- 交互模式下的用户确认工作流
+- 内置系统提示，默认选择最新可用版本
+- 按工作流启用验证和知识库同步
 - 知识库集成用于语义搜索
 - 自动工作空间管理
 
 这些subagent共同自动化了 **数据工程知识管道** ——从 **数据探索 → 查询生成 → 模型定义 → 指标生成 → 业务知识捕获 → 可搜索的知识库**。
-

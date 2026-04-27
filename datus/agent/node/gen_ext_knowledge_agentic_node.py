@@ -11,20 +11,19 @@ generation tools, and hooks.
 """
 
 from dataclasses import dataclass
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 import pandas as pd
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import GenerationHooks, make_kb_path_normalizer
+from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput, ExtKnowledgeNodeResult
 from datus.schemas.node_models import SQLContext, SqlTask
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
@@ -71,6 +70,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenExtKnowledgeAgenticNode.
@@ -106,8 +106,8 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         self._last_verification_result: Optional[VerifyResult] = None
         self._verification_attempt_count: int = 0
 
-        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path(agent_config.current_database))
-        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
+        self.ext_knowledge_dir = str(agent_config.path_manager.ext_knowledge_path())
+        self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
 
@@ -123,6 +123,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize external knowledge storage for context queries
@@ -158,9 +159,7 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
         # Hardcoded tool configuration: specific methods from generation_tools and filesystem_tools
         # filesystem_tools: read_file, write_file, edit_file
         # Chat node uses all available tools by default
-        db_manager = db_manager_instance(self.agent_config.namespaces)
-        self.conn = db_manager.get_conn(self.agent_config.current_database, self.agent_config.current_database)
-        self.db_func_tool = DBFuncTool(self.conn, agent_config=self.agent_config)
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
         self.context_search_tools = ContextSearchTools(self.agent_config)
         if self.db_func_tool:
             self.tools.extend(self.db_func_tool.available_tools())
@@ -180,19 +179,52 @@ class GenExtKnowledgeAgenticNode(AgenticNode):
             self._setup_hooks()
 
     def _setup_specific_generation_tools(self):
-        """Setup specific generation tools: verify_sql, end_knowledge_generation."""
+        """Setup specific generation tools.
+
+        Note: ``verify_sql`` is intentionally NOT registered here. It is bound
+        lazily in :meth:`execute_stream` only when a non-empty gold_sql is
+        supplied and passes pre-validation. See
+        :meth:`_enable_verify_sql_tool` / :meth:`_disable_verify_sql_tool`.
+        """
         try:
-            from datus.tools.func_tool import trans_to_function_tool
-
             self.generation_tools = GenerationTools(self.agent_config)
-
-            # Add verify_sql tool for SQL result verification (replaces get_gold_sql)
-            self.tools.append(trans_to_function_tool(self.verify_sql))
-
-            # Add end_knowledge_generation tool to finalize and verify completion
-            # self.tools.append(trans_to_function_tool(self.end_knowledge_generation))
         except Exception as e:
             logger.error(f"Failed to setup specific generation tools: {e}")
+
+    def _enable_verify_sql_tool(self) -> None:
+        """Register ``verify_sql`` on self.tools if not already present (idempotent)."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        if not any(getattr(t, "name", None) == "verify_sql" for t in self.tools):
+            self.tools.append(trans_to_function_tool(self.verify_sql))
+
+    def _disable_verify_sql_tool(self) -> None:
+        """Remove ``verify_sql`` from self.tools if present (idempotent)."""
+        self.tools = [t for t in self.tools if getattr(t, "name", None) != "verify_sql"]
+
+    def _validate_gold_sql(self, gold_sql: str) -> None:
+        """Execute gold SQL once to ensure it is runnable before entering the agent loop.
+
+        Raises:
+            DatusException: with code NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID when
+                the gold SQL fails to execute. Callers let the exception
+                propagate to :meth:`execute_stream`'s top-level handler, which
+                turns it into a FAILED action.
+        """
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        try:
+            result = self.db_func_tool.connector.execute_query(gold_sql, result_format="pandas")
+        except Exception as e:
+            raise DatusException(
+                code=ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID,
+                message_args={"error_message": str(e)},
+            ) from e
+        if not result.success:
+            raise DatusException(
+                code=ErrorCode.NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID,
+                message_args={"error_message": result.error or "unknown error"},
+            )
 
     def _reset_verification_state(self):
         """Reset verification state for a new agentic loop attempt."""
@@ -247,7 +279,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         if not hasattr(self, "_gold_sql") or not self._gold_sql:
             return VerifyResult(success=True, match_rate=1.0)
 
-        connector = self.conn
+        connector = self.db_func_tool.connector
 
         # Execute user SQL
         try:
@@ -411,7 +443,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             sql_task = SqlTask(
                 database_type=self.agent_config.database_type if hasattr(self.agent_config, "database_type") else "",
                 database_name=(
-                    self.agent_config.current_database if hasattr(self.agent_config, "current_database") else ""
+                    self.agent_config.current_datasource if hasattr(self.agent_config, "current_datasource") else ""
                 ),
                 task=getattr(self, "_current_question", "SQL verification task"),
                 external_knowledge=str(generated_knowledge) if generated_knowledge else "",
@@ -456,10 +488,7 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="ext_knowledge"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.read_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.edit_file))
             self.tools.append(trans_to_function_tool(self.filesystem_func_tool.write_file))
@@ -474,6 +503,28 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Route tools to permission categories so profile rules apply.
+
+        ``verify_sql`` is lazily bound just before generation. Route it
+        into ``db_tools`` when present so profile rules for ``db_tools.*``
+        govern the SQL it executes; otherwise a DENY on ``db_tools.*``
+        would silently not cover the one tool that runs model-supplied SQL.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        verify_sql_tools = [tool for tool in self.tools if getattr(tool, "name", None) == "verify_sql"]
+        if verify_sql_tools:
+            mapping.setdefault("db_tools", []).extend(verify_sql_tools)
+        if getattr(self, "context_search_tools", None):
+            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -491,25 +542,33 @@ Do NOT give up. Continue iterating until verify_sql returns success=1.
             logger.error(f"Error getting existing subject_paths: {e}")
             return []
 
-    def _prepare_template_context(self, user_input: ExtKnowledgeNodeInput) -> dict:
+    def _prepare_template_context(self, user_input: ExtKnowledgeNodeInput, gold_sql: Optional[str] = None) -> dict:
         """
         Prepare template context variables for the external knowledge generation template.
 
         Args:
             user_input: User input
+            gold_sql: Reference SQL resolved for this run. When non-empty the
+                template renders the verify_sql tool and the BLOCKING
+                PHASE 2; when empty/None the template skips PHASE 2 entirely.
 
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         context["native_tools"] = ", ".join([tool.name for tool in self.tools]) if self.tools else "None"
         context["ext_knowledge_dir"] = self.ext_knowledge_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "ext_knowledge"
-        context["current_database"] = self.agent_config.current_database
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = "subject/ext_knowledge"
+        context["current_datasource"] = self.agent_config.current_datasource
+        context.update(build_datasource_prompt_context(self.agent_config))
         context["has_filesystem_tools"] = bool(self.filesystem_func_tool)
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context["has_gold_sql"] = bool(gold_sql)
 
         # Priority 1: User-specified subject_path (highest priority)
         if user_input.subject_path:
@@ -744,13 +803,10 @@ Rules:
                 # Get or create session and any available summary
                 session, conversation_summary = self._get_or_create_session()
 
-            # Prepare enhanced template context
-            template_context = self._prepare_template_context(user_input)
-
-            # Get system instruction from template with enhanced context
-            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
-
-            # Determine question and gold_sql based on mode
+            # Determine question and gold_sql based on mode BEFORE building
+            # the template context / tools — the gold_sql presence decides
+            # whether verify_sql is registered and which PHASE 2 branch the
+            # Prompt renders.
             # workflow mode: use fields directly; agentic mode: parse user_message
             if user_input.question is not None:
                 # workflow mode: use provided question and gold_sql directly
@@ -762,10 +818,28 @@ Rules:
                 question, gold_sql = await self._parse_user_message(user_input.user_message)
                 logger.info(f"Parsed from user_message (agentic mode): has_gold_sql={gold_sql is not None}")
 
-            # Store gold_sql for get_gold_sql tool access (not exposed in prompt)
             self._current_question = question
+
+            # Pre-validate gold_sql and wire verify_sql accordingly.
+            # - Empty gold_sql: drop verify_sql tool; Prompt will tell the
+            #   model to skip PHASE 2 and go straight to knowledge extraction.
+            # - Non-empty but unrunnable gold_sql: raise DatusException here
+            #   so the outer handler emits a FAILED action WITHOUT spending
+            #   any LLM turns on a futile retry loop.
             if gold_sql:
+                self._validate_gold_sql(gold_sql)
                 self._gold_sql = gold_sql
+                self._enable_verify_sql_tool()
+            else:
+                self._disable_verify_sql_tool()
+                if hasattr(self, "_gold_sql"):
+                    delattr(self, "_gold_sql")
+
+            # Prepare enhanced template context (depends on gold_sql presence)
+            template_context = self._prepare_template_context(user_input, gold_sql=gold_sql)
+
+            # Get system instruction from template with enhanced context
+            system_instruction = self._get_system_prompt(conversation_summary, prompt_version, template_context)
 
             # Build enhanced message using question only (gold_sql accessed via tool)
             enhanced_message = question
@@ -822,7 +896,7 @@ Rules:
                     max_turns=self.max_turns,
                     session=session,
                     action_history_manager=action_history_manager,
-                    hooks=self.hooks if self.execution_mode == "interactive" else None,
+                    hooks=self._compose_hooks(self.hooks if self.execution_mode == "interactive" else None),
                     agent_name=self.get_node_name(),
                     interrupt_controller=self.interrupt_controller,
                 ):
@@ -1051,9 +1125,7 @@ Rules:
 
             from datus.cli.generation_hooks import resolve_kb_sandbox_path
 
-            full_path = resolve_kb_sandbox_path(
-                ext_knowledge_file, "ext_knowledge", self.agent_config, self.knowledge_base_dir
-            )
+            full_path = resolve_kb_sandbox_path(ext_knowledge_file, "ext_knowledge", self.knowledge_base_dir)
             if not full_path:
                 logger.warning(f"External knowledge file rejected by sandbox check: {ext_knowledge_file!r}")
                 return

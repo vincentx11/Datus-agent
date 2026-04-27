@@ -11,12 +11,8 @@ database (optional), ask_user, and skill loading tools, running with a
 higher max_turns budget for extended multi-step interactions.
 """
 
-import os
 import re
-from pathlib import Path
-from typing import AsyncGenerator, Dict, List, Literal, Optional
-
-from agents import FunctionTool
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.workflow import Workflow
@@ -24,28 +20,10 @@ from datus.cli.execution_state import ExecutionInterrupted
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput, SkillCreatorNodeResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
-from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-# Workspace filesystem methods (read-only, root = workspace)
-WORKSPACE_READONLY_METHODS = [
-    "read_file",
-    "glob",
-    "grep",
-]
-
-# Skills filesystem methods (read + write, root = skills directory)
-SKILLS_ALL_METHODS = [
-    "read_file",
-    "write_file",
-    "edit_file",
-    "glob",
-    "grep",
-]
 
 
 class SkillCreatorAgenticNode(AgenticNode):
@@ -58,6 +36,19 @@ class SkillCreatorAgenticNode(AgenticNode):
     interview, and skill loading tools for edit mode.
     """
 
+    # Canonical class identifier. ``get_node_class_name()`` returns this even
+    # when a custom alias (e.g. ``my_skill_editor: { node_class: gen_skill }``)
+    # is used, so skill ``allowed_agents: [gen_skill]`` still matches aliases.
+    NODE_NAME = "gen_skill"
+
+    # Authoring agent: its ``load_skill`` bypasses ``allowed_agents`` so the
+    # optimize/edit workflow can read any skill by name.
+    SKILL_AUTHORING_MODE = True
+
+    # Skill-authoring workflow (create new skills, optimize existing ones). Both
+    # skills list ``gen_skill`` in their SKILL.md ``allowed_agents``.
+    DEFAULT_SKILLS = "create-skill, optimize-skill"
+
     def __init__(
         self,
         node_id: str = "skill_creator",
@@ -68,25 +59,24 @@ class SkillCreatorAgenticNode(AgenticNode):
         tools: Optional[list] = None,
         node_name: Optional[str] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
+        is_subagent: bool = False,
     ):
-        self.configured_node_name = node_name
+        # Support custom node_name for alias subagents (e.g. my_skill_editor:
+        # {node_class: gen_skill}); fall back to the canonical class name.
+        self._configured_node_name = node_name or self.NODE_NAME
         self.execution_mode = execution_mode
 
         # Default max_turns = 30, can be overridden by agent.yml
         self.max_turns = 30
-        if (
-            agent_config
-            and hasattr(agent_config, "agentic_nodes")
-            and (node_name or "gen_skill") in (agent_config.agentic_nodes or {})
-        ):
-            agentic_node_config = agent_config.agentic_nodes.get(node_name or "gen_skill", {})
+        config_key = self._configured_node_name
+        if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in (agent_config.agentic_nodes or {}):
+            agentic_node_config = agent_config.agentic_nodes.get(config_key, {})
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 30)
 
         # Initialize tool attributes before parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
-        self._skills_filesystem_tool: Optional[FilesystemFuncTool] = None
         self.skill_func_tool_instance = None
         self._session_search_tool = None
         self.skill_validate_tool = None
@@ -99,6 +89,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=tools or [],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Setup tools
@@ -106,7 +97,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         logger.debug(f"SkillCreatorAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
 
     def get_node_name(self) -> str:
-        return self.configured_node_name or "gen_skill"
+        return self._configured_node_name
 
     def setup_tools(self):
         """Setup tools for skill creation: filesystem, db, ask_user, skill loading."""
@@ -115,12 +106,12 @@ class SkillCreatorAgenticNode(AgenticNode):
 
         self.tools = []
         self._setup_full_filesystem_tools()
-        if not self._skills_filesystem_tool:
+        if not self.filesystem_func_tool:
             from datus.utils.exceptions import DatusException, ErrorCode
 
             raise DatusException(
                 code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={"config_error": "Failed to setup skills filesystem tools — cannot create skills"},
+                message_args={"config_error": "Failed to setup filesystem tools — cannot create skills"},
             )
         self._setup_db_tools()
         if self.execution_mode == "interactive":
@@ -133,70 +124,28 @@ class SkillCreatorAgenticNode(AgenticNode):
 
         logger.debug(f"Setup {len(self.tools)} skill creator tools: {[tool.name for tool in self.tools]}")
 
-    def _resolve_skills_write_root(self) -> str:
-        """Resolve the root path for write operations — restricted to the first skills directory.
-
-        Relative paths are anchored to the workspace root (not process CWD)
-        to prevent the sandbox from drifting outside the project.
-        """
-        if self.agent_config:
-            skills_config = getattr(self.agent_config, "skills_config", None)
-            if skills_config and hasattr(skills_config, "directories") and skills_config.directories:
-                first_dir = skills_config.directories[0]
-                expanded = os.path.expanduser(first_dir)
-                # Anchor relative paths to workspace root, not CWD
-                if not os.path.isabs(expanded):
-                    workspace = self._resolve_workspace_root()
-                    expanded = os.path.join(workspace, expanded)
-                resolved = str(Path(expanded).resolve())
-                Path(resolved).mkdir(parents=True, exist_ok=True)
-                return resolved
-        # Fallback: ~/.datus/skills/
-        fallback = os.path.expanduser("~/.datus/skills")
-        Path(fallback).mkdir(parents=True, exist_ok=True)
-        return fallback
-
     def _setup_full_filesystem_tools(self):
-        """Setup two filesystem tool sets: workspace (read-only) and skills (read+write)."""
-        try:
-            # Workspace tools — read-only, rooted at workspace
-            read_root = self._resolve_workspace_root()
-            self.filesystem_func_tool = FilesystemFuncTool(root_path=read_root)
-            for method_name in WORKSPACE_READONLY_METHODS:
-                if hasattr(self.filesystem_func_tool, method_name):
-                    method = getattr(self.filesystem_func_tool, method_name)
-                    self.tools.append(trans_to_function_tool(method))
-            logger.debug(f"Setup workspace read-only tools with root: {read_root}")
+        """Setup a single filesystem tool rooted at the project.
 
-            # Skills tools — read+write, rooted at skills directory, prefixed with skill_
-            skills_root = self._resolve_skills_write_root()
-            self._skills_filesystem_tool = FilesystemFuncTool(root_path=skills_root)
-            for method_name in SKILLS_ALL_METHODS:
-                if hasattr(self._skills_filesystem_tool, method_name):
-                    method = getattr(self._skills_filesystem_tool, method_name)
-                    tool = trans_to_function_tool(method)
-                    # Prefix with skill_ to distinguish from workspace tools
-                    tool = FunctionTool(
-                        name=f"skill_{tool.name}",
-                        description=f"[Skills directory: {skills_root}] {tool.description}",
-                        params_json_schema=tool.params_json_schema,
-                        on_invoke_tool=tool.on_invoke_tool,
-                        strict_json_schema=False,
-                    )
-                    self.tools.append(tool)
-            logger.info(f"Setup skills filesystem tools (skill_*) restricted to: {skills_root}")
+        Visibility follows the zone classifier in ``classify_path``:
+        ``.datus/skills/`` and ``~/.datus/skills/`` are WHITELIST (writable),
+        the rest of the project tree is INTERNAL (also writable by this node),
+        ``.datus/`` internals other than skills are HIDDEN (invisible), and
+        anything outside the project root is EXTERNAL (the permission hook
+        prompts; strict mode rejects). There is no per-kind write gate — the
+        prompt is responsible for steering skill writes into the whitelist.
+        """
+        try:
+            self.filesystem_func_tool = self._make_filesystem_tool()
+            self.tools.extend(self.filesystem_func_tool.available_tools())
+            logger.info(f"Setup filesystem tools rooted at: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 
     def _setup_db_tools(self):
         """Setup database tools (optional, for understanding schema when creating data-related skills)."""
         try:
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            conn = db_manager.get_conn(self.agent_config.current_namespace, self.agent_config.current_database)
-            self.db_func_tool = DBFuncTool(
-                conn,
-                agent_config=self.agent_config,
-            )
+            self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
             logger.warning(f"Failed to setup database tools, continuing without: {e}")
@@ -213,6 +162,8 @@ class SkillCreatorAgenticNode(AgenticNode):
             self.skill_func_tool_instance = SkillFuncTool(
                 manager=skill_manager,
                 node_name=self.get_node_name(),
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             self.tools.extend(self.skill_func_tool_instance.available_tools())
             logger.debug(f"Setup skill loading tools with {skill_manager.get_skill_count()} skills")
@@ -249,6 +200,29 @@ class SkillCreatorAgenticNode(AgenticNode):
             logger.debug(f"Setup session search tool with sessions_dir: {sessions_dir}")
         except Exception as e:
             logger.warning(f"Failed to setup session search tool, continuing without: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Register filesystem / db / skill-loading tools for permission rules."""
+        mapping = super()._tool_category_map()
+        if getattr(self, "filesystem_func_tool", None):
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if getattr(self, "db_func_tool", None):
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        # Skill loader is a second ``SkillFuncTool`` instance distinct from
+        # the base ``skill_func_tool`` (authoring flow). Register it under
+        # ``skills`` so ``skills.*`` rules still apply.
+        if getattr(self, "skill_func_tool_instance", None):
+            mapping.setdefault("skills", []).extend(self.skill_func_tool_instance.available_tools())
+        catchall: List[Any] = []
+        if self.ask_user_tool:
+            catchall.extend(self.ask_user_tool.available_tools())
+        if getattr(self, "skill_validate_tool", None):
+            catchall.extend(self.skill_validate_tool.available_tools())
+        if getattr(self, "_session_search_tool", None):
+            catchall.extend(self._session_search_tool.available_tools())
+        if catchall:
+            mapping.setdefault("tools", []).extend(catchall)
+        return mapping
 
     # Companion skills loaded into system prompt
     COMPANION_SKILLS = ("create-skill", "optimize-skill")
@@ -314,7 +288,9 @@ class SkillCreatorAgenticNode(AgenticNode):
             if skills_config and hasattr(skills_config, "directories"):
                 skill_directories = skills_config.directories
             else:
-                skill_directories = ["~/.datus/skills", "./skills"]
+                skill_directories = ["./.datus/skills", "~/.datus/skills"]
+
+        from datus.utils.node_utils import build_datasource_prompt_context
 
         context = {
             "has_db_tools": bool(self.db_func_tool),
@@ -326,6 +302,7 @@ class SkillCreatorAgenticNode(AgenticNode):
             "workspace_root": self._resolve_workspace_root(),
             "conversation_summary": conversation_summary,
             "current_date": get_default_current_date(None),
+            **build_datasource_prompt_context(self.agent_config),
         }
 
         try:
@@ -414,7 +391,7 @@ class SkillCreatorAgenticNode(AgenticNode):
                 max_turns=self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):

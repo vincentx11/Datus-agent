@@ -11,6 +11,22 @@ agent:
   target: openai
 ```
 
+### 响应语言（language）
+`language` 是**可选**字段，用于把所有 agentic 节点的**面向用户自然语言输出**统一到指定语言，覆盖：回答文本、总结、澄清提问、通过 `task` 工具调用子 agent 时写入的 prompt、以及写入文件的注释与说明。代码、SQL、表/列标识符、文件路径、URL、JSON key 等机器可读成分保持原样。
+
+若不填写该字段，系统不会向 system prompt 注入任何语言指令，模型将自行根据上下文选择回答语言。
+
+```yaml
+agent:
+  # 完全省略该字段即可让模型自行决定语言。
+  # 填写语言码即可固定所有 agentic 节点的输出语言：
+  language: zh   # 常用取值：en, zh, ja, ko, es, fr, de, pt, ru, it
+```
+
+内置语言码映射：`en` → English、`zh` / `zh-cn` → Chinese、`zh-tw` → Traditional Chinese、`ja` → Japanese、`ko` → Korean、`es` → Spanish、`fr` → French、`de` → German、`pt` → Portuguese、`ru` → Russian、`it` → Italian。未知代码将原样注入 system prompt，方便扩展。
+
+Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默认值（详见 [Chat API](../API/chat.zh.md)）。CLI 无覆盖参数，直接沿用 yaml 中的默认。
+
 ### 模型提供方（models） {#models-configuration}
 为智能体配置可用的 LLM 提供方：
 
@@ -184,6 +200,107 @@ codex:
   api_key: ${CODEX_OAUTH_TOKEN}
   model: codex-mini-latest
   auth_type: oauth
+```
+
+## Agentic Nodes
+
+`agent.agentic_nodes` 用于配置 chat 和各类 subagent 的行为。
+
+这部分配置会被用于：
+
+- `chat`、`explore`、`gen_sql`、`gen_report`、`gen_dashboard`、`scheduler` 等内置 agentic 节点
+- 通过统一 agent TUI（`/agent` 或 `/subagent`）创建的自定义 subagent
+- 把自定义名称 alias 到某个内置节点类的高级手工配置
+
+### 常见字段
+
+当前运行时会读取这些常见字段：
+
+- `model`：引用 `agent.models` 中的 provider key
+- `system_prompt`：subagent 名称 / 提示词模板基名
+- `node_class`：要使用的节点实现，例如 `gen_sql`、`gen_report`、`explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`
+- `prompt_version`、`prompt_language`
+- `agent_description`
+- `tools`、`mcp`、`skills`
+- `rules`
+- `max_turns`
+- `workspace_root`
+- `scoped_context`
+- `subagents`
+- semantic 节点使用的 `semantic_adapter`
+- dashboard agent 使用的 `bi_platform`
+- scheduler 节点使用的 `scheduler_service`
+
+`scoped_kb_path` 已废弃。新配置使用共享的全局存储，并在查询时应用过滤，而不是为每个 subagent 持有独立 scoped KB 目录。
+
+### `subagents` 委派控制
+
+`subagents` 决定该节点是否暴露 `task()` 工具，以及允许委派到哪些 subagent 类型。
+
+- `subagents: "*"`：允许委派到所有可发现的 subagent（排除自己）
+- `subagents: explore, gen_sql`：只允许委派到指定子集
+- 为空或省略时：
+  - `chat` 默认是 `*`
+  - 多数其他 agentic 节点默认是 `explore`
+  - 显式写成空值时可禁用委派
+
+### `scoped_context`
+
+`scoped_context` 用来限制 subagent 在共享元数据和知识库里可见的范围：
+
+```yaml
+scoped_context:
+  datasource: finance
+  tables: mart.finance_daily, mart.finance_budget
+  metrics: finance.revenue.daily_revenue
+  sqls: finance.revenue.region_rollup
+```
+
+手工写 YAML 时请显式填写 `datasource`。统一 agent TUI 的 Custom Tab 向导会自动从当前数据库填充该值。
+
+### 示例
+
+```yaml
+agent:
+  agentic_nodes:
+    chat:
+      model: claude
+      max_turns: 50
+      subagents: "*"
+
+    finance_report:
+      node_class: gen_report
+      model: claude
+      system_prompt: finance_report
+      prompt_version: "1.0"
+      prompt_language: en
+      agent_description: "财务分析助手"
+      tools: semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree
+      subagents: explore, gen_sql
+      max_turns: 30
+      scoped_context:
+        datasource: finance
+        tables: mart.finance_daily
+        metrics: finance.revenue.daily_revenue
+        sqls: finance.revenue.region_rollup
+
+    sales_dashboard:
+      node_class: gen_dashboard
+      model: claude
+      bi_platform: superset
+      max_turns: 30
+
+    semantic_metrics:
+      node_class: gen_metrics
+      model: claude
+      semantic_adapter: metricflow
+      max_turns: 30
+
+    etl_scheduler:
+      node_class: scheduler
+      model: claude
+      scheduler_service: airflow_prod
+      max_turns: 30
 ```
 
 ## 完整示例

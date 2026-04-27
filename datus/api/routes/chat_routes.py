@@ -10,12 +10,12 @@ DatusService.task_manager) to run the agentic loop in a background
 asyncio.Task so that client disconnects do not cancel the computation.
 """
 
-import json
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from datus.api.constants import BUILTIN_SUBAGENTS
 from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
@@ -29,11 +29,36 @@ from datus.api.models.cli_models import (
     ChatSessionData,
     CompactSessionData,
     CompactSessionInput,
+    FeedbackChatInput,
     StreamChatInput,
     UserInteractionInput,
 )
+from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+
+# Additional builtin subagents accepted by ``stream_chat`` beyond the canonical
+# ``BUILTIN_SUBAGENTS`` set — these are wired directly in
+# ``ChatTaskManager._create_node`` but are not listed as user-creatable agents
+# in ``datus.api.constants``. Keep this list in sync with the dispatch branches
+# in :meth:`ChatTaskManager._create_node`.
+_EXTRA_BUILTIN_SUBAGENTS = {"feedback"}
+
+
+def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
+    """Return True if *subagent_id* resolves to a builtin or custom sub-agent."""
+    if subagent_id in BUILTIN_SUBAGENTS or subagent_id in _EXTRA_BUILTIN_SUBAGENTS:
+        return True
+    agentic_nodes = getattr(svc.agent_config, "agentic_nodes", None) or {}
+    if subagent_id in agentic_nodes:
+        return True
+    # Custom sub-agents may be keyed by sanitized node_name with the original
+    # UUID id stored under "id" — match either form.
+    for entry in agentic_nodes.values():
+        if isinstance(entry, dict) and entry.get("id") == subagent_id:
+            return True
+    return False
 
 
 # ========== Stream Chat ==========
@@ -51,9 +76,51 @@ async def stream_chat(
     ctx: AppContextDep,
 ):
     sub_agent_id = request.subagent_id
+    if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subagent '{sub_agent_id}' not found",
+        )
 
     async def generate_sse():
         async for event in svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id):
+            yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
+
+    return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
+
+
+# ========== Reaction-triggered Feedback ==========
+
+
+@router.post(
+    "/feedback",
+    summary="Stream Feedback Agent (reaction-triggered)",
+    description=(
+        "Trigger the feedback agent from a reaction event (IM emoji, UI thumbs, etc.). "
+        "The server builds the canonical user prompt from reaction_emoji/reference_msg/reaction_msg "
+        "and routes the request to the feedback sub-agent, which copies the source session and archives reusable knowledge."
+    ),
+)
+async def stream_chat_feedback(
+    request: FeedbackChatInput,
+    svc: ServiceDep,
+    ctx: AppContextDep,
+):
+    rendered_message = build_reaction_feedback_prompt(
+        reaction_emoji=request.reaction_emoji,
+        reference_msg=request.reference_msg,
+        reaction_msg=request.reaction_msg,
+    )
+    stream_input = StreamChatInput(
+        **request.model_dump(
+            exclude={"message", "reaction_emoji", "reference_msg", "reaction_msg"},
+        ),
+        message=rendered_message,
+        subagent_id="feedback",
+    )
+
+    async def generate_sse():
+        async for event in svc.chat.stream_chat(stream_input, sub_agent_id="feedback", user_id=ctx.user_id):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())
@@ -131,13 +198,21 @@ async def compact_chat_session(
     "/sessions",
     response_model=Result[ChatSessionData],
     summary="List Chat Sessions",
-    description="List all chat sessions",
+    description=(
+        "List chat sessions. Pass subagent_id to filter by agent "
+        "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
+        "Omit to return every session for the user."
+    ),
 )
 async def list_sessions(
     svc: ServiceDep,
     ctx: AppContextDep,
+    subagent_id: Optional[str] = Query(
+        default=None,
+        description="Filter by subagent id; 'chat' selects the default chat agent",
+    ),
 ) -> Result[ChatSessionData]:
-    return svc.chat.list_sessions(user_id=ctx.user_id)
+    return svc.chat.list_sessions(user_id=ctx.user_id, subagent_id=subagent_id)
 
 
 @router.delete(
@@ -209,15 +284,7 @@ async def submit_user_interaction(
             errorMessage="Each answer must contain at least one value",
         )
 
-    # Convert List[List[str]] → broker format
-    # Single-element lists unwrap to string, multi-element stay as list
-    answers = [ans[0] if len(ans) == 1 else ans for ans in request.input]
-    if len(answers) == 1:
-        answer = answers[0]
-        user_choice = json.dumps(answer) if isinstance(answer, list) else answer
-    else:
-        user_choice = json.dumps(answers)
-    success = await broker.submit(request.interaction_key, user_choice)
+    success = await broker.submit(request.interaction_key, request.input)
     return Result[dict](
         success=success,
         data={"interaction_key": request.interaction_key, "submitted": success},

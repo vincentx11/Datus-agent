@@ -26,6 +26,68 @@ import pytest
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from tests.unit_tests.mock_llm_model import MockLLMModel
 
+
+@pytest.fixture(autouse=True)
+def _isolate_project_cwd(monkeypatch, tmp_path):
+    """Run every unit test in a per-test isolated working directory.
+
+    Two effects:
+
+    1. ``load_project_override`` (see ``agent_config_loader._apply_project_override``)
+       reads ``{cwd}/.datus/config.yml`` unconditionally. On a developer workstation
+       that file typically pins ``target:`` to whatever model the human is using,
+       which will not be present in the stub ``agent.yml`` fixtures the tests load.
+       Without this isolation every test that reaches ``load_agent_config`` crashes
+       with ``Unexcepted value of target``.
+
+    2. ``AgentConfig.__init__`` derives ``project_root`` from ``os.getcwd()`` when
+       the caller doesn't pass one. Pinning CWD to a fresh tmp dir keeps
+       implicit ``{project_root}/subject`` paths, sharded session/data
+       directories, and similar from leaking the real repo into a test's
+       storage layout.
+
+    The fixture is function-scoped so each test gets its own clean dir and
+    monkeypatch restores the original CWD on teardown. ``tests/data`` and
+    ``tests/conf`` loaders in this suite already resolve via
+    ``Path(__file__).resolve().parents[...]``, so they're unaffected.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_langsmith_tracing():
+    """Disable LangSmith/LangChain tracing for the unit test session only.
+
+    Scoped to tests/unit_tests/ so integration/nightly/regression suites that
+    intentionally exercise real tracing pipelines remain unaffected.
+    Overrides any inherited env vars so UT runs never upload traces, even when
+    the developer's shell has LANGSMITH_TRACING=true or an API key set.
+    """
+    saved = {
+        k: os.environ.get(k)
+        for k in (
+            "LANGCHAIN_API_KEY",
+            "LANGSMITH_API_KEY",
+            "LANGCHAIN_ENDPOINT",
+            "LANGSMITH_ENDPOINT",
+            "LANGSMITH_TRACING",
+            "LANGCHAIN_TRACING_V2",
+        )
+    }
+    for key in ("LANGCHAIN_API_KEY", "LANGSMITH_API_KEY", "LANGCHAIN_ENDPOINT", "LANGSMITH_ENDPOINT"):
+        os.environ.pop(key, None)
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 # ---------------------------------------------------------------------------
 # Singleton cleanup
 # ---------------------------------------------------------------------------
@@ -88,7 +150,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
     - home = tmp_path
     - target = "mock"
     - models with a mock OpenAI config
-    - namespace "test_ns" with california_schools.sqlite ("california_schools")
+    - datasource "test_ns" with california_schools.sqlite ("california_schools")
     - agentic_nodes config for chat, gensql, gen_ext_knowledge, compare,
       gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
     """
@@ -109,8 +171,8 @@ def real_agent_config(tmp_path, reset_global_singletons):
                 "base_url": "http://localhost:0",
             },
         },
-        "service": {
-            "databases": {
+        "services": {
+            "datasources": {
                 "california_schools": {
                     "type": "sqlite",
                     "uri": db_path,
@@ -118,12 +180,12 @@ def real_agent_config(tmp_path, reset_global_singletons):
                     "default": True,
                 },
             },
-            "bi_tools": {},
+            "semantic_layer": {},
+            "bi_platforms": {},
             "schedulers": {},
         },
-        "storage": {
-            "workspace_root": str(tmp_path / "workspace"),
-        },
+        "project_root": str(tmp_path / "workspace"),
+        "storage": {},
         "agentic_nodes": {
             "chat": {
                 "system_prompt": "chat",
@@ -177,18 +239,13 @@ def real_agent_config(tmp_path, reset_global_singletons):
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
 
-    # Set current database (was: current_namespace = "test_ns")
-    agent_config.current_database = "california_schools"
-
-    # Capture cwd before yielding, in case a test changes it
-    project_root = os.getcwd()
+    # Set current datasource
+    agent_config.current_datasource = "california_schools"
 
     yield agent_config
-
-    # Cleanup: storage backends with empty data_dir create datus_db* in cwd
-    for name in os.listdir(project_root):
-        if name.startswith("datus_db"):
-            shutil.rmtree(os.path.join(project_root, name), ignore_errors=True)
+    # tmp_path is pytest-managed; storage backends here use
+    # ``agent_config.path_manager.data_dir`` which is rooted at tmp_path, so no
+    # cwd cleanup is needed.
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ class TestExplorerServiceInit:
         svc = ExplorerService(agent_config=real_agent_config)
         assert svc is not None
         assert svc.agent_config is real_agent_config
-        assert svc.datasource_id == real_agent_config.current_namespace
+        assert svc.datasource_id == real_agent_config.current_datasource
 
     def test_init_creates_rag_stores(self, real_agent_config):
         """ExplorerService creates metric, ref_sql, and knowledge RAG stores."""
@@ -616,13 +616,13 @@ class TestExplorerServiceCreateMetric:
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["metric_create_test"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         request = EditMetricInput(
@@ -633,22 +633,22 @@ class TestExplorerServiceCreateMetric:
         # May fail on deep validation (no data_source in model) — that's expected.
         # The important thing is it exercises the full path: parse → check existence → validate
         assert result is not None
-        if not result.success:
-            # Should be a validation error, not a crash
-            assert "validation" in result.errorMessage.lower() or "not defined" in result.errorMessage.lower()
+        assert result.success or (
+            "validation" in result.errorMessage.lower() or "not defined" in result.errorMessage.lower()
+        )
 
     async def test_create_metric_duplicate_file_fails(self, real_agent_config):
         """create_metric rejects when file already exists on disk."""
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["dup_file_dir"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         # Pre-create the file on disk
@@ -669,13 +669,13 @@ class TestExplorerServiceCreateMetric:
         import os
 
         from datus.api.models.explorer_models import EditMetricInput
-        from datus.utils.path_manager import DatusPathManager
 
         svc = ExplorerService(agent_config=real_agent_config)
         await svc.create_directory(CreateDirectoryInput(subject_path=["tagged_dir"]))
 
-        pm = DatusPathManager(datus_home=real_agent_config.home)
-        metrics_dir = pm.semantic_model_path(real_agent_config.current_namespace) / "metrics"
+        metrics_dir = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "metrics"
+        )
         os.makedirs(metrics_dir, exist_ok=True)
 
         yaml_content = (

@@ -1,175 +1,144 @@
-# 自定义 subagent
+# 自定义 Subagent
 
-## 介绍
+## 概览
 
-`.subagent` 命令是 **Datus CLI** 提供的核心功能，用于管理su'ba'gen't。本文档重点介绍如何使用 `.subagent` 创建、查看、更新或删除subagent，并详细说明其子命令。`SubAgentBootstrapper` 是 `.subagent` 内的功能模块，用于为特定subagent构建或模拟构建 **范围化知识库**（Scoped KB）。`.subagent` 命令支持subagent的完整生命周期管理，并可触发知识库构建。
+`/agent` 和 `/subagent` 都会打开**统一的 agent 管理 TUI**，内含两个 Tab：
 
----
+- **Built-in** — 列出 `SYS_SUB_AGENTS` 中的系统 subagent。任意行按 `Enter` 把该 agent 设为当前会话默认；按 `e` 打开单字段表单覆写 `max_turns`（落盘到 `agent.agentic_nodes.<name>`）。`model` 不在 UI 中暴露——模型选择由全局 `/model` 负责，如果确实需要按节点指定 model 请直接编辑 `agent.yml`。
+- **Custom** — 列出 `agent.yml` 的 `agent.agentic_nodes` 下自定义 subagent。`Enter` 设为当前 agent，`e` 打开向导修改，`a` 启动向导新建，`d d`（两次）删除。
 
-## 命令概览
+原来的 `/subagent add|list|remove|update` 文本子命令已全部移除，所有操作都在 TUI 内完成。
 
-`.subagent` 命令支持以下子命令：
+`/agent <name>` 仍保留为不启动 TUI 的快捷路径，直接把默认 agent 切到 `<name>`。
 
-* **add** — 启动交互式向导添加新的subagent。
-* **list** — 列出所有已配置的subagent。
-* **remove <agent_name>** — 从配置中删除指定的subagent。
-* **update <agent_name>** — 启动交互式向导更新现有subagent。
-* **bootstrap <agent_name> [--components <list>] [--plan]** — 为给定subagent构建或模拟构建范围化知识库。
+## 向导会生成什么
 
-如果未提供参数或提供了错误的参数，命令会自动显示帮助信息。
+向导会写入两部分内容：
 
-> **注意**：执行 `add` 或 `update` 后，系统会自动为subagent构建范围化知识库。
+1. `agent.agentic_nodes` 下的新配置项
+2. 一个名为 `{agent_name}_system_{prompt_version}.j2` 的提示词模板文件
 
----
+当前向导支持两类自定义节点：
 
-## 子命令详解
+- `gen_sql`（默认）
+- `gen_report`
 
-### add — 创建新subagent
+如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要手工编辑 `agent.yml`。
 
-运行：
+## 向导字段
 
-```bash
-.subagent add
+### 第 1 步：基础信息
+
+- `system_prompt`：subagent 名称，也是配置键名
+- `node_class`：`gen_sql` 或 `gen_report`
+- `agent_description`：简短描述，会出现在预览和 task-tool 描述里
+
+### 第 2 步：Tools 与 MCP
+
+必须至少选择一个原生工具或一个 MCP 工具。
+
+- 原生工具会存成逗号分隔的类别或方法模式，例如 `db_tools`、`semantic_tools.*`、`context_search_tools.list_subject_tree`
+- MCP 选择会存成逗号分隔的 server 或 `server.tool` 条目
+
+### 第 3 步：范围化上下文
+
+向导当前支持以下范围字段：
+
+- `tables`
+- `metrics`
+- `sqls`
+
+保存时，向导还会把当前数据库写入 `scoped_context.datasource`。
+
+### 第 4 步：Rules
+
+Rules 会以字符串列表形式保存在 `rules` 中，并追加到最终系统提示词里。
+
+## TUI 操作说明
+
+用 `/agent`（落在 Built-in Tab）或 `/subagent`（落在 Custom Tab）打开管理界面。
+
+列表视图快捷键：
+
+| 按键 | 动作 |
+|------|------|
+| ↑ ↓ / PageUp / PageDown | 上下移动 |
+| `Tab` 或 ← → | 切换 Built-in ↔ Custom |
+| `Enter` | 将高亮行设为当前 agent（Custom Tab 尾部的 `+ Add agent…` 行则进入向导新建态） |
+| `e` | Built-in：打开 model / max_turns 覆写表单；Custom：对高亮项启动向导 |
+| `a` | （Custom）启动向导创建新的自定义 subagent |
+| 连按两次 `d` | （Custom）删除高亮行（第一次预警、第二次确认） |
+| `Esc` / `Ctrl+C` | 取消 |
+
+Built-in 编辑表单快捷键：
+
+| 按键 | 动作 |
+|------|------|
+| 输入整数 | 直接在输入框编辑 `max_turns` |
+| `Enter` / `Ctrl+S` | 保存覆写 |
+| `Esc` | 返回 agent 列表 |
+
+覆写只会把 `max_turns` 写入 `agent.agentic_nodes.<name>`，同一节点下的 `scoped_context`、`rules`、`tools` 以及 YAML 中手工写入的 `model` 覆写都会被保留。清空输入（留空 `max_turns`）会移除覆写；若该节点下没有其他字段，整个节点配置项也会从 YAML 中删除。
+
+## 配置示例
+
+生成后的配置通常类似这样：
+
+```yaml
+agent:
+  agentic_nodes:
+    finance_report:
+      system_prompt: finance_report
+      node_class: gen_report
+      prompt_version: "1.0"
+      prompt_language: en
+      agent_description: "财务分析助手"
+      tools: semantic_tools.*, db_tools.*, context_search_tools.list_subject_tree
+      mcp: ""
+      rules:
+        - 优先复用已有财务指标，再决定是否编写新 SQL
+      scoped_context:
+        datasource: finance
+        tables: mart.finance_daily
+        metrics: finance.revenue.daily_revenue
+        sqls: finance.revenue.region_rollup
 ```
 
-这会启动交互式向导，提示输入基本信息，如subagent的 **名称（system_prompt）**、**描述**、**工具**、**规则**，以及是否需要范围化上下文。完成后，配置文件会保存到项目中，并可选择生成相应的SQL模板文件。
+## Scoped Context 的当前语义
 
-如果创建过程中途取消，会显示取消消息，不会保存任何配置。
+当前代码已经不再为每个 subagent 构建单独的 scoped knowledge-base 目录。
 
-![Add subagent](../assets/add_subagent.png)
-> 💡 **提示**：
-> 1. 在第二步（Native Tools 配置）中，如果需要配置 `context_search_tools`，请选中`list_domain_layers_tree`，否则可能会导致`search_metrics`和`search_reference_sql`失效。
-> 2. 在第三步（ScopedContext 配置）中，可以使用 **Tab** 进行层级补全，但预览不可用。按 **F2** 可预览。
+现在的行为是：
 
----
+- 范围信息保存在 `agentic_nodes.<name>.scoped_context`
+- Datus 在查询时对共享的全局存储施加过滤
+- 数据库工具也可能根据当前 subagent 缩小可见表范围
 
-### list — 列出所有subagent
+这意味着：
 
-运行：
+- 当前 CLI 没有 `/subagent bootstrap` 子命令
+- `scoped_kb_path` 已废弃，新保存的配置不会持久化该字段
+- 全局知识仍然需要通过 `datus-agent bootstrap-kb` 单独构建
 
-```bash
-.subagent list
+## 高级手工配置
+
+向导覆盖的是最常见的 `gen_sql` 和 `gen_report` 场景。更高级的配置请直接编辑 `agent.yml`。
+
+例如：
+
+```yaml
+agent:
+  agentic_nodes:
+    sales_dashboard:
+      node_class: gen_dashboard
+      model: claude
+      bi_platform: superset
+      max_turns: 30
+
+    etl_scheduler:
+      node_class: scheduler
+      model: claude
+      max_turns: 30
 ```
 
-CLI 会以表格形式显示所有已配置的subagent，包含：
-
-* **名称（system_prompt）**
-* **范围化上下文**：例如数据表、指标、SQL 列表（如果无则显示为空）
-* **范围化知识库路径**：显示范围化知识库目录的路径（如果不可用则显示 "—"）
-* **工具**：subagent使用的工具列表
-* **MCP**：多组件进程配置
-* **规则**：以 Markdown 格式列出
-
-![List subagent](../assets/list_subagents.png)
-
-如果当前命名空间中没有subagent，CLI 会显示 `No configured sub‑agents`。
-
----
-
-### remove — 删除subagent
-
-格式：
-
-```bash
-.subagent remove <agent_name>
-```
-
-删除指定subagent的配置。如果未找到，会显示错误消息。成功删除后，会显示确认消息。
-
----
-
-### update — 更新现有subagent
-
-格式：
-
-```bash
-.subagent update <agent_name>
-```
-
-![Update subagent](../assets/update_subagent.png)
-
-系统首先检查目标subagent是否存在。如果存在，会启动向导并预填充现有配置。确认更新后，配置会被保存。如果更改影响了范围化上下文，CLI 会自动触发 `bootstrap` 重建知识库。
-
----
-
-### bootstrap — 构建范围化知识库
-
-此命令构建或更新subagent的 **范围化知识库（Scoped KB）**。它支持组件选择和计划模拟。
-
-#### 基本用法
-
-```bash
-.subagent bootstrap <agent_name>
-```
-
-该命令使用 `argparse.ArgumentParser`，通过 `prog` 和 `description` 参数定义程序名称和描述。运行 `.subagent bootstrap -h` 会显示详细的帮助信息。
-
-#### 参数
-
-* `<agent_name>` — 必需。指定要为哪个subagent构建知识库。
-* `--components <list>` — 可选。要构建的组件列表（逗号分隔，不区分大小写）。示例：
-
-  ```bash
-  --components metadata,metrics
-  ```
-
-  如果省略，将构建所有支持的组件。无效的组件会触发 `unsupported component` 提示。
-* `--plan` — 可选标志。在**计划模式**下运行，计算并显示导入计划但不会写入或修改文件。
-
-#### 工作流
-
-1. **验证并定位subagent** — 解析参数并检查指定的subagent是否存在。
-2. **规范化组件列表** — 转换为小写并针对支持的组件（例如 `metadata`、`metrics`、`reference_sql`）进行验证。无效的组件会被拒绝，并显示支持的列表。
-3. **执行或模拟构建**
-
-   * 不使用 `--plan`：执行覆盖策略，导入数据库元数据、指标或Reference SQL，生成新的范围化知识库目录，并更新配置。
-   * 使用 `--plan`：仅运行模拟，计算要导入的数据而不写入文件。
-4. **显示结果** — 输出摘要表格（`Scoped KB Bootstrap Summary`），包含列：
-
-   * **Component** | **Status** | **Message**
-   * 状态选项：`SUCCESS`、`ERROR`、`SKIPPED`、`PLAN`
-   * 显示范围化知识库路径 — `Simulated scoped directory`（计划模式）或 `Scoped directory`（执行模式）。
-5. **显示详情** — 对于缺失或无效的记录，在 `missing` 和 `invalid` 字段下显示 JSON 详情。
-6. **保存配置** — 成功时（非计划模式），更新subagent配置中的范围化知识库路径。保存过程中的错误会被报告；成功保存会刷新内存中的配置。
-
-#### 示例
-
-构建所有组件：
-
-```bash
-.subagent bootstrap my_agent
-```
-
-仅模拟元数据和指标：
-
-```bash
-.subagent bootstrap my_agent --components metadata,metrics --plan
-```
-
-仅构建Reference SQL：
-
-```bash
-.subagent bootstrap my_agent --components reference_sql
-```
-
----
-
-## 注意事项
-
-* **名称一致性**：subagent名称（`system_prompt`）唯一标识其配置。确保 `add`、`update`、`remove` 和 `bootstrap` 命令使用一致的命名。
-* **支持的组件**：必须在预定义的组件（`metadata`、`metrics`、`reference_sql`）内。使用 `.subagent bootstrap -h` 检查可用选项。
-* **模拟模式（`--plan`）**：用于风险评估；不执行磁盘写入。省略此标志以执行实际构建。
-* **自动重建**：更新更改范围化上下文的subagent会自动触发重建，以保持配置和知识库的一致性。
-
----
-
-## 在 Agent 中重建subagent知识库
-
-运行：
-
-```bash
-python -m datus.main bootstrap-kb
-```
-
-当前命名空间下所有配置了范围化上下文的subagent都会重建其知识库。构建的内容取决于 `--component` 参数。
-
+支持的节点类别以及运行时行为，见 [Subagent 指南](./introduction.zh.md) 和 [内置 subagent](./builtin_subagents.zh.md)。

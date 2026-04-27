@@ -43,14 +43,11 @@ def dashboard_agent_config():
         pytest.skip("DEEPSEEK_API_KEY not set")
     if not _is_superset_running():
         pytest.skip(f"Superset not reachable at {SUPERSET_URL}. Run docker compose up -d")
-    try:
-        import datus_bi_superset  # noqa: F401
-    except ImportError:
-        pytest.skip("datus-bi-superset package not installed")
+    pytest.importorskip("datus_bi_superset", reason="datus-bi-superset package not installed")
 
     from tests.conftest import load_acceptance_config
 
-    config = load_acceptance_config(namespace="bird_school")
+    config = load_acceptance_config(datasource="bird_school")
     config.rag_base_path = "tests/data"
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
 
@@ -66,7 +63,7 @@ def dashboard_agent_config():
 
     config.dashboard_config["superset"] = DashboardConfig(
         platform="superset",
-        api_url=SUPERSET_URL,
+        api_base_url=SUPERSET_URL,
         username=SUPERSET_USER,
         password=SUPERSET_PASS,
         extra={"provider": "db"},
@@ -99,6 +96,8 @@ class TestGenDashboardAgenticInit:
         assert "list_dashboards" in tool_names, f"Missing list_dashboards, got: {tool_names}"
         assert "get_dashboard" in tool_names, f"Missing get_dashboard, got: {tool_names}"
         assert "list_charts" in tool_names, f"Missing list_charts, got: {tool_names}"
+        assert "get_chart" in tool_names, f"Missing get_chart, got: {tool_names}"
+        assert "get_chart_data" in tool_names, f"Missing get_chart_data, got: {tool_names}"
         assert "list_datasets" in tool_names, f"Missing list_datasets, got: {tool_names}"
 
         # Write tools should be present (Superset adapter supports all mixins)

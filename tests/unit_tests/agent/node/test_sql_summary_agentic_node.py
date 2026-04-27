@@ -100,6 +100,7 @@ class TestSqlSummaryAgenticNodeInit:
 # ===========================================================================
 
 
+@pytest.mark.nightly
 class TestSqlSummaryAgenticNodeExecution:
     """Tests for SqlSummaryAgenticNode.execute_stream() with real tools."""
 
@@ -279,9 +280,9 @@ class TestSqlSummaryAgenticNodeExecution:
 
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
-        assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        assert isinstance(last_output, dict)
+        assert "tokens_used" in last_output
+        assert last_output["tokens_used"] > 0
 
 
 # ===========================================================================
@@ -321,7 +322,7 @@ class TestSqlSummaryExtractMethods:
 
 
 class TestSqlSummarySaveToDbSandbox:
-    """``_save_to_db`` must reject paths outside the per-kind, per-namespace sandbox.
+    """``_save_to_db`` must reject paths outside the per-kind, per-datasource sandbox.
 
     These paths come from the LLM's final JSON (not from the write_file tool
     result), so the containment check is the last line of defence against a
@@ -340,7 +341,7 @@ class TestSqlSummarySaveToDbSandbox:
             node._save_to_db(str(outside))
             sync_mock.assert_not_called()
 
-    def test_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
+    def test_rejects_cross_datasource_prefix(self, real_agent_config, mock_llm_create):
         from unittest.mock import patch
 
         node = _create_node(real_agent_config)
@@ -350,15 +351,13 @@ class TestSqlSummarySaveToDbSandbox:
 
 
 class TestSqlSummaryFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_kb_home(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
+        from pathlib import Path
+
         node = _create_node(real_agent_config)
-        expected = str(real_agent_config.path_manager.knowledge_base_home)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        ns = real_agent_config.current_namespace
-        assert node.filesystem_func_tool._path_normalizer("q_001.yaml", None) == f"sql_summaries/{ns}/q_001.yaml"
+        assert node.filesystem_func_tool.root_path == expected

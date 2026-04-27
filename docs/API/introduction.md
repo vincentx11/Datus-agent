@@ -22,8 +22,8 @@ default unscoped session; when present, the user id is used to isolate chat sess
 X-Datus-User-Id: alice
 ```
 
-Namespace isolation is controlled separately by the `--database` CLI flag (or `DATUS_NAMESPACE` env var) and selects
-which namespace from `agent.yml` is used to load databases and knowledge.
+Datasource isolation is controlled separately by the `--datasource` CLI flag (or `DATUS_DATASOURCE` env var) and selects
+which datasource from `agent.yml` is used to load databases and knowledge.
 
 ## Response envelope
 
@@ -58,3 +58,4 @@ sit at the application root.
 - [Deployment](deployment.md) — install and launch the API server
 - [Chat](chat.md) — chat endpoints and SSE streaming
 - [Knowledge Base](knowledge_base.md) — KB bootstrap and platform doc endpoints with SSE
+- [Models](models.md) — list available LLM models and provider metadata

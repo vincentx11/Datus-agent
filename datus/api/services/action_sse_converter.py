@@ -61,7 +61,11 @@ def _build_tool_call_content(action: ActionHistory) -> List[IMessageContent]:
 
 
 def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for tool call completed event."""
+    """Build content for tool call completed event.
+
+    When the tool failed, the payload includes an `error` field so the frontend
+    can render the matching call-tool card in a failure state.
+    """
     output = action.output
 
     start_time = action.start_time
@@ -81,6 +85,13 @@ def _build_tool_result_content(action: ActionHistory) -> List[IMessageContent]:
         "shortDesc": short_desc,
         "result": output_dict.get("raw_output", output) if output_dict else output,
     }
+
+    error_message = output_dict.get("error") if output_dict else None
+    if not error_message and action.status == ActionStatus.FAILED:
+        error_message = action.messages or "Unknown error"
+    if error_message:
+        payload_data["error"] = error_message
+
     return [IMessageContent(type="call-tool-result", payload=payload_data)]
 
 
@@ -108,21 +119,27 @@ def _build_response_content(action: ActionHistory) -> List[IMessageContent]:
 
 def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageContent]]:
     """Extract text content from action for markdown display."""
+    from datus.utils.text_utils import strip_litellm_placeholder
+
     action_type = action.action_type
 
     if action_type == "llm_generation":
-        return [IMessageContent(type="thinking", payload={"content": action.messages})]
+        messages = strip_litellm_placeholder(action.messages)
+        return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     output = action.output
     content = None
     if output and isinstance(output, dict):
         for key in ["response", "raw_output", "output", "thinking", "content"]:
             if key in output and output[key]:
-                content = str(output[key])
-                break
+                candidate = strip_litellm_placeholder(str(output[key]))
+                if candidate:
+                    content = candidate
+                    break
 
     if not content:
-        return [IMessageContent(type="thinking", payload={"content": action.messages})]
+        messages = strip_litellm_placeholder(action.messages)
+        return [IMessageContent(type="thinking", payload={"content": messages})] if messages else None
 
     result_json = llm_result2json(content)
 
@@ -154,29 +171,22 @@ def _build_error_content(action: ActionHistory) -> List[IMessageContent]:
 
 def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for user interaction event (PROCESSING status)."""
-    input_data = action.input if isinstance(action.input, dict) else {}
+    from datus.schemas.interaction_event import InteractionEvent
 
-    contents = input_data.get("contents", [])
-    choices_list = input_data.get("choices", [])
-    default_choices = input_data.get("default_choices", [])
-    multi_selects = input_data.get("multi_selects", [])
-    content_type = input_data.get("content_type", "markdown")
-    allow_free_text = input_data.get("allow_free_text", False)
+    events = InteractionEvent.from_broker_input(action.input if isinstance(action.input, dict) else {})
 
     requests_payload = []
-    for i, content in enumerate(contents):
-        choices = choices_list[i] if i < len(choices_list) else {}
-        options = [{"key": k, "title": v} for k, v in choices.items()] if choices else None
-        default_choice = default_choices[i] if i < len(default_choices) else ""
-        allow_multi_select = multi_selects[i] if i < len(multi_selects) else False
+    for ev in events:
+        options = [{"key": k, "title": v} for k, v in ev.choices.items()] if ev.choices else None
         requests_payload.append(
             {
-                "content": content,
+                "title": ev.title,
+                "content": ev.content,
                 "options": options,
-                "defaultChoice": default_choice,
-                "contentType": content_type,
-                "allowFreeText": allow_free_text,
-                "multiSelect": allow_multi_select,
+                "defaultChoice": ev.default_choice,
+                "contentType": ev.content_type,
+                "allowFreeText": ev.allow_free_text,
+                "multiSelect": ev.multi_select,
             }
         )
 
@@ -190,7 +200,11 @@ def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:
 
 
 def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for sub-agent completion summary event."""
+    """Build content for sub-agent completion summary event.
+
+    When the sub-agent failed, the payload includes an `error` field so the
+    frontend can render the matching subagent card in a failure state.
+    """
     output = action.output if isinstance(action.output, dict) else {}
     duration = (action.end_time - action.start_time).total_seconds() if action.start_time and action.end_time else 0.0
     payload_data = {
@@ -198,6 +212,13 @@ def _build_subagent_complete_content(action: ActionHistory) -> List[IMessageCont
         "toolCount": output.get("tool_count", 0),
         "duration": duration,
     }
+
+    error_message = output.get("error")
+    if not error_message and action.status == ActionStatus.FAILED:
+        error_message = action.messages or "Unknown error"
+    if error_message:
+        payload_data["error"] = error_message
+
     return [IMessageContent(type="subagent-complete", payload=payload_data)]
 
 
@@ -266,8 +287,6 @@ def action_to_sse_event(
             if not is_first_delta:
                 sse_type = SSEDataType.APPEND_MESSAGE
             contents = [IMessageContent(type="thinking", payload={"content": delta_text})]
-        elif status == ActionStatus.FAILED:
-            contents = _build_error_content(action)
         elif action.action_type == SUBAGENT_COMPLETE_ACTION_TYPE:
             contents = _build_subagent_complete_content(action)
         elif role == ActionRole.TOOL and status == ActionStatus.PROCESSING:
@@ -290,6 +309,8 @@ def action_to_sse_event(
             role == ActionRole.ASSISTANT and status == ActionStatus.SUCCESS and action.action_type.endswith("_response")
         ):
             return None  # ignore parsed final response
+        elif status == ActionStatus.FAILED:
+            contents = _build_error_content(action)
         else:
             contents = _build_thinking_content(action)
             if contents is None:

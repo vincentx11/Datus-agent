@@ -36,10 +36,10 @@ pytestmark = pytest.mark.ci
 # ---------------------------------------------------------------------------
 
 
-class TestArgumentParser:
+class TestAPIArgumentParser:
     def test_defaults(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("DATUS_NAMESPACE", None)
+            os.environ.pop("DATUS_DATASOURCE", None)
             os.environ.pop("DATUS_OUTPUT_DIR", None)
             os.environ.pop("DATUS_LOG_LEVEL", None)
             args = _build_parser().parse_args([])
@@ -49,7 +49,7 @@ class TestArgumentParser:
         assert args.reload is False
         assert args.debug is False
         assert args.config is None
-        assert args.namespace == "default"
+        assert args.datasource == "default"
         assert args.output_dir == "./output"
         assert args.log_level == "INFO"
         assert args.max_steps == 20
@@ -87,10 +87,10 @@ class TestArgumentParser:
         with pytest.raises(SystemExit):
             _build_parser().parse_args(["--source", "emacs"])
 
-    def test_namespace_from_env(self):
-        with patch.dict(os.environ, {"DATUS_NAMESPACE": "staging"}):
+    def test_datasource_from_env(self):
+        with patch.dict(os.environ, {"DATUS_DATASOURCE": "staging"}, clear=False):
             args = _build_parser().parse_args([])
-        assert args.namespace == "staging"
+        assert args.datasource == "staging"
 
     def test_output_dir_from_env(self):
         with patch.dict(os.environ, {"DATUS_OUTPUT_DIR": "/custom/out"}):
@@ -113,6 +113,7 @@ class TestEnsureParentDir:
         target = tmp_path / "file.txt"
         _ensure_parent_dir(target)
         _ensure_parent_dir(target)
+        assert target.parent.is_dir(), "parent dir must still exist after second call"
 
 
 class TestReadPid:
@@ -149,7 +150,9 @@ class TestWriteRemovePidFile:
         assert not pid_file.exists()
 
     def test_remove_does_not_raise_when_missing(self, tmp_path):
-        _remove_pid_file(tmp_path / "nonexistent.pid")
+        missing = tmp_path / "nonexistent.pid"
+        _remove_pid_file(missing)
+        assert not missing.exists(), "pid file should still be absent — nothing was created"
 
 
 class TestIsProcessRunning:
@@ -249,10 +252,21 @@ class TestRedirectStdio:
 
 
 class TestDefaultPaths:
-    def test_returns_pid_and_log_paths(self):
-        pid_file, log_file = _default_paths()
+    def test_returns_pid_and_log_paths(self, tmp_path):
+        with (
+            patch(
+                "datus.configuration.agent_config_loader.get_agent_home",
+                return_value=str(tmp_path),
+            ),
+            patch("datus.utils.path_manager.DatusPathManager") as mock_pm_cls,
+        ):
+            mock_pm = mock_pm_cls.return_value
+            mock_pm.pid_file_path.return_value = tmp_path / "datus-agent-api.pid"
+            mock_pm.logs_dir = tmp_path / "logs"
+            pid_file, log_file = _default_paths()
         assert isinstance(pid_file, Path)
         assert isinstance(log_file, Path)
+        assert log_file.name == "datus-agent-api.log"
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +277,7 @@ class TestDefaultPaths:
 class TestBuildAgentArgs:
     def _make(self, **overrides):
         base = dict(
-            namespace="ns",
+            datasource="ns",
             config="/etc/agent.yml",
             max_steps=20,
             workflow="fixed",
@@ -281,7 +295,7 @@ class TestBuildAgentArgs:
     def test_maps_all_fields(self):
         agent_args = _build_agent_args(
             self._make(
-                namespace="myns",
+                datasource="myns",
                 max_steps=15,
                 load_cp="cp.pkl",
                 debug=True,
@@ -291,7 +305,7 @@ class TestBuildAgentArgs:
                 log_level="DEBUG",
             )
         )
-        assert agent_args.namespace == "myns"
+        assert agent_args.datasource == "myns"
         assert agent_args.max_steps == 15
         assert agent_args.load_cp == "cp.pkl"
         assert agent_args.debug is True
@@ -360,7 +374,7 @@ class TestMainDispatch:
 
         def fake_run_server(args, agent_args):
             captured["host"] = args.host
-            captured["namespace"] = args.namespace
+            captured["datasource"] = args.datasource
             captured["source"] = args.source
             captured["interactive"] = args.interactive
 
@@ -374,7 +388,7 @@ class TestMainDispatch:
                 "argv",
                 [
                     "datus-api",
-                    "--namespace",
+                    "--datasource",
                     "test_main_ns",
                     "--source",
                     "web",
@@ -384,11 +398,11 @@ class TestMainDispatch:
         ):
             main()
 
-        assert os.environ.get("DATUS_NAMESPACE") == "test_main_ns"
+        assert os.environ.get("DATUS_DATASOURCE") == "test_main_ns"
         assert os.environ.get("DATUS_CONFIG") == "/tmp/agent.yml"
         assert captured == {
             "host": "0.0.0.0",
-            "namespace": "test_main_ns",
+            "datasource": "test_main_ns",
             "source": "web",
             "interactive": False,
         }
@@ -406,6 +420,9 @@ class TestRemovePidFileErrorPath:
         pid_file.write_text("1")
         with patch.object(Path, "unlink", side_effect=OSError("denied")):
             _remove_pid_file(pid_file)  # must not raise
+        # unlink was mocked to raise, so the file should still be on disk —
+        # proves the OSError was swallowed, not that unlink was never called.
+        assert pid_file.exists(), "pid file should remain since unlink was blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -498,18 +515,26 @@ class TestRunServer:
         assert mock_run.call_args.kwargs["workers"] == 4
 
     def test_single_worker_creates_app_instance(self):
-        """Default single-worker mode creates an app instance and passes it to uvicorn."""
+        """Default single-worker mode creates an app instance and passes it to uvicorn.Server."""
         args = _server_args()
-        agent_args = argparse.Namespace(namespace="x")
+        agent_args = argparse.Namespace(datasource="x")
         sentinel_app = object()
+        mock_server = patch("datus.api.main.uvicorn.Server")
+        mock_config = patch("datus.api.main.uvicorn.Config")
         with (
             patch("datus.api.service.create_app", return_value=sentinel_app) as mock_create,
-            patch("datus.api.main.uvicorn.run") as mock_run,
+            mock_config as patched_config,
+            mock_server as patched_server,
+            patch("datus.api.main.asyncio.run") as mock_asyncio_run,
         ):
             _run_server(args, agent_args)
         mock_create.assert_called_once_with(agent_args)
-        assert mock_run.call_args.args[0] is sentinel_app
-        assert mock_run.call_args.kwargs["workers"] == 1
+        patched_config.assert_called_once()
+        config_kwargs = patched_config.call_args
+        assert config_kwargs.args[0] is sentinel_app
+        assert config_kwargs.kwargs["workers"] == 1
+        patched_server.assert_called_once_with(patched_config.return_value)
+        mock_asyncio_run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

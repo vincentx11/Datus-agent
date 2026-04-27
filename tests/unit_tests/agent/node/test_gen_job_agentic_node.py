@@ -7,9 +7,13 @@ Unit tests for GenJobAgenticNode.
 
 Tests cover:
 - Node creation in workflow and interactive modes
-- Tools setup (DBFuncTool + execute_ddl + execute_write, no transfer_query_result)
+- Tools setup (DBFuncTool + execute_ddl + execute_write + transfer_query_result
+  + get_migration_capabilities + suggest_table_layout + validate_ddl)
 - Max turns configuration
 - Node type registration and factory creation
+
+Since migration subagent was merged into gen_job, this node now covers both
+single-database ETL and cross-database migration. Tests reflect both paths.
 
 Design principle: NO mock except LLM.
 - Real AgentConfig (from conftest `real_agent_config`)
@@ -36,7 +40,6 @@ from tests.unit_tests.agent.node._builtin_node_test_helpers import (
     check_node_type_constant,
     check_node_type_in_action_types,
     check_standard_db_tools,
-    check_tools_exclude,
     check_tools_include,
 )
 
@@ -48,57 +51,81 @@ from tests.unit_tests.agent.node._builtin_node_test_helpers import (
 class TestGenJobAgenticNodeInit:
     """Tests for GenJobAgenticNode initialization."""
 
-    def test_node_name(self, real_agent_config, mock_llm_create):
+    def test_node_name(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_node_name(GenJobAgenticNode, real_agent_config, "gen_job")
 
-    def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):
+    def test_inherits_agentic_node(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_inherits_agentic_node(GenJobAgenticNode, real_agent_config)
 
-    def test_node_id(self, real_agent_config, mock_llm_create):
+    def test_node_id(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_node_id(GenJobAgenticNode, real_agent_config, "gen_job_node")
 
-    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_ddl(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "execute_ddl")
 
-    def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_execute_write(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_tools_include(GenJobAgenticNode, real_agent_config, "execute_write")
 
-    def test_setup_tools_excludes_transfer_query_result(self, real_agent_config, mock_llm_create):
-        """gen_job is single-database ETL — transfer_query_result belongs to migration subagent."""
+    def test_setup_tools_includes_transfer_query_result(self, real_agent_config, mock_llm_create):  # audit-noqa
+        """gen_job absorbed migration — transfer_query_result is required for cross-DB flows."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_tools_exclude(GenJobAgenticNode, real_agent_config, "transfer_query_result")
+        check_tools_include(GenJobAgenticNode, real_agent_config, "transfer_query_result")
 
-    def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_registers_three_migration_target_wrappers(self, real_agent_config, mock_llm_create):
+        """gen_job absorbed migration — all three Mixin wrappers must be wired
+        as tools so the LLM can read dialect hints, pick layout, and validate
+        DDL end to end on the same turn.
+        """
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        tool_names = {tool.name for tool in node.tools}
+        assert {"get_migration_capabilities", "suggest_table_layout", "validate_ddl"} <= tool_names
+
+    def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_standard_db_tools(GenJobAgenticNode, real_agent_config)
 
-    def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
+    def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_filesystem_tools(GenJobAgenticNode, real_agent_config)
 
-    def test_default_max_turns(self, real_agent_config, mock_llm_create):
+    def test_default_max_turns(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-        check_max_turns(GenJobAgenticNode, real_agent_config, 30)
+        # 40 turns (absorbed from migration subagent) — cross-DB flows need more turns.
+        check_max_turns(GenJobAgenticNode, real_agent_config, 40)
 
-    def test_uses_dynamic_db_func_tool(self, real_agent_config, mock_llm_create):
+    def test_uses_dynamic_db_func_tool(self, real_agent_config, mock_llm_create):  # audit-noqa
         """gen_job should use create_dynamic for multi-connector support."""
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         check_dynamic_db_func_tool(GenJobAgenticNode, real_agent_config)
+
+    def test_tool_category_map_lumps_db_write_helpers_under_db_tools(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` must keep ``execute_write`` / ``execute_ddl`` /
+        ``transfer_query_result`` in ``db_tools`` so profile ASK rules fire."""
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        node = GenJobAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        mapping = node._tool_category_map()
+        db_names = {t.name for t in mapping.get("db_tools", [])}
+        assert "execute_ddl" in db_names
+        assert "execute_write" in db_names
+        assert "transfer_query_result" in db_names
 
 
 # ---------------------------------------------------------------------------
@@ -106,17 +133,18 @@ class TestGenJobAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.nightly
 class TestGenJobExecution:
     """Test execute_stream error paths and basic workflow."""
 
     @pytest.mark.asyncio
-    async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_raises_without_input(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         await check_execute_stream_raises_without_input(GenJobAgenticNode, real_agent_config)
 
     @pytest.mark.asyncio
-    async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_basic_workflow(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         await check_execute_stream_basic_workflow(
@@ -127,7 +155,7 @@ class TestGenJobExecution:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):
+    async def test_execute_stream_error_handling(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
         await check_execute_stream_error_handling(
@@ -146,19 +174,19 @@ class TestGenJobExecution:
 class TestGenJobNodeType:
     """Tests for GenJobAgenticNode type registration."""
 
-    def test_node_type_constant_exists(self):
+    def test_node_type_constant_exists(self):  # audit-noqa
         check_node_type_constant("TYPE_GEN_JOB", "gen_job")
 
-    def test_node_type_in_action_types(self):
+    def test_node_type_in_action_types(self):  # audit-noqa
         check_node_type_in_action_types("TYPE_GEN_JOB")
 
-    def test_node_factory_creates_gen_job(self, real_agent_config, mock_llm_create):
+    def test_node_factory_creates_gen_job(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
         from datus.configuration.node_type import NodeType
 
         check_node_factory(GenJobAgenticNode, NodeType.TYPE_GEN_JOB, real_agent_config)
 
-    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
+    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):  # audit-noqa
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
         from datus.configuration.node_type import NodeType
 

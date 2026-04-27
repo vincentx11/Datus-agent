@@ -23,13 +23,13 @@ class TestBuildAgentArgs:
         from datus.cli.web.chatbot import _build_agent_args
 
         args = argparse.Namespace(
-            namespace="myns",
+            datasource="myns",
             config="conf/agent.yml",
             debug=False,
         )
         result = _build_agent_args(args)
 
-        assert result.namespace == "myns"
+        assert result.datasource == "myns"
         assert result.config == "conf/agent.yml"
         assert result.source == "web"
         assert result.interactive is True
@@ -39,7 +39,7 @@ class TestBuildAgentArgs:
     def test_debug_mode(self):
         from datus.cli.web.chatbot import _build_agent_args
 
-        args = argparse.Namespace(namespace="ns", config=None, debug=True)
+        args = argparse.Namespace(datasource="ns", config=None, debug=True)
         result = _build_agent_args(args)
 
         assert result.log_level == "DEBUG"
@@ -48,7 +48,7 @@ class TestBuildAgentArgs:
         """Fields not present on CLI args should have safe defaults."""
         from datus.cli.web.chatbot import _build_agent_args
 
-        args = argparse.Namespace(namespace="ns")
+        args = argparse.Namespace(datasource="ns")
         result = _build_agent_args(args)
 
         assert result.config is None
@@ -98,7 +98,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -129,7 +129,7 @@ class TestCreateWebApp:
         (dist_dir / "datus-chatbot.css").write_text("/* css */")
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -157,7 +157,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import _CDN_CHATBOT_JS, _CDN_REACT_JS, create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -187,7 +187,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -219,7 +219,7 @@ class TestCreateWebApp:
         (dist_dir / "datus-chatbot.css").write_text("/* css */")
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -248,7 +248,7 @@ class TestCreateWebApp:
         from datus.cli.web.chatbot import create_web_app
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="myhost",
             port=9999,
@@ -278,11 +278,11 @@ class TestCreateWebApp:
 class TestRunWebInterface:
     """Tests for run_web_interface entry point."""
 
-    def test_calls_uvicorn_run(self):
+    def test_calls_uvicorn_server(self):
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config="conf/agent.yml",
             host="localhost",
             port=8501,
@@ -295,29 +295,31 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app") as mock_create,
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
+            patch("datus.cli.web.chatbot.asyncio.run") as mock_asyncio_run,
             patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
             mock_app = MagicMock()
             mock_create.return_value = mock_app
-            mock_uvicorn.run.return_value = None
 
             run_web_interface(args)
 
             mock_create.assert_called_once_with(args)
-            mock_uvicorn.run.assert_called_once_with(
+            mock_uvicorn.Config.assert_called_once_with(
                 mock_app,
                 host="localhost",
                 port=8501,
                 log_level="info",
             )
+            mock_uvicorn.Server.assert_called_once_with(mock_uvicorn.Config.return_value)
+            mock_asyncio_run.assert_called_once()
 
     def test_debug_mode_log_level(self):
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -330,20 +332,20 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app"),
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
+            patch("datus.cli.web.chatbot.asyncio.run"),
             patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
-            mock_uvicorn.run.return_value = None
             run_web_interface(args)
 
-            assert mock_uvicorn.run.call_args[1]["log_level"] == "debug"
+            assert mock_uvicorn.Config.call_args[1]["log_level"] == "debug"
 
     def test_keyboard_interrupt_handled(self):
         from datus.cli.web.chatbot import run_web_interface
 
         args = argparse.Namespace(
-            namespace="test",
+            datasource="test",
             config=None,
             host="localhost",
             port=8501,
@@ -356,13 +358,13 @@ class TestRunWebInterface:
         with (
             patch("datus.cli.web.chatbot.create_web_app"),
             patch("datus.cli.web.chatbot.uvicorn") as mock_uvicorn,
+            patch("datus.cli.web.chatbot.asyncio.run", side_effect=KeyboardInterrupt),
             patch("datus.cli.web.chatbot._schedule_browser_open"),
             patch("datus.cli.web.config_manager.get_home_from_config", return_value="~/.datus"),
             patch("datus.utils.path_manager.set_current_path_manager"),
         ):
-            mock_uvicorn.run.side_effect = KeyboardInterrupt
-            # Should not raise
             run_web_interface(args)
+            mock_uvicorn.Config.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

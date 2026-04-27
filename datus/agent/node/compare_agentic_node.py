@@ -8,7 +8,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.compare_node_models import CompareInput, CompareResult
-from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.tools.func_tool import DBFuncTool
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
@@ -30,6 +29,7 @@ class CompareAgenticNode(AgenticNode):
         self,
         node_name: str = "compare",
         agent_config: Optional[AgentConfig] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize CompareAgenticNode.
@@ -37,6 +37,7 @@ class CompareAgenticNode(AgenticNode):
         Args:
             node_name: Name of the node configuration in agent.yml (default: "compare")
             agent_config: Agent configuration
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
         """
         self.configured_node_name = node_name
 
@@ -54,6 +55,7 @@ class CompareAgenticNode(AgenticNode):
             agent_config=agent_config,
             tools=[],
             mcp_servers={},
+            is_subagent=is_subagent,
         )
 
         # Get max_turns from agentic_nodes configuration, default to 30
@@ -84,16 +86,7 @@ class CompareAgenticNode(AgenticNode):
             return
 
         try:
-            namespace = self.agent_config.current_database
-
-            db_manager = db_manager_instance(self.agent_config.namespaces)
-            database = getattr(self.agent_config, "current_database", "")
-            try:
-                connector = db_manager.get_conn(namespace, database)
-            except Exception:
-                connector = db_manager.first_conn(namespace)
-
-            self.db_func_tool = DBFuncTool(connector, agent_config=self.agent_config)
+            self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
 
             self.tools = self.db_func_tool.available_tools()
             logger.debug(

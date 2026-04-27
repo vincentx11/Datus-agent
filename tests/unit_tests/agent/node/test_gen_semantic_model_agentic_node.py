@@ -24,7 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -133,6 +133,7 @@ class TestGenSemanticModelAgenticNodeInit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.nightly
 class TestGenSemanticModelAgenticNodeExecution:
     """Tests for GenSemanticModelAgenticNode streaming execution."""
 
@@ -309,9 +310,9 @@ class TestGenSemanticModelAgenticNodeExecution:
 
         # In interactive mode, the final result should have tokens_used > 0
         last_output = actions[-1].output
-        assert last_output is not None
-        if isinstance(last_output, dict) and "tokens_used" in last_output:
-            assert last_output["tokens_used"] > 0
+        assert isinstance(last_output, dict)
+        assert "tokens_used" in last_output
+        assert last_output["tokens_used"] > 0
 
     @pytest.mark.asyncio
     async def test_semantic_model_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -520,6 +521,39 @@ class TestExecuteStreamGenSemanticModelError:
         assert last.action_type == "error"
 
     @pytest.mark.asyncio
+    async def test_final_semantic_files_without_publish_fails(self, real_agent_config, mock_llm_create):
+        """A final JSON file list is not enough; the node must observe KB publish evidence."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_files": ["orders.yml"],
+                            "output": "Generated semantic model.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenSemanticModelAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate semantic model")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
+
+    @pytest.mark.asyncio
     async def test_execute_stream_with_catalog_context(self, real_agent_config, mock_llm_create):
         """Test execute_stream with catalog enriches the enhanced message."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -567,20 +601,21 @@ class TestSaveToDb:
         node = _make_node(real_agent_config, mock_llm_create)
         node.semantic_model_dir = str(tmp_path)
 
-        # Should not raise even when file doesn't exist
-        node._save_to_db("nonexistent_model.yml")
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
+        ) as sync_mock:
+            assert node._save_to_db("nonexistent_model.yml") is None
+        sync_mock.assert_not_called()
 
     def test_save_to_db_skips_empty_filename(self, real_agent_config, mock_llm_create, tmp_path):
         node = _make_node(real_agent_config, mock_llm_create)
         node.semantic_model_dir = str(tmp_path)
 
-        # Should not raise with empty filename
-        # Note: empty string would cause os.path.join to return tmp_path/""
-        # which might exist as tmp_path itself - just test it doesn't crash
-        try:
-            node._save_to_db("")
-        except Exception:
-            pass  # Any exception is acceptable for empty filename
+        with patch(
+            "datus.agent.node.gen_semantic_model_agentic_node.GenerationHooks._sync_semantic_to_db"
+        ) as sync_mock:
+            assert node._save_to_db("") is None
+        sync_mock.assert_not_called()
 
     def test_save_to_db_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):
         """A fabricated absolute path outside the semantic-model sandbox must
@@ -597,9 +632,9 @@ class TestSaveToDb:
             node._save_to_db(str(outside))
             sync_mock.assert_not_called()
 
-    def test_save_to_db_rejects_cross_namespace_prefix(self, real_agent_config, mock_llm_create):
-        """LLM-emitted cross-namespace prefix must be refused so a node can't
-        overwrite another namespace's KB via a fabricated final JSON."""
+    def test_save_to_db_rejects_cross_datasource_prefix(self, real_agent_config, mock_llm_create):
+        """LLM-emitted cross-datasource prefix must be refused so a node can't
+        overwrite another datasource's KB via a fabricated final JSON."""
         from unittest.mock import patch
 
         node = _make_node(real_agent_config, mock_llm_create)
@@ -609,17 +644,15 @@ class TestSaveToDb:
 
 
 class TestGenSemanticModelFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_kb_home(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
+        from pathlib import Path
+
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
         node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        expected = str(real_agent_config.path_manager.knowledge_base_home)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        ns = real_agent_config.current_namespace
-        assert node.filesystem_func_tool._path_normalizer("orders.yml", None) == f"semantic_models/{ns}/orders.yml"
+        assert node.filesystem_func_tool.root_path == expected

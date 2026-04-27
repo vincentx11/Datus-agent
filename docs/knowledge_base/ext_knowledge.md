@@ -27,14 +27,14 @@ Bootstrap-KB External Knowledge is a component that processes, stores, and index
 ```bash
 # From CSV (direct import)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --datasource <your_datasource> \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
 
 # From success story (AI generation)
 datus-agent bootstrap-kb \
-    --database <your_namespace> \
+    --datasource <your_datasource> \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite
@@ -44,7 +44,7 @@ datus-agent bootstrap-kb \
 
 | Parameter              | Required | Description                                                       | Example                           |
 | ---------------------- | -------- | ----------------------------------------------------------------- | --------------------------------- |
-| `--database`          | ✅       | Database namespace                                                | `analytics_db`                    |
+| `--datasource`          | ✅       | Database datasource                                                | `analytics_db`                    |
 | `--components`         | ✅       | Components to initialize                                          | `ext_knowledge`                   |
 | `--ext_knowledge`      | ⚠️       | Path to knowledge CSV file (required if no `--success_story`)     | `/data/knowledge.csv`             |
 | `--success_story`      | ⚠️       | Path to success story CSV file (required if no `--ext_knowledge`) | `/data/success_story.csv`         |
@@ -121,7 +121,7 @@ Clears existing knowledge and loads fresh data:
 
 ```bash
 datus-agent bootstrap-kb \
-    --database analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --ext_knowledge /path/to/knowledge.csv \
     --kb_update_strategy overwrite
@@ -133,7 +133,7 @@ Adds new knowledge entries while preserving existing ones. Entries with the same
 
 ```bash
 datus-agent bootstrap-kb \
-    --database analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy incremental
@@ -147,7 +147,7 @@ Subject tree provides a hierarchical taxonomy for organizing knowledge entries.
 
 ```bash
 datus-agent bootstrap-kb \
-    --database analytics_db \
+    --datasource analytics_db \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -239,7 +239,7 @@ question,sql,subject_path
 
 ```bash
 datus-agent bootstrap-kb \
-    --database california_schools \
+    --datasource california_schools \
     --components ext_knowledge \
     --success_story /path/to/success_story.csv \
     --kb_update_strategy overwrite \
@@ -289,15 +289,15 @@ created_at: "2025-01-15T10:00:00Z"
 
 #### Step 5: Verify the Result
 
-Start the cli, first use `@subject` to browse the generated knowledge entries, then test with the original question:
+Start the cli, first use `/subject` to browse the generated knowledge entries, then test with the original question:
 
 ```bash
-datus-agent --database california_schools
+datus-cli --datasource california_schools
 ```
 
 ```
 # Browse the knowledge tree and entries
-Datus> @subject
+Datus> /subject
 # Should show Education/SAT/Administrators and Education/SAT/Scores with the generated knowledge entries
 ```
 
@@ -319,7 +319,7 @@ Best for ad-hoc knowledge creation, exploring and debugging, or refining individ
 #### Step 1: Start the REPL
 
 ```bash
-datus-agent --database california_schools
+datus-cli --datasource california_schools
 ```
 
 #### Step 2: Invoke the Subagent
@@ -362,5 +362,5 @@ Approve to save the entry to the Knowledge Base. You can also decline and edit t
 ### Tips
 
 1. **Emphasize knowledge usage when verifying**: When testing in the CLI, add "Please search the knowledge base first" to your question to ensure the agent uses stored knowledge rather than relying solely on its own reasoning.
-2. **Pre-build subject tree**: Create the subject tree structure in advance via `@subject`. Subsequent runs without `--subject_tree` will automatically reuse existing categories (learning mode), giving you control over taxonomy without requiring `subject_path` in every CSV row.
+2. **Pre-build subject tree**: Create the subject tree structure in advance via `/subject`. Subsequent runs without `--subject_tree` will automatically reuse existing categories (learning mode), giving you control over taxonomy without requiring `subject_path` in every CSV row.
 3. **Iterate for stability**: Run bootstrap multiple times with `incremental` mode. Each run may produce improved knowledge entries, and the upsert mechanism ensures existing entries are updated with better content.

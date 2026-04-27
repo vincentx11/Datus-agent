@@ -1,10 +1,18 @@
 import shutil
 import unicodedata
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
+from datus.cli.cli_styles import (
+    CLR_CURRENT,
+    CLR_CURSOR,
+    PROMPT_ONLY_STYLE,
+    SYM_ARROW,
+    print_error,
+    print_warning,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -12,17 +20,114 @@ logger = get_logger(__name__)
 
 _FREE_TEXT_SENTINEL = "__free_text__"
 
+BACK_SENTINEL = "__back__"
+
+
+def prompt_with_back(label: str, default: str = "", password: bool = False) -> str:
+    """Prompt with ESC to go back. Uses prompt_toolkit for key handling.
+
+    Returns :data:`BACK_SENTINEL` if ESC pressed, otherwise the entered value.
+    """
+
+    def _inner():
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.key_binding import KeyBindings
+
+        kb = KeyBindings()
+
+        @kb.add("escape")
+        def _esc(event):
+            event.app.exit(result=BACK_SENTINEL)
+
+        session = PromptSession(key_bindings=kb)
+        suffix = f" ({default})" if default else ""
+        result = session.prompt(f"{label}{suffix}: ", is_password=password)
+        if result == BACK_SENTINEL:
+            return BACK_SENTINEL
+        return result.strip() if result.strip() else default
+
+    try:
+        return _run_prompt_in_terminal(_inner)
+    except (KeyboardInterrupt, EOFError):
+        return BACK_SENTINEL
+
+
+def _run_prompt_in_terminal(fn: Any) -> Any:
+    """Run a blocking prompt function, suspending the outer TUI if active.
+
+    Unlike :func:`_run_sub_application` which wraps a prompt_toolkit
+    ``Application``, this helper wraps an arbitrary callable (typically
+    ``prompt_toolkit.prompt()``) that internally creates its own
+    Application.  It uses the same ``in_terminal()`` mechanism to
+    release stdin from the outer TUI while the callable runs.
+    """
+    import asyncio
+
+    from prompt_toolkit.application import get_app_or_none
+
+    pt_app = get_app_or_none()
+    pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+    if pt_loop is None or not pt_loop.is_running():
+        return fn()
+
+    from prompt_toolkit.application.run_in_terminal import in_terminal
+
+    async def _scheduled():
+        async with in_terminal():
+            return await asyncio.get_running_loop().run_in_executor(None, fn)
+
+    future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+    return future.result()
+
+
+def _run_sub_application(app: Any) -> Any:
+    """Run a prompt_toolkit Application, suspending the outer TUI if active.
+
+    When the Datus REPL is running in TUI mode, a persistent
+    :class:`~prompt_toolkit.application.Application` owns stdin on the
+    main thread.  Spawning a nested Application from the worker thread
+    without releasing stdin causes freezes and display corruption.
+
+    This helper detects the outer Application via
+    :func:`get_app_or_none`, schedules the nested run inside
+    ``in_terminal()`` on the main loop (which temporarily detaches the
+    outer app's input reader), and blocks the worker until it finishes.
+
+    In non-TUI mode (no outer Application running) the nested app is
+    executed directly with ``app.run()``.
+    """
+    import asyncio
+
+    from prompt_toolkit.application import get_app_or_none
+
+    pt_app = get_app_or_none()
+    pt_loop = getattr(pt_app, "loop", None) if pt_app is not None else None
+    if pt_loop is None or not pt_loop.is_running():
+        return app.run()
+
+    from prompt_toolkit.application.run_in_terminal import in_terminal
+
+    async def _scheduled():
+        async with in_terminal():
+            return await app.run_async()
+
+    future = asyncio.run_coroutine_threadsafe(_scheduled(), pt_loop)
+    return future.result()
+
 
 def select_choice(
     console: Console,
     choices: Dict[str, str],
     default: str = "",
     allow_free_text: bool = False,
+    current: str = "",
 ) -> str:
     """Interactive choice selector with arrow-key navigation.
 
     Uses prompt_toolkit Application for proper terminal handling.
     Up/Down arrows to navigate, Enter to confirm, or press shortcut key directly.
+    When the list exceeds the terminal height, the view scrolls with the cursor
+    and PageUp/PageDown jumps a screenful at a time.
     When ``allow_free_text`` is True, a "Type custom answer..." entry is appended.
     Choosing it, or pressing ``/``, opens the standard multiline input prompt so
     paste works reliably.
@@ -33,6 +138,8 @@ def select_choice(
                  e.g. {"y": "Allow (once)", "a": "Always allow (session)", "n": "Deny"}
         default: Default choice key (pre-selected on start)
         allow_free_text: When True, append a free-text option and allow ``/`` shortcut.
+        current: Key of the currently active value. Highlighted with ``CLR_CURRENT``
+                 and suffixed with ``(current)``.
 
     Returns:
         Selected choice key string, or the user's free-text input.
@@ -49,17 +156,49 @@ def select_choice(
             display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
 
         keys = list(display_choices.keys())
+        total = len(keys)
         selected = [keys.index(default) if default in keys else 0]
+
+        # Scroll window: reserve 3 lines for scroll header + hint + safety margin.
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        max_visible = max(3, term_height - 3)
+        offset = [0]
+        if selected[0] >= max_visible:
+            offset[0] = min(max(0, selected[0] - max_visible // 2), max(0, total - max_visible))
+
+        def _ensure_visible() -> None:
+            if selected[0] < offset[0]:
+                offset[0] = selected[0]
+            elif selected[0] >= offset[0] + max_visible:
+                offset[0] = selected[0] - max_visible + 1
 
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
-            selected[0] = (selected[0] - 1) % len(keys)
+            selected[0] = (selected[0] - 1) % total
+            if selected[0] == total - 1:
+                offset[0] = max(0, total - max_visible)
+            else:
+                _ensure_visible()
 
         @kb.add("down")
         def _move_down(event):
-            selected[0] = (selected[0] + 1) % len(keys)
+            selected[0] = (selected[0] + 1) % total
+            if selected[0] == 0:
+                offset[0] = 0
+            else:
+                _ensure_visible()
+
+        @kb.add("pageup")
+        def _page_up(event):
+            selected[0] = max(0, selected[0] - max_visible)
+            _ensure_visible()
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            selected[0] = min(total - 1, selected[0] + max_visible)
+            _ensure_visible()
 
         @kb.add("enter")
         def _confirm(event):
@@ -87,27 +226,42 @@ def select_choice(
             def _free_text_shortcut(event):
                 event.app.exit(result=_FREE_TEXT_SENTINEL)
 
+        items = list(display_choices.items())
+
         def _get_formatted_text():
             lines = []
-            for i, (key, display) in enumerate(display_choices.items()):
+            visible_end = min(offset[0] + max_visible, total)
+            if total > max_visible:
+                lines.append(("ansiyellow", f"  ({offset[0] + 1}-{visible_end} of {total})\n"))
+            for i in range(offset[0], visible_end):
+                key, display = items[i]
                 is_sel = i == selected[0]
+                is_current = key == current and key != _FREE_TEXT_SENTINEL
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
+                elif key == display:
+                    suffix = " (current)" if is_current else ""
+                    label = f"  {display}{suffix}"
                 else:
-                    label = f"  [{key}] {display}"
+                    suffix = " (current)" if is_current else ""
+                    label = f"  [{key}] {display}{suffix}"
                 if is_sel:
-                    lines.append(("ansicyan bold", f"  \u2192{label}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW}{label}\n"))
+                elif is_current:
+                    lines.append((CLR_CURRENT, f"    {label}\n"))
                 else:
                     lines.append(("", f"    {label}\n"))
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )
 
-        result = app.run()
+        result = _run_sub_application(app)
         if allow_free_text and result == _FREE_TEXT_SENTINEL:
             console.print()
             console.print("[dim](Paste supported. Enter to submit)[/]")
@@ -115,11 +269,11 @@ def select_choice(
         return result
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return default
     except Exception as e:
         logger.error(f"Interactive select error: {e}")
-        console.print(f"[bold red]Selection error:[/] {str(e)}")
+        print_error(console, f"Selection error: {str(e)}")
         return default
 
 
@@ -159,18 +313,48 @@ def select_multi_choice(
             display_choices[_FREE_TEXT_SENTINEL] = "Type custom answer..."
 
         keys = list(display_choices.keys())
+        total = len(keys)
         cursor = [0]
         checked = {k for k in (default_selected or []) if k in keys and k != _FREE_TEXT_SENTINEL}
+
+        # Scroll window: reserve 4 lines for scroll header + footer hint + safety.
+        term_height = shutil.get_terminal_size((120, 40)).lines
+        max_visible = max(3, term_height - 4)
+        offset = [0]
+
+        def _ensure_visible() -> None:
+            if cursor[0] < offset[0]:
+                offset[0] = cursor[0]
+            elif cursor[0] >= offset[0] + max_visible:
+                offset[0] = cursor[0] - max_visible + 1
 
         kb = KeyBindings()
 
         @kb.add("up")
         def _move_up(event):
-            cursor[0] = (cursor[0] - 1) % len(keys)
+            cursor[0] = (cursor[0] - 1) % total
+            if cursor[0] == total - 1:
+                offset[0] = max(0, total - max_visible)
+            else:
+                _ensure_visible()
 
         @kb.add("down")
         def _move_down(event):
-            cursor[0] = (cursor[0] + 1) % len(keys)
+            cursor[0] = (cursor[0] + 1) % total
+            if cursor[0] == 0:
+                offset[0] = 0
+            else:
+                _ensure_visible()
+
+        @kb.add("pageup")
+        def _page_up(event):
+            cursor[0] = max(0, cursor[0] - max_visible)
+            _ensure_visible()
+
+        @kb.add("pagedown")
+        def _page_down(event):
+            cursor[0] = min(total - 1, cursor[0] + max_visible)
+            _ensure_visible()
 
         @kb.add("space")
         def _toggle(event):
@@ -204,33 +388,37 @@ def select_multi_choice(
             def _free_text_shortcut(event):
                 event.app.exit(result=[_FREE_TEXT_SENTINEL])
 
+        items = list(display_choices.items())
+
         def _get_formatted_text():
             lines = []
-            for i, (key, display) in enumerate(display_choices.items()):
+            visible_end = min(offset[0] + max_visible, total)
+            if total > max_visible:
+                lines.append(("ansiyellow", f"  ({offset[0] + 1}-{visible_end} of {total})\n"))
+            for i in range(offset[0], visible_end):
+                key, display = items[i]
                 is_cur = i == cursor[0]
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
-                    if is_cur:
-                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
-                    else:
-                        lines.append(("", f"    {label}\n"))
                 else:
                     mark = "\u2713" if key in checked else " "
                     label = f"  [{mark}] {display}"
-                    if is_cur:
-                        lines.append(("ansicyan bold", f"  \u2192{label}\n"))
-                    else:
-                        lines.append(("", f"    {label}\n"))
+                if is_cur:
+                    lines.append((CLR_CURSOR, f"    {label}\n"))
+                else:
+                    lines.append(("", f"    {label}\n"))
             lines.append(("ansibrightblack", "  [Space] toggle  [a] all  [Enter] confirm\n"))
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )
 
-        result = app.run()
+        result = _run_sub_application(app)
 
         if allow_free_text and result == [_FREE_TEXT_SENTINEL]:
             console.print()
@@ -241,11 +429,11 @@ def select_multi_choice(
         return result
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return []
     except Exception as e:
         logger.error(f"Interactive multi-select error: {e}")
-        console.print(f"[bold red]Multi-select error:[/] {str(e)}")
+        print_error(console, f"Multi-select error: {str(e)}")
         return []
 
 
@@ -372,8 +560,8 @@ def select_list(
 
                 is_sel = i == selected[0]
                 if is_sel:
-                    lines.append(("ansicyan bold", f"  \u2192 {primary}\n"))
-                    lines.append(("ansicyan", f"      {secondary}\n"))
+                    lines.append((CLR_CURSOR, f"  {SYM_ARROW} {primary}\n"))
+                    lines.append((CLR_CURSOR, f"      {secondary}\n"))
                 else:
                     lines.append(("", f"    {primary}\n"))
                     lines.append(("ansibrightblack", f"      {secondary}\n"))
@@ -383,19 +571,21 @@ def select_list(
             return lines
 
         app = Application(
-            layout=Layout(Window(FormattedTextControl(_get_formatted_text))),
+            layout=Layout(
+                Window(FormattedTextControl(_get_formatted_text, show_cursor=False), always_hide_cursor=True)
+            ),
             key_bindings=kb,
             full_screen=False,
         )
 
-        return app.run()
+        return _run_sub_application(app)
 
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Selection cancelled.[/]")
+        print_warning(console, "\nSelection cancelled.")
         return None
     except Exception as e:
         logger.error(f"Interactive list error: {e}")
-        console.print(f"[bold red]List selection error:[/] {str(e)}")
+        print_error(console, f"List selection error: {str(e)}")
         return None
 
 
@@ -407,6 +597,7 @@ def prompt_input(
     multiline: bool = False,
     style=None,
     allow_interrupt: bool = False,
+    is_password: bool = False,
 ):
     """
     Unified input method using prompt_toolkit to avoid conflicts with rich.Prompt.ask().
@@ -416,6 +607,8 @@ def prompt_input(
         default: Default value if user presses Enter without input
         choices: List of valid choices (validates input)
         multiline: Whether to allow multiline input
+        is_password: Mask input with ``*`` (e.g. API keys). Mutually exclusive
+            with ``multiline`` (prompt_toolkit ignores the mask in multiline).
 
     Returns:
         User input string or default value
@@ -452,11 +645,7 @@ def prompt_input(
         from prompt_toolkit.history import InMemoryHistory
 
         if not style:
-            style = Style.from_dict(
-                {
-                    "prompt": "ansigreen bold",
-                }
-            )
+            style = Style.from_dict(PROMPT_ONLY_STYLE)
 
         # When multiline, override Enter to submit (newlines only via paste).
         key_bindings = None
@@ -469,15 +658,19 @@ def prompt_input(
             def _submit(event):
                 event.current_buffer.validate_and_handle()
 
-        result = prompt(
-            HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
-            default=default,
-            validator=validator,
-            multiline=multiline,
-            key_bindings=key_bindings,
-            history=InMemoryHistory(),  # Separate history for sub-prompts
-            style=style,  # Use same style as main session
-        )
+        def _do_prompt():
+            return prompt(
+                HTML(f"<ansigreen><b>{prompt_text}</b></ansigreen>"),
+                default=default,
+                validator=validator,
+                multiline=multiline,
+                key_bindings=key_bindings,
+                history=InMemoryHistory(),
+                style=style,
+                is_password=is_password and not multiline,
+            )
+
+        result = _run_prompt_in_terminal(_do_prompt)
 
         return result if multiline else result.strip()
 
@@ -485,9 +678,25 @@ def prompt_input(
         if allow_interrupt:
             raise
         # Handle Ctrl+C or Ctrl+D gracefully
-        console.print("\n[yellow]Input cancelled[/]")
+        print_warning(console, "\nInput cancelled")
         return default
     except Exception as e:
         logger.error(f"Input prompt error: {e}")
-        console.print(f"[bold red]Input error:[/] {str(e)}")
+        print_error(console, f"Input error: {str(e)}")
         return default
+
+
+def confirm_prompt(console: Console, message: str, default: bool = False) -> bool:
+    """Yes/No prompt built on :func:`select_choice` — TUI worker-thread safe.
+
+    Replaces ``rich.prompt.Confirm.ask`` for callers that run inside the
+    :class:`~datus.cli.tui.app.DatusApp` worker thread, where the rich
+    prompt competes with prompt_toolkit's raw-mode stdin and swallows
+    keys. ``y``/``n`` shortcuts also work via ``select_choice``'s
+    single-character direct-select binding.
+    """
+    console.print(f"[bold]{message}[/bold]")
+    choices = {"y": "Yes", "n": "No"}
+    default_key = "y" if default else "n"
+    result = select_choice(console, choices, default=default_key)
+    return result == "y"

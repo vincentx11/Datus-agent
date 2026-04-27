@@ -22,8 +22,11 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from datus.cli._cli_utils import select_choice
+from datus.cli.cli_styles import print_error
 from datus.cli.init_util import detect_db_connectivity
+from datus.cli.provider_auth_flows import configure_claude_subscription, configure_codex_oauth
 from datus.configuration.agent_config import AgentConfig
+from datus.configuration.project_config import ProjectOverride, ProjectTarget, save_project_override
 from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
@@ -37,7 +40,7 @@ class InteractiveInit:
 
     def __init__(self, user_home: Optional[str] = None):
         self.workspace_path = ""
-        self.namespace_name = ""
+        self.datasource_name = ""
         self.user_home = user_home if user_home else Path.home()
         self.console = Console(log_path=False)
 
@@ -49,11 +52,17 @@ class InteractiveInit:
         self.template_dir = path_manager.template_dir
         self.sample_dir = path_manager.sample_dir
         self.benchmark_dir = path_manager.benchmark_dir
+        # ``agent.providers`` holds per-provider credentials (api_key, base_url,
+        # auth_type). ``agent.target`` is intentionally absent — the active
+        # provider+model selection is persisted per-project to
+        # ``{cwd}/.datus/config.yml`` so each project can pin its own model
+        # without cross-project bleed. ``agent.models`` is reserved for custom
+        # / self-hosted model entries the user adds later; the init wizard no
+        # longer writes to it.
         self.config = {
             "agent": {
-                "target": "",
-                "models": {},
-                "namespace": {},
+                "providers": {},
+                "services": {"datasources": {}},
                 "storage": {
                     "workspace_root": "~/.datus/workspace",
                     "embedding_device_type": "cpu",
@@ -64,13 +73,20 @@ class InteractiveInit:
                 },
             }
         }
+        # Staged project-level target; written to ``./.datus/config.yml`` at
+        # the end of ``_save_configuration`` so both files update atomically.
+        self._pending_target: Optional[ProjectTarget] = None
+        # Probe config of the last tested provider, used by ``_test_llm_connectivity``.
+        self._pending_probe: Optional[dict] = None
 
     def _init_dirs(self):
         from datus.utils.path_manager import get_path_manager
 
         # Entry-point exemption: see __init__ above — no AgentConfig exists yet during init.
+        # Skip project-scoped ``sessions/{project_name}/`` — it is created lazily
+        # at session runtime; bootstrapping here has no project_name to use.
         path_manager = get_path_manager()
-        path_manager.ensure_dirs("conf", "data", "logs", "sessions", "template", "sample")
+        path_manager.ensure_dirs("conf", "data", "logs", "template", "sample")
 
     def run(self) -> int:
         """Main entry point for the interactive initialization."""
@@ -123,8 +139,8 @@ class InteractiveInit:
                 if not Confirm.ask("Re-enter LLM configuration?", default=True):
                     return 1
 
-            # Step 2: Configure Namespace
-            while not self._configure_namespace():
+            # Step 2: Configure Datasource
+            while not self._configure_datasource():
                 if not Confirm.ask("Re-enter database configuration?", default=True):
                     return 1
 
@@ -170,12 +186,23 @@ class InteractiveInit:
             return {"providers": {}, "model_overrides": {}}
 
     def _configure_llm(self) -> bool:
-        """Step 1: Configure LLM provider and test connectivity."""
+        """Step 1: Pick a provider, acquire credentials, and select a model.
+
+        Result shape (written to ``self.config``):
+
+          - ``agent.providers.<provider>`` — credentials block:
+            ``{api_key, base_url, auth_type}``
+          - ``self._pending_target`` — ``ProjectTarget(provider, model)``,
+            flushed to ``{cwd}/.datus/config.yml`` in ``_save_configuration``.
+
+        ``agent.target`` and ``agent.models`` are deliberately untouched; the
+        init wizard no longer produces per-model entries. Users who need
+        custom / self-hosted endpoints hand-edit ``agent.models`` after init.
+        """
         self.console.print("[bold yellow][1/5] Configure LLM[/bold yellow]")
 
         catalog = self._load_provider_catalog()
         providers = catalog.get("providers", {})
-        model_param_overrides = catalog.get("model_overrides", {})
 
         if not providers:
             self.console.print("❌ No providers found in conf/providers.yml")
@@ -188,26 +215,28 @@ class InteractiveInit:
             default="openai",
         )
 
-        # OAuth flow for Codex provider
-        if providers[provider].get("auth_type") == "oauth":
-            return self._configure_codex_oauth(provider, providers[provider])
+        provider_info = providers.get(provider, {})
+        auth_type = provider_info.get("auth_type", "api_key")
 
-        # Subscription flow for Claude subscription
-        if providers[provider].get("auth_type") == "subscription":
-            return self._configure_claude_subscription(provider, providers[provider])
+        if auth_type == "oauth":
+            return self._finalize_provider(
+                provider, provider_info, configure_codex_oauth(self.console, provider, provider_info)
+            )
+        if auth_type == "subscription":
+            return self._finalize_provider(
+                provider, provider_info, configure_claude_subscription(self.console, provider, provider_info)
+            )
+        return self._configure_api_key_provider(provider, provider_info)
 
-        # API key input
+    def _configure_api_key_provider(self, provider: str, provider_info: dict) -> bool:
+        """Prompt for API key + base URL, test connectivity, stage credentials."""
         api_key = getpass("- Enter your API key: ")
         if not api_key.strip():
             self.console.print("❌ API key cannot be empty")
             return False
 
-        provider_info = providers[provider]
+        base_url = Prompt.ask("- Enter your base URL", default=provider_info.get("base_url", ""))
 
-        # Base URL (with default)
-        base_url = Prompt.ask("- Enter your base URL", default=provider_info["base_url"])
-
-        # Model name selection (arrow-key with free-text custom input)
         models = provider_info.get("models", [])
         if models:
             self.console.print("- Select your model:")
@@ -220,36 +249,66 @@ class InteractiveInit:
         else:
             model_name = Prompt.ask("- Enter your model name", default=provider_info.get("default_model", "")).strip()
 
-        # Store configuration
-        self.config["agent"]["target"] = provider
-        model_config_entry = {
-            "type": provider_info["type"],
+        probe = {
+            "type": provider_info.get("type", provider),
             "base_url": base_url,
             "api_key": api_key,
             "model": model_name,
+            "auth_type": "api_key",
         }
-        if model_name in model_param_overrides:
-            model_config_entry.update(model_param_overrides[model_name])
-        self.config["agent"]["models"][provider] = model_config_entry
-
-        # Test LLM connectivity
+        self._pending_probe = probe
         self.console.print("→ Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity()
-        if success:
-            self.console.print(" ✅ LLM model test successful\n")
-            return True
-        else:
-            self.console.print(f"❌ LLM connectivity test failed: {error_msg}\n")
+        ok, err = self._test_llm_connectivity()
+        if not ok:
+            self.console.print(f"❌ LLM connectivity test failed: {err}\n")
             return False
 
-    def _configure_namespace(self) -> bool:
-        """Step 2: Configure namespace and database."""
-        self.console.print("[bold yellow][2/5] Configure Namespace[/bold yellow]")
+        self.console.print(" ✅ LLM model test successful\n")
+        self.config["agent"]["providers"][provider] = {
+            "api_key": api_key,
+            "base_url": base_url,
+            "auth_type": "api_key",
+        }
+        self._pending_target = ProjectTarget(provider=provider, model=model_name)
+        return True
 
-        # Namespace name
-        self.namespace_name = Prompt.ask("- Namespace name")
-        if not self.namespace_name.strip():
-            self.console.print("❌ Namespace name cannot be empty")
+    def _finalize_provider(self, provider: str, provider_info: dict, result: Optional[dict]) -> bool:
+        """Persist credentials + target staged by the subscription / oauth flows.
+
+        Returns ``False`` when the helper returned ``None`` so the caller can
+        re-prompt; ``True`` otherwise.
+        """
+        if not result:
+            return False
+        self._pending_probe = {
+            "type": result.get("type", provider_info.get("type", provider)),
+            "base_url": result.get("base_url", provider_info.get("base_url", "")),
+            "api_key": result.get("api_key", ""),
+            "model": result["model"],
+            "auth_type": result.get("auth_type", "api_key"),
+        }
+        # Subscription / OAuth helpers already probe connectivity on their
+        # own; an extra generate() call here would double-bill the user.
+        self.config["agent"]["providers"][provider] = {
+            k: v
+            for k, v in {
+                "api_key": result.get("api_key") or None,
+                "base_url": result.get("base_url") or None,
+                "auth_type": result.get("auth_type", "api_key"),
+            }.items()
+            if v is not None
+        }
+        self._pending_target = ProjectTarget(provider=provider, model=result["model"])
+        return True
+
+    def _configure_datasource(self) -> bool:
+        """Step 2: Configure datasource and database."""
+        self.console.print("[bold yellow][2/5] Configure Datasource[/bold yellow]")
+
+        # Datasource name
+        self.datasource_name = Prompt.ask("- Datasource name").strip()
+        if not self.datasource_name:
+            self.console.print("❌ Datasource name cannot be empty")
             return False
 
         # Get available adapters dynamically
@@ -278,7 +337,7 @@ class InteractiveInit:
         # Collect configuration based on adapter's config schema
         config_data = {
             "type": db_type,
-            "name": self.namespace_name,
+            "name": self.datasource_name,
         }
 
         # If adapter provides config schema, use it to prompt for fields
@@ -344,20 +403,20 @@ class InteractiveInit:
             if value != "" and value is not None:
                 config_data[field_name] = value
 
-        self.config["agent"]["namespace"][self.namespace_name] = config_data
+        self.config["agent"]["services"]["datasources"][self.datasource_name] = config_data
         # Test database connectivity
         self.console.print("→ Testing database connectivity...")
         success, error_msg = detect_db_connectivity(
-            self.namespace_name, self.config["agent"]["namespace"][self.namespace_name]
+            self.datasource_name, self.config["agent"]["services"]["datasources"][self.datasource_name]
         )
         if success:
             self.console.print(" ✅ Database connection test successful\n")
             return True
         else:
             self.console.print(f" ❌ Database connectivity test failed: {error_msg}\n")
-            # Remove failed database configuration
-            if self.namespace_name in self.config["agent"]["namespace"]:
-                del self.config["agent"]["namespace"][self.namespace_name]
+            # Remove failed datasource configuration
+            if self.datasource_name in self.config["agent"]["services"]["datasources"]:
+                del self.config["agent"]["services"]["datasources"][self.datasource_name]
             return False
 
     def _configure_workspace(self) -> bool:
@@ -386,26 +445,39 @@ class InteractiveInit:
 
         # Initialize metadata knowledge base
         if Confirm.ask("- Initialize vector DB for metadata?", default=False):
-            init_metadata_and_log_result(self.namespace_name, config_path, self.console)
+            init_metadata_and_log_result(self.datasource_name, config_path, self.console)
 
         # Initialize reference SQL
         if Confirm.ask("- Initialize reference SQL from workspace?", default=False):
             default_sql_dir = str(Path(self.workspace_path) / "reference_sql")
             sql_dir = Prompt.ask("- Enter SQL directory path to scan", default=default_sql_dir)
             overwrite_sql_and_log_result(
-                namespace_name=self.namespace_name, sql_dir=sql_dir, config_path=config_path, console=self.console
+                datasource_name=self.datasource_name, sql_dir=sql_dir, config_path=config_path, console=self.console
             )
 
         self.console.print()
 
     def _save_configuration(self) -> bool:
-        """Save configuration to file."""
+        """Persist credentials to ``~/.datus/conf/agent.yml`` and target to
+        ``./.datus/config.yml``.
+
+        Writing the two files atomically keeps the CLI's startup happy: the
+        global file drives provider credentials (shared across projects) and
+        the project overlay pins ``target: {provider, model}`` for this
+        specific workspace.
+        """
         try:
             config_path = self.conf_dir / "agent.yml"
             with open(config_path, "w", encoding="utf-8") as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
 
             self.console.print(f" ✅ Configuration saved to {config_path}")
+
+            if self._pending_target:
+                override = ProjectOverride(target=self._pending_target)
+                target_path = save_project_override(override)
+                self.console.print(f" ✅ Active target saved to {target_path}")
+
             return True
         except Exception as e:
             logger.error(f"Failed to save configuration: {e}")
@@ -413,188 +485,52 @@ class InteractiveInit:
             return False
 
     def _display_summary(self):
-        """Display configuration summary."""
+        """Display configuration summary using the provider-level schema."""
         table = Table(title="Configuration Summary")
         table.add_column("Setting", style="cyan")
         table.add_column("Value", style="green")
 
-        provider = self.config["agent"]["target"]
-        model = self.config["agent"]["models"][provider]["model"]
-
-        table.add_row("LLM", f"{provider} ({model})")
-        table.add_row("Namespace", self.namespace_name)
+        if self._pending_target and self._pending_target.provider and self._pending_target.model:
+            table.add_row("LLM", f"{self._pending_target.provider} ({self._pending_target.model})")
+        elif self._pending_target and self._pending_target.custom:
+            table.add_row("LLM", f"custom:{self._pending_target.custom}")
+        else:
+            table.add_row("LLM", "(not configured)")
+        table.add_row("Datasource", self.datasource_name)
         table.add_row("Workspace", self.workspace_path)
 
         self.console.print(table)
 
     def _display_completion(self):
         """Display completion message."""
-        self.console.print(f"\nYou are ready to run `datus-cli --namespace {self.namespace_name}` 🚀")
+        self.console.print(f"\nYou are ready to run `datus-cli --datasource {self.datasource_name}` 🚀")
         self.console.print("\nCheck the document at https://docs.datus.ai/ for more details.")
 
-    def _configure_claude_subscription(self, provider: str, provider_config: dict) -> bool:
-        """Configure Claude with subscription plan (Pro/Max).
-
-        Uses Claude Code setup-token (sk-ant-oat01-*) for supported Claude models
-        via Anthropic's beta Messages endpoint.
-        """
-        # Model selection
-        models = provider_config.get("models", [])
-        if models:
-            self.console.print("- Select your model:")
-            model_name = select_choice(
-                self.console,
-                {m: m for m in models},
-                default=provider_config.get("default_model", models[0]),
-                allow_free_text=True,
-            )
-        else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
-
-        api_key_value, auth_type = self._get_subscription_token()
-        if api_key_value is None:
-            return False
-
-        # Store configuration
-        self.config["agent"]["target"] = provider
-        self.config["agent"]["models"][provider] = {
-            "type": provider_config["type"],
-            "vendor": provider,
-            "base_url": provider_config["base_url"],
-            "api_key": api_key_value,
-            "model": model_name,
-            "auth_type": auth_type,
-        }
-
-        # Test LLM connectivity
-        self.console.print("→ Testing LLM connectivity...")
-        success, error_msg = self._test_llm_connectivity()
-        if success:
-            self.console.print(" ✅ Claude subscription model test successful\n")
-            return True
-        else:
-            self.console.print(f"❌ LLM connectivity test failed: {error_msg}")
-            if "401" in error_msg or "300011" in error_msg or "300035" in error_msg:
-                self.console.print(
-                    "   Token may be expired. Run 'claude setup-token' to refresh, then retry 'datus init'.\n"
-                )
-            else:
-                self.console.print("")
-            return False
-
-    def _get_subscription_token(self) -> tuple[str | None, str]:
-        """Try to auto-detect Claude subscription token, fall back to manual input.
-
-        Returns:
-            (token, auth_type) on success, (None, "") on failure.
-        """
-        self.console.print("  [dim]Detecting Claude subscription token...[/dim]")
-        try:
-            from datus.auth.claude_credential import get_claude_subscription_token
-
-            token, source = get_claude_subscription_token()
-            self.console.print(f"  ✅ Subscription token detected (from {source})")
-            return token, "subscription"
-        except Exception:
-            self.console.print("  [yellow]⚠️  Could not auto-detect subscription token[/yellow]")
-            self.console.print("  [dim]Run 'claude setup-token' to get your subscription token[/dim]")
-            token = getpass("- Paste your subscription token (sk-ant-oat01-...): ")
-            if not token.strip():
-                self.console.print("❌ Token cannot be empty")
-                return None, ""
-            return token, "subscription"
-
-    def _configure_codex_oauth(self, provider: str, provider_config: dict) -> bool:
-        """Configure Codex provider with OAuth authentication."""
-        # Model selection
-        models = provider_config.get("models", [])
-        if models:
-            self.console.print("- Select your model:")
-            model_name = select_choice(
-                self.console,
-                {m: m for m in models},
-                default=provider_config.get("default_model", models[0]),
-                allow_free_text=True,
-            )
-        else:
-            model_name = Prompt.ask("- Enter your model name", default=provider_config.get("default_model", "")).strip()
-
-        # Run OAuth login via browser
-        self.console.print("→ Opening browser for OAuth authentication...")
-        try:
-            from datus.auth.oauth_manager import OAuthManager
-
-            oauth_mgr = OAuthManager()
-            oauth_mgr.login_browser()
-        except Exception as e:
-            logger.error(f"OAuth authentication failed: {e}")
-            self.console.print(f"❌ OAuth authentication failed: {e}")
-            return False
-
-        # Store configuration
-        self.config["agent"]["target"] = provider
-        self.config["agent"]["models"][provider] = {
-            "type": provider_config["type"],
-            "vendor": provider,
-            "base_url": provider_config["base_url"],
-            "api_key": "",
-            "model": model_name,
-            "auth_type": "oauth",
-        }
-
-        # Verify connectivity
-        self.console.print("→ Verifying Codex API connectivity...")
-        connectivity_ok = True
-        try:
-            from datus.configuration.agent_config import ModelConfig
-            from datus.models.codex_model import CodexModel
-
-            test_config = ModelConfig(
-                type="codex",
-                base_url=provider_config["base_url"],
-                api_key="",
-                model=model_name,
-                auth_type="oauth",
-            )
-            test_model = CodexModel(model_config=test_config)
-            resp = test_model.generate("Say hi", instructions="You are a helpful assistant.")
-            if not resp or not resp.strip():
-                self.console.print("⚠️  OAuth login succeeded but model returned empty response")
-                connectivity_ok = False
-        except Exception as e:
-            logger.warning(f"Codex connectivity test failed: {e}")
-            self.console.print(f"⚠️  OAuth login succeeded but connectivity test failed: {e}")
-            connectivity_ok = False
-
-        if not connectivity_ok:
-            from rich.prompt import Confirm
-
-            if not Confirm.ask("Continue without verifying connectivity?", default=False):
-                return False
-
-        self.console.print(" ✅ OAuth authentication successful\n")
-        return True
-
     def _test_llm_connectivity(self) -> tuple[bool, str]:
-        """Test LLM model connectivity."""
-        try:
-            provider = self.config["agent"]["target"]
-            model_config_data = self.config["agent"]["models"][provider]
+        """Instantiate the staged probe config and run a single ``generate`` call.
 
+        Reads from :attr:`_pending_probe` (set by the api-key / subscription /
+        oauth flows) rather than reconstructing credentials from the YAML
+        being written, so a failed probe does not leak partial state into
+        ``self.config``.
+        """
+        if not self._pending_probe:
+            return False, "No pending LLM probe (missing credentials)"
+        try:
             from datus.configuration.agent_config import ModelConfig
 
+            probe = self._pending_probe
             model_config = ModelConfig(
-                type=model_config_data["type"],
-                base_url=model_config_data["base_url"],
-                api_key=model_config_data["api_key"],
-                model=model_config_data["model"],
-                temperature=model_config_data.get("temperature"),
-                top_p=model_config_data.get("top_p"),
-                auth_type=model_config_data.get("auth_type", "api_key"),
-                default_headers=model_config_data.get("default_headers"),
+                type=probe["type"],
+                base_url=probe.get("base_url", ""),
+                api_key=probe.get("api_key", ""),
+                model=probe["model"],
+                temperature=probe.get("temperature"),
+                top_p=probe.get("top_p"),
+                auth_type=probe.get("auth_type", "api_key"),
+                default_headers=probe.get("default_headers"),
             )
 
-            # Reuse the centralized MODEL_TYPE_MAP from LLMBaseModel
             from datus.models.base import LLMBaseModel
 
             model_type = model_config.type
@@ -611,8 +547,7 @@ class InteractiveInit:
             response = llm_model.generate("Hi")
             if response is not None and len(response.strip()) > 0:
                 return True, ""
-            else:
-                return False, "Empty response from model"
+            return False, "Empty response from model"
 
         except Exception as e:
             error_msg = str(e)
@@ -625,7 +560,7 @@ class InteractiveInit:
         from datus.configuration.agent_config_loader import load_agent_config
 
         agent_config = load_agent_config(reload=True)
-        agent_config.current_database = self.namespace_name
+        agent_config.current_datasource = self.datasource_name
 
         return Agent(args, agent_config)
 
@@ -641,12 +576,12 @@ class InteractiveInit:
         )
 
 
-def create_agent(namespace_name: str, components: list, config_path: str, **kwargs):
+def create_agent(datasource_name: str, components: list, config_path: str, **kwargs):
     import argparse
 
     default_args = {
         "action": "bootstrap-kb",
-        "namespace": namespace_name,
+        "datasource": datasource_name,
         "components": components,
         "kb_update_strategy": "overwrite",
         "storage_path": None,
@@ -671,7 +606,7 @@ def create_agent(namespace_name: str, components: list, config_path: str, **kwar
 
     agent_config = load_agent_config(reload=True, config=config_path, **vars(args))
 
-    agent_config.current_database = namespace_name
+    agent_config.current_datasource = datasource_name
 
     return Agent(args, agent_config)
 
@@ -775,24 +710,24 @@ class ReferenceSqlStreamHandler:
             return
 
 
-def init_metadata_and_log_result(namespace_name: str, config_path: str, console: Console):
+def init_metadata_and_log_result(datasource_name: str, config_path: str, console: Console):
     from datus.configuration.agent_config_loader import load_agent_config
     from datus.storage.schema_metadata.local_init import init_local_schema
     from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     agent_config = load_agent_config(reload=True, config=config_path)
-    agent_config.current_database = namespace_name
+    agent_config.current_datasource = datasource_name
     kb_update_strategy = "overwrite"
     storage_path = agent_config.rag_storage_path()
 
-    with console.status(f"→ Initializing metadata for {namespace_name} with path `{storage_path}`..."):
+    with console.status(f"→ Initializing metadata for {datasource_name} with path `{storage_path}`..."):
         try:
             if kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
                 from datus.storage.backend_holder import create_vector_connection
 
-                db = create_vector_connection(namespace_name)
+                db = create_vector_connection(agent_config.project_name)
                 try:
                     db.drop_table("schema_metadata", ignore_missing=True)
                     db.drop_table("schema_value", ignore_missing=True)
@@ -803,7 +738,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
                 agent_config.check_init_storage_config("database")
 
             metadata_store = SchemaWithValueRAG(agent_config)
-            db_manager = db_manager_instance(agent_config.namespaces)
+            db_manager = db_manager_instance(agent_config.datasource_configs)
             init_local_schema(
                 metadata_store,
                 agent_config,
@@ -828,7 +763,7 @@ def init_metadata_and_log_result(namespace_name: str, config_path: str, console:
 
 
 def overwrite_sql_and_log_result(
-    namespace_name: str,
+    datasource_name: str,
     sql_dir: str,
     config_path: str,
     subject_tree: Optional[str] = None,
@@ -841,7 +776,7 @@ def overwrite_sql_and_log_result(
 
     try:
         agent_config = load_agent_config(reload=True, config=config_path)
-        agent_config.current_database = namespace_name
+        agent_config.current_datasource = datasource_name
         do_init_sql_and_log_result(agent_config, sql_dir, subject_tree, console, force=force)
     except Exception as e:
         print_rich_exception(console, e, "Reference SQL initialization failed", logger)
@@ -862,19 +797,19 @@ def do_init_sql_and_log_result(
     try:
         sql_dir_path = Path(sql_dir)
         if not sql_dir_path.exists():
-            console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+            print_error(console, f"No sql files found in {sql_dir}", prefix=False)
             return
         if sql_dir_path.is_dir():
             sql_files = list(sql_dir_path.rglob("*.sql"))
             if not sql_files:
-                console.print(f"[bold red]No sql files found in {sql_dir}[/]")
+                print_error(console, f"No sql files found in {sql_dir}", prefix=False)
                 return
         elif sql_dir_path.is_file():
             if sql_dir_path.suffix.lower() != ".sql":
-                console.print(f"[bold red]{sql_dir} must be a .sql file[/]")
+                print_error(console, f"{sql_dir} must be a .sql file", prefix=False)
                 return
         else:
-            console.print("[bold red]Only SQL directories or files are supported[/]")
+            print_error(console, "Only SQL directories or files are supported", prefix=False)
             return
 
         if kb_update_strategy == "overwrite":
@@ -882,21 +817,23 @@ def do_init_sql_and_log_result(
 
             from datus.storage.backend_holder import create_vector_connection
 
-            db = create_vector_connection(agent_config.current_database)
+            db = create_vector_connection(agent_config.project_name)
             try:
                 db.drop_table("reference_sql", ignore_missing=True)
                 logger.info("Dropped existing reference_sql table")
             finally:
                 db.close()
-            # Also clear sql_summaries/{namespace} directory (YAML files)
-            sql_summary_dir = agent_config.path_manager.sql_summary_path(agent_config.current_database)
+            # Also clear the sql_summaries directory (YAML files)
+            sql_summary_dir = agent_config.path_manager.sql_summary_path()
             if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):
                 console.print("[yellow]Cancelled by user[/yellow]")
                 return False, None
         else:
             agent_config.check_init_storage_config("reference_sql")
 
-        console.print(f"Reference SQL initialization for {agent_config.current_database} (dir: {escape(str(sql_dir))})")
+        console.print(
+            f"Reference SQL initialization for {agent_config.current_datasource} (dir: {escape(str(sql_dir))})"
+        )
 
         # Create StreamOutputManager
         output_mgr = StreamOutputManager(

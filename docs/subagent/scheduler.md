@@ -10,15 +10,16 @@ The scheduler subagent is a specialized node (`SchedulerAgenticNode`) that:
 
 - Connects to a configured Airflow instance via the `datus-scheduler-airflow` package
 - Provides 12 tools covering the complete job lifecycle: submit, trigger, pause, resume, update, delete, and monitor
+- Provides filesystem tools so it can write generated SQL into project files before submitting jobs
 - Supports both SQL and SparkSQL job types
 - Enables log fetching and troubleshooting for failed or running jobs
 
 ## Quick Start
 
-Ensure you have configured `agent.scheduler` in `agent.yml` and installed the required packages:
+Ensure you have configured `agent.services.schedulers` in `agent.yml` and installed the required packages:
 
 ```bash
-pip install datus-scheduler-core datus-scheduler-airflow
+pip install datus-scheduler-airflow
 ```
 
 Invoke the subagent from the chat interface:
@@ -56,11 +57,12 @@ graph LR
 When submitting a new job:
 
 1. LLM identifies the SQL file path, connection, and schedule from the user request
-2. `list_scheduler_connections` is called to discover available Airflow connections
-3. `submit_sql_job` or `submit_sparksql_job` reads the `.sql` file and creates the Airflow DAG with the specified cron schedule
-4. The job ID and status are returned in `scheduler_result`
+2. If the SQL is generated during the conversation, `write_file` saves it under a project path such as `jobs/<job_name>.sql`
+3. `list_scheduler_connections` is called to discover available Airflow connections
+4. `submit_sql_job` or `submit_sparksql_job` reads the `.sql` file and creates the Airflow DAG with the specified cron schedule
+5. The job ID and status are returned in `scheduler_result`
 
-> **Note:** `submit_sql_job` and `submit_sparksql_job` require a `sql_file_path` pointing to an existing `.sql` file on the host. The scheduler node does not include filesystem tools (write_file, etc.), so SQL files must be prepared before invoking the scheduler subagent.
+> **Note:** `submit_sql_job` and `submit_sparksql_job` require a `sql_file_path` pointing to an existing `.sql` file on the host. The scheduler subagent can create or update that file with filesystem tools before submitting.
 
 ## Available Tools
 
@@ -78,6 +80,7 @@ When submitting a new job:
 | `list_scheduler_connections` | List available Airflow connections for job configuration |
 | `list_job_runs` | List recent run records for a specific job |
 | `get_run_log` | Fetch execution logs for a specific job run |
+| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
 
 ## Configuration
 
@@ -85,20 +88,22 @@ When submitting a new job:
 
 ```yaml
 agent:
+  services:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"       # e.g. http://localhost:8080/api/v1
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"   # where generated DAG files are written
+        dag_discovery_timeout: 60            # Optional: seconds to wait for DAG discovery
+        dag_discovery_poll_interval: 5       # Optional: polling interval in seconds
+
   agentic_nodes:
     scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"       # e.g. http://localhost:8080/api/v1
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"   # where generated DAG files are written
-    dag_discovery_timeout: 60            # Optional: seconds to wait for DAG discovery
-    dag_discovery_poll_interval: 5       # Optional: polling interval in seconds
+      model: claude                  # Optional: defaults to configured model
+      max_turns: 30                  # Optional: defaults to 30
+      scheduler_service: airflow_prod
 ```
 
 ### Configuration Parameters
@@ -107,21 +112,24 @@ agent:
 |-----------|----------|-------------|---------|
 | `model` | No | LLM model to use | Uses default configured model |
 | `max_turns` | No | Maximum conversation turns | 30 |
-| `scheduler.name` | Yes | Human-readable name for this scheduler | — |
-| `scheduler.type` | Yes | Scheduler type (currently `airflow`) | — |
-| `scheduler.api_base_url` | Yes | Airflow REST API base URL | — |
-| `scheduler.username` | Yes | Airflow login username | — |
-| `scheduler.password` | Yes | Airflow login password | — |
-| `scheduler.dags_folder` | Yes | Directory for generated DAG files | — |
-| `scheduler.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
-| `scheduler.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
+| `scheduler_service` | No | Scheduler service key from `services.schedulers` | Auto-selected when only one scheduler is configured, or when exactly one service has `default: true` |
+| `services.schedulers.<name>.type` | Yes | Scheduler type (currently `airflow`) | — |
+| `services.schedulers.<name>.api_base_url` | Yes | Airflow REST API base URL | — |
+| `services.schedulers.<name>.username` | Yes | Airflow login username | — |
+| `services.schedulers.<name>.password` | Yes | Airflow login password | — |
+| `services.schedulers.<name>.dags_folder` | Yes | Directory for generated DAG files | — |
+| `services.schedulers.<name>.dag_discovery_timeout` | No | Seconds to wait for Airflow to discover new DAGs | 60 |
+| `services.schedulers.<name>.dag_discovery_poll_interval` | No | Polling interval for DAG discovery | 5 |
+| `services.schedulers.<name>.default` | No | Mark one scheduler as the default when multiple are configured | `false` |
 
 All sensitive values support `${ENV_VAR}` substitution.
 
 **Requirements:**
-- `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
+- `datus-scheduler-airflow` package installed (it pulls in `datus-scheduler-core`)
 - Airflow instance accessible from the agent host
 - `dags_folder` writable by the agent process and accessible by the Airflow scheduler
+
+`services.schedulers` is the only runtime source for scheduler config. Top-level `scheduler:` is no longer read.
 
 ## Common Cron Expressions
 
@@ -206,6 +214,7 @@ agent:
     etl_scheduler:
       node_class: scheduler
       max_turns: 30
+      scheduler_service: airflow_prod
 ```
 
 Then invoke it via `/etl_scheduler Submit the weekly ETL aggregation job to run every Sunday at midnight`.

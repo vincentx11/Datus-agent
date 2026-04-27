@@ -2,6 +2,9 @@
 
 几分钟内即可上手 Datus Agent。本指南将带你完成安装、配置和首次体验。
 
+!!! tip "想直接走完整数仓链路？"
+    如果你要体验分层建模、ETL 生成、Airflow 调度、语义资产生成和 Superset 仪表盘发布，请继续阅读 [数据工程快速开始](./data_engineering_quickstart.zh.md)。
+
 ## 步骤 1：安装与配置
 
 ### 安装 Python 3.12
@@ -134,7 +137,7 @@ datus-agent init
 如需把某个已配置数据库的表结构摘要一并写入 `AGENTS.md`，可额外指定：
 
 ```bash
-datus-agent init --database duckdb-demo
+datus-agent init --datasource duckdb-demo
 ```
 
 ## 步骤 2：启动 Datus CLI
@@ -145,13 +148,13 @@ datus-agent init --database duckdb-demo
     你可以随时通过 `datus-agent configure` 继续添加模型或数据库。详见我们的[配置指南](../configuration/introduction.md)。
 
 ```bash title="Terminal"
-datus-cli --database duckdb-demo
+datus-cli --datasource duckdb-demo
 ```
 ```{ .yaml .no-copy }
 Initializing AI capabilities in background...
 
-Datus - AI-powered SQL command-line interface
-Type '.help' for a list of commands or '.exit' to quit.
+Datus - Data engineering agent builds evolvable context for your data system
+Type '/help' for a list of commands or '/exit' to quit.
 
 Database duckdb-demo selected
 Connected to duckdb-demo using database duckdb-demo
@@ -168,7 +171,7 @@ Datus>
 列出所有表：
 
 ```bash title="Terminal"
-Datus> .tables
+Datus> /tables
 ```
 ```{ .yaml .no-copy }
 Tables in Database duckdb-demo
@@ -594,12 +597,13 @@ Datus 会自动分析该表，并将元数据加入上下文。
     ```
 
 !!! tip
-    需要更多命令参考与用法，请查看 [CLI](../cli/introduction.md)，或在终端输入 `.help`。
+    需要更多命令参考与用法，请查看 [CLI](../cli/introduction.md)，或在终端输入 `/help`。
 
 ## 下一步
 
 在完成基础体验后，可以继续探索以下功能：
 
+- **[数据工程快速开始](./data_engineering_quickstart.zh.md)** —— 使用 DAComp 构建分层数仓，并串起 Airflow 与 Superset
 - **[上下文数据工程](./contextual_data_engineering.md)** —— 学习如何将数据资产用作上下文
 - **[配置指南](../configuration/introduction.md)** —— 连接自有数据库并自定义设置
 - **[CLI 参考手册](../cli/introduction.md)** —— 掌握全部命令与选项

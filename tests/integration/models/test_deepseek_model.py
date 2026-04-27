@@ -131,7 +131,7 @@ class TestDeepSeekModel:
         )
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -155,7 +155,6 @@ class TestDeepSeekModel:
         except Exception:
             raise
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_stream_acceptance(self):
         """Test MCP streaming functionality with SSB database."""
@@ -175,7 +174,7 @@ class TestDeepSeekModel:
          between 1 and 3 and sales volume less than 25, where revenue is calculated by multiplying the extended
          price by the discount'"""
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         try:
@@ -201,8 +200,7 @@ class TestDeepSeekModel:
         except Exception:
             raise
 
-    # Acceptance Tests for Performance Validation
-    @pytest.mark.acceptance
+    # Nightly Tests for real-model performance validation
     def test_generate_acceptance(self):
         """Acceptance test for basic generation performance."""
         prompts = [
@@ -219,7 +217,6 @@ class TestDeepSeekModel:
             assert len(result) > 0, "Response should not be empty"
             logger.info(f"Acceptance test prompt: {prompt[:30]}... -> Response length: {len(result)}")
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_acceptance(self):
         """Acceptance test for MCP functionality with SSB business scenarios."""
@@ -241,7 +238,7 @@ class TestDeepSeekModel:
         instructions = """You are a SQLite expert working with the Star Schema Benchmark database.
         Execute business analytics queries and provide clear results with proper joins."""
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(test_scenarios):
@@ -278,7 +275,7 @@ class TestDeepSeekModel:
         ]
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         for i, scenario in enumerate(complex_scenarios):
@@ -324,7 +321,7 @@ class TestDeepSeekModel:
         Answer questions about the database schema and data."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # First question: explore schema
@@ -394,7 +391,7 @@ class TestDeepSeekModel:
         Provide clear and concise answers about the database."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # First streaming question
@@ -439,7 +436,6 @@ class TestDeepSeekModel:
 
         logger.debug(f"MCP stream session: {action_count1} + {action_count2} total actions")
 
-    @pytest.mark.acceptance
     @pytest.mark.asyncio
     async def test_generate_with_mcp_token_consumption(self):
         """Test token consumption tracking between generate_with_tools and generate_with_tools_stream."""
@@ -454,7 +450,7 @@ class TestDeepSeekModel:
         # " aggregate by year, supplier country, and part category. The result should be sorted in ascending order by"
         # " year, supplier country, and part category'"
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # Test 1: Non-streaming version
@@ -593,7 +589,7 @@ class TestDeepSeekModel:
         Provide concise answers about database schema and simple queries."""
 
         # Set up agent config for SQLite database
-        agent_config = load_acceptance_config(namespace="ssb_sqlite")
+        agent_config = load_acceptance_config(datasource="ssb_sqlite")
         tools = db_function_tools(agent_config)
 
         # Simple acceptance scenarios with session

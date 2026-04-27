@@ -26,7 +26,7 @@ from datus.api.models.cli_models import (
 )
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.configuration.agent_config import AgentConfig
-from datus.models.session_manager import SessionManager
+from datus.models.session_manager import SessionManager, session_matches_agent
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -66,7 +66,7 @@ class ChatService:
                 user_id=user_id,
             )
         except (ValueError, DatusException) as e:
-            error_code = e.error_code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
+            error_code = e.code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
             yield SSEEvent(
                 id=1,
                 event="error",
@@ -86,11 +86,23 @@ class ChatService:
         session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
         return session_mgr.session_exists(session_id)
 
-    def list_sessions(self, user_id: Optional[str] = None) -> Result[ChatSessionData]:
-        """List all chat sessions from disk."""
+    def list_sessions(
+        self,
+        user_id: Optional[str] = None,
+        subagent_id: Optional[str] = None,
+    ) -> Result[ChatSessionData]:
+        """List chat sessions from disk, optionally filtered by agent.
+
+        When ``subagent_id`` is ``None`` every session for *user_id* is
+        returned. When set, only sessions whose id prefix encodes that agent
+        are returned; the sentinel ``"chat"`` selects the default chat agent
+        (including legacy prefix-less sessions).
+        """
         try:
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
             all_ids = session_mgr.list_sessions()
+            if subagent_id is not None:
+                all_ids = [sid for sid in all_ids if session_matches_agent(sid, subagent_id)]
             sessions = []
 
             for sid in all_ids:

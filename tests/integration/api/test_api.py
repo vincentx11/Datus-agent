@@ -18,7 +18,7 @@ def _get_service_module():
 @pytest.fixture
 def agent_args():
     return argparse.Namespace(
-        namespace="bird_school",
+        datasource="bird_school",
         config="tests/conf/agent.yml",
         max_steps=20,
         workflow="fixed",
@@ -84,7 +84,7 @@ async def authenticated_client(app, agent_args, auth_token):
         svc_mod.service = original_service
 
 
-@pytest.mark.nightly
+@pytest.mark.acceptance
 class TestAPI:
     """N8: Agent API tests."""
 
@@ -160,7 +160,7 @@ class TestAPI:
                 "/workflows/run",
                 json={
                     "workflow": "nl2sql",
-                    "namespace": "bird_school",
+                    "datasource": "bird_school",
                     "task": "List all schools",
                     "mode": "sync",
                 },
@@ -178,7 +178,7 @@ class TestAPI:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "bird_school",
+                "datasource": "bird_school",
                 "task": "List all schools",
                 "mode": "async",
             },
@@ -215,7 +215,7 @@ class TestAPI:
                 "/workflows/run",
                 json={
                     "workflow": "nl2sql",
-                    "namespace": "bird_school",
+                    "datasource": "bird_school",
                     "task": "List all schools",
                     "mode": "async",
                 },
@@ -255,7 +255,7 @@ class TestAPI:
             "/workflows/run",
             json={
                 "workflow": "nl2sql",
-                "namespace": "bird_school",
+                "datasource": "bird_school",
                 "task": "List all schools",
             },
         )

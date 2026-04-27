@@ -117,14 +117,14 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    # Post-refactor (PR #542) legacy `namespace:` configs with `path_pattern` expand into
+    # Post-refactor (PR #542) legacy configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
-    # longer valid, so the loader drops it; individual tests override `current_database` as
+    # longer valid, so the loader drops it; individual tests override `current_datasource` as
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
-    agent_config = load_acceptance_config(namespace="bird_sqlite")
-    if not agent_config.current_database and agent_config.service.databases:
-        agent_config.current_database = "california_schools"
+    agent_config = load_acceptance_config(datasource="bird_sqlite")
+    if not agent_config.current_datasource and agent_config.services.datasources:
+        agent_config.current_datasource = "california_schools"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
     return agent_config
 
@@ -146,7 +146,6 @@ def init_metricflow_db() -> None:
     if not db_dir.exists():
         db_dir.mkdir(parents=True, exist_ok=True)
     csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
-    print(f"Creating db_path: {db_path}")
     conn = duckdb.connect(db_path)
     conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
     csv_files = glob.glob(str(csv_path))
@@ -155,7 +154,6 @@ def init_metricflow_db() -> None:
         file_name = full_file_name.split(".")[0]
         table_name = f"mf_demo.{file_name}"
         conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
-        print(f"finish the import of {csv_file}")
     conn.close()
 
 
@@ -236,9 +234,9 @@ class TestNode:
         # Take first test case from the list
         for inputs in schema_linking_input:
             test_case = inputs["input"]
-            if "namespace" in test_case:
-                agent_config.current_database = test_case["namespace"]
-                del test_case["namespace"]
+            if "datasource" in test_case:
+                agent_config.current_datasource = test_case["datasource"]
+                del test_case["datasource"]
             node = Node.new_instance(
                 node_id="schema_link",
                 description="Schema Linking",
@@ -251,7 +249,6 @@ class TestNode:
             assert node.input.input_text == test_case["input_text"]
             result = node.run()
             assert isinstance(result, SchemaLinkingResult)
-            print(f"result is {type(result)}, {result.success}, {result.schema_count}")
             assert isinstance(result, SchemaLinkingResult)
             assert result.success
             assert result.schema_count > 0
@@ -282,7 +279,7 @@ class TestNode:
             ]
         )
 
-        agent_config.current_database = "california_schools"
+        agent_config.current_datasource = "california_schools"
         agent_config.rag_base_path = "/tmp/test_data"
         node = Node.new_instance(
             node_id="schema_link",
@@ -454,7 +451,7 @@ class TestNode:
                 ]
             )
 
-            agent_config.current_database = "ssb_sqlite"
+            agent_config.current_datasource = "ssb_sqlite"
 
             # Create simple ReasoningInput with revenue calculation task
             input_data = ReasoningInput(
@@ -573,10 +570,10 @@ class TestNode:
                 exec_input = execute_sql_input[test_case_num]["input"]
                 input_data = ExecuteSQLInput(**exec_input)
                 # Use the database_name from the input to set the current database
-                if exec_input.get("database_name") and exec_input["database_name"] in agent_config.service.databases:
-                    agent_config.current_database = exec_input["database_name"]
+                if exec_input.get("database_name") and exec_input["database_name"] in agent_config.services.datasources:
+                    agent_config.current_datasource = exec_input["database_name"]
                 else:
-                    agent_config.current_database = "california_schools"
+                    agent_config.current_datasource = "california_schools"
 
                 # Create node instance for testing
                 node = Node.new_instance(
@@ -637,7 +634,7 @@ class TestNode:
     def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
         """Test schema linking node"""
         # Take first test case from the list
-        _current_database = agent_config.current_database
+        _current_datasource = agent_config.current_datasource
         try:
             for case in search_metrics_input:
                 input_data = SearchMetricsInput(**case["input"])
@@ -756,13 +753,6 @@ class TestNode:
                 "Suggestions should mention JOIN or table differences"
             )
 
-            # Print results for manual inspection
-            print("\n=== Compare Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("=====================================\n")
-
         except Exception as e:
             logger.error(f"Compare node test failed: {str(e)}")
             raise
@@ -868,18 +858,11 @@ class TestNode:
             )
 
             # Suggestions should be actionable and database-informed
-            if result.suggest:
-                suggest_lower = result.suggest.lower()
-                assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
-                    "Should provide actionable database-informed suggestions"
-                )
-
-            # Print results for manual inspection
-            print("\n=== Compare MCP Node Test Results ===")
-            print(f"Explanation: {result.explanation}")
-            print(f"Suggestions: {result.suggest}")
-            print(f"Success: {result.success}")
-            print("==========================================\n")
+            assert result.suggest
+            suggest_lower = result.suggest.lower()
+            assert "join" in suggest_lower or "table" in suggest_lower or "modify" in suggest_lower, (
+                "Should provide actionable database-informed suggestions"
+            )
 
         except Exception as e:
             logger.error(f"Compare MCP node test failed: {str(e)}")

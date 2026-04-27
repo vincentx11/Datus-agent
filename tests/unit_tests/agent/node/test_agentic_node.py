@@ -21,6 +21,8 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 
+_UNSET = object()
+
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing (can't instantiate abstract AgenticNode directly)
 # ---------------------------------------------------------------------------
@@ -43,20 +45,34 @@ class _ConcreteAgenticNode(AgenticNode):
         yield action
 
 
-def _make_node(agent_config=None, **overrides):
+def _make_async_session_mock() -> MagicMock:
+    """Build a session-like mock whose async methods are AsyncMocks.
+
+    Used by _manual_compact tests because the production code now awaits
+    `clear_session` and `add_items` on `self._session` after generating the
+    summary.
+    """
+    sess = MagicMock()
+    sess.clear_session = AsyncMock()
+    sess.add_items = AsyncMock()
+    return sess
+
+
+def _make_node(agent_config=None, context_length=_UNSET, **overrides):
     """Create a node with __init__ bypassed for targeted testing."""
     with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
         node = _ConcreteAgenticNode.__new__(_ConcreteAgenticNode)
-    # Set minimum required attributes
+    # Set minimum required attributes (backing fields for properties first)
+    node._agent_config_ref = None
+    node._pinned_model = None
+    node._node_model_name = None
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.last_summary = None
-    node.model = None
     node.tools = []
     node.mcp_servers = {}
     node.actions = []
-    node.context_length = None
+
     node.node_config = {}
     node.agent_config = agent_config
     node.skill_manager = None
@@ -72,6 +88,10 @@ def _make_node(agent_config=None, **overrides):
     node.action_bus = ActionBus()
     node.interaction_broker = InteractionBroker()
     node.interrupt_controller = InterruptController()
+    if context_length is not _UNSET and context_length is not None:
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = context_length
+        node._pinned_model = mock_model
     for k, v in overrides.items():
         setattr(node, k, v)
     return node
@@ -173,23 +193,14 @@ class TestResolveWorkspaceRoot:
         assert not result.startswith("~")
         assert os.path.expanduser("~/testdir") == result
 
-    def test_uses_storage_workspace_root(self):
+    def test_uses_project_root(self):
         node = _make_node()
         node.node_config = {}
-        cfg = MagicMock()
-        cfg.storage.workspace_root = "/storage/root"
+        cfg = MagicMock(spec=["project_root"])
+        cfg.project_root = "/project/root"
         node.agent_config = cfg
         result = node._resolve_workspace_root()
-        assert result == "/storage/root"
-
-    def test_uses_legacy_workspace_root(self):
-        node = _make_node()
-        node.node_config = {}
-        cfg = MagicMock(spec=[])  # no 'storage' attribute
-        cfg.workspace_root = "/legacy/root"
-        node.agent_config = cfg
-        result = node._resolve_workspace_root()
-        assert result == "/legacy/root"
+        assert result == "/project/root"
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +322,19 @@ class TestClearSession:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """Non-ephemeral clear with ``model=None`` is a no-op: ``_session`` and
+        ``session_id`` must survive untouched so the caller can reuse the node
+        after reattaching a model later.
+        """
         node = _make_node()
         node.ephemeral = False
         node.model = None
         node.session_id = "some_id"
-        node._session = MagicMock()
-        # Should not raise
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "some_id"
 
 
 # ---------------------------------------------------------------------------
@@ -431,23 +448,26 @@ class TestAutoCompact:
     async def test_auto_compact_skips_when_no_model(self):
         node = _make_node()
         node.model = None
-        node.context_length = None
+
         result = await node._auto_compact()
         assert result is False
 
     @pytest.mark.asyncio
     async def test_auto_compact_skips_when_no_context_length(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = None
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = None
+        node._pinned_model = mock_model
+
         result = await node._auto_compact()
         assert result is False
 
     @pytest.mark.asyncio
     async def test_auto_compact_triggers_when_over_limit(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 1000
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = 1000
+        node._pinned_model = mock_model
         node._session = MagicMock()
 
         with patch.object(node, "_count_session_tokens", return_value=950):
@@ -459,9 +479,10 @@ class TestAutoCompact:
 
     @pytest.mark.asyncio
     async def test_auto_compact_skips_when_under_limit(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 1000
         node = _make_node()
-        node.model = MagicMock()
-        node.context_length = 1000
+        node._pinned_model = mock_model
 
         with patch.object(node, "_count_session_tokens", return_value=500):
             result = await node._auto_compact()
@@ -485,10 +506,9 @@ class TestGetSessionInfo:
 
     @pytest.mark.asyncio
     async def test_get_session_info_with_session(self):
-        node = _make_node()
+        node = _make_node(context_length=100000)
         node.session_id = "my_session"
         node._session = MagicMock()
-        node.context_length = 100000
         node.actions = []
 
         with patch.object(node, "_count_session_tokens", return_value=5000):
@@ -536,7 +556,8 @@ class TestManualCompact:
         node = _make_node()
         node.ephemeral = False
         node.session_id = "compact_test"
-        node._session = MagicMock()
+        mock_session = _make_async_session_mock()
+        node._session = mock_session
         mock_model = MagicMock()
         mock_model.generate_with_tools = AsyncMock(
             return_value={"content": "Summary of conversation", "usage": {"output_tokens": 100}}
@@ -547,9 +568,97 @@ class TestManualCompact:
 
         assert result["success"] is True
         assert "Summary" in result["summary"]
-        # Session should be cleared
-        assert node._session is None
-        assert node.session_id is None
+        # Session is preserved — summary is persisted into the same session,
+        # not a new one. The .db file (and session_id) must remain alive.
+        assert node._session is mock_session
+        assert node.session_id == "compact_test"
+        mock_session.clear_session.assert_awaited_once()
+        mock_session.add_items.assert_awaited_once()
+        mock_model.delete_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_manual_compact_lazy_loads_session_after_resume(self):
+        """After .resume sets session_id but leaves _session None, compact must still work.
+
+        Regression: previously _manual_compact aborted with
+        "Cannot compact: no model or session available" because resume does not
+        eagerly open the SQLite session.
+        """
+        node = _make_node()
+        node.ephemeral = False
+        node.session_id = "resumed_session"
+        node._session = None  # Simulate post-resume state
+        mock_model = MagicMock()
+        mock_model.generate_with_tools = AsyncMock(
+            return_value={"content": "Resumed summary", "usage": {"output_tokens": 50}}
+        )
+        # create_session is what _get_or_create_session will call via self.model.
+        # Return a session whose async methods can be awaited by the persist step.
+        mock_model.create_session = MagicMock(return_value=_make_async_session_mock())
+        node.model = mock_model
+
+        result = await node._manual_compact()
+
+        # _get_or_create_session should have been invoked to materialize the session.
+        mock_model.create_session.assert_called_once_with("resumed_session")
+        assert result["success"] is True
+        assert result["summary"] == "Resumed summary"
+        # Session id is preserved so the same .db keeps holding the summary.
+        assert node.session_id == "resumed_session"
+
+    @pytest.mark.asyncio
+    async def test_manual_compact_persists_summary_pair(self):
+        """After summary generation, a user marker + assistant summary pair
+        must be appended to the SAME session via add_items so subsequent LLM
+        turns and history reads see the summary."""
+        node = _make_node()
+        node.ephemeral = False
+        node.session_id = "persist_test"
+        mock_session = _make_async_session_mock()
+        node._session = mock_session
+        mock_model = MagicMock()
+        mock_model.generate_with_tools = AsyncMock(
+            return_value={"content": "summary text", "usage": {"output_tokens": 100}}
+        )
+        node.model = mock_model
+
+        result = await node._manual_compact()
+
+        assert result["success"] is True
+        # clear_session must run before add_items (no rollback if add fails).
+        mock_session.clear_session.assert_awaited_once()
+        mock_session.add_items.assert_awaited_once()
+        items = mock_session.add_items.await_args.args[0]
+        assert len(items) == 2
+        assert items[0]["role"] == "user"
+        assert "compacted" in items[0]["content"].lower()
+        assert items[1]["type"] == "message"
+        assert items[1]["role"] == "assistant"
+        assert isinstance(items[1]["content"], list)
+        assert items[1]["content"][0]["type"] == "output_text"
+        assert items[1]["content"][0]["text"] == "summary text"
+
+    @pytest.mark.asyncio
+    async def test_manual_compact_add_items_failure_returns_failure(self):
+        """If add_items raises after clear_session succeeds, surface a
+        failure result without rolling back (simple-fail strategy)."""
+        node = _make_node()
+        node.ephemeral = False
+        node.session_id = "fail_test"
+        mock_session = _make_async_session_mock()
+        mock_session.add_items.side_effect = RuntimeError("write failed")
+        node._session = mock_session
+        mock_model = MagicMock()
+        mock_model.generate_with_tools = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
+        node.model = mock_model
+
+        result = await node._manual_compact()
+
+        assert result["success"] is False
+        assert result["summary"] == ""
+        assert result["summary_token"] == 0
+        mock_session.clear_session.assert_awaited_once()
+        mock_session.add_items.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -559,29 +668,134 @@ class TestManualCompact:
 
 class TestCountSessionTokens:
     @pytest.mark.asyncio
-    async def test_count_tokens_no_session(self):
+    async def test_count_tokens_no_actions_no_session(self):
         node = _make_node()
         node._session = None
         result = await node._count_session_tokens()
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_count_tokens_with_session(self):
+    async def test_count_tokens_uses_last_call_input_tokens(self):
+        """Primary path: last_call_input_tokens from the most recent action's usage."""
+        node = _make_node()
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 5000, "input_tokens": 8000, "total_tokens": 12000}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
+        result = await node._count_session_tokens()
+        assert result == 5000
+
+    @pytest.mark.asyncio
+    async def test_count_tokens_falls_back_to_input_tokens(self):
+        """When last_call_input_tokens is 0, fall back to input_tokens."""
+        node = _make_node()
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 0, "input_tokens": 8000, "total_tokens": 12000}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
+        result = await node._count_session_tokens()
+        assert result == 8000
+
+    @pytest.mark.asyncio
+    async def test_count_tokens_falls_back_to_turn_usage(self):
+        """When actions have no usage, fall back to last turn in turn_usage table."""
         node = _make_node()
         mock_session = MagicMock()
-        mock_session.get_session_usage = AsyncMock(return_value={"total_tokens": 1234})
+        mock_session.get_turn_usage = AsyncMock(
+            return_value=[
+                {"user_turn_number": 1, "total_tokens": 500},
+                {"user_turn_number": 2, "total_tokens": 1234},
+            ]
+        )
         node._session = mock_session
         result = await node._count_session_tokens()
         assert result == 1234
 
     @pytest.mark.asyncio
-    async def test_count_tokens_empty_usage(self):
+    async def test_count_tokens_empty_actions_empty_turn_usage(self):
         node = _make_node()
         mock_session = MagicMock()
-        mock_session.get_session_usage = AsyncMock(return_value={})
+        mock_session.get_turn_usage = AsyncMock(return_value=[])
         node._session = mock_session
         result = await node._count_session_tokens()
         assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_count_tokens_ignores_subagent_depth_actions(self):
+        """Sub-agent (depth>0) ASSISTANT actions must not pollute parent context estimate.
+
+        Regression: the scan must skip child/tool usage so that only root-level
+        (depth == 0) assistant actions contribute to the context window estimate.
+        Here the only depth>0 assistant has large usage; the parent's estimate
+        should fall back to turn_usage (or 0) instead of reading the child's.
+        """
+        node = _make_node()
+        subagent_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="sub",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 99999, "input_tokens": 99999, "total_tokens": 99999}},
+            status=ActionStatus.SUCCESS,
+        )
+        subagent_action.depth = 1  # simulate sub-agent nesting
+        node.actions.append(subagent_action)
+
+        mock_session = MagicMock()
+        mock_session.get_turn_usage = AsyncMock(return_value=[{"user_turn_number": 1, "total_tokens": 321}])
+        node._session = mock_session
+
+        result = await node._count_session_tokens()
+        # Must NOT return 99999 from the depth>0 action; fall back to turn_usage's 321.
+        assert result == 321
+
+    @pytest.mark.asyncio
+    async def test_count_tokens_breaks_at_root_user_message(self):
+        """Scan stops at the most recent root-level USER action to scope to the current turn.
+
+        An older ASSISTANT action preceding the latest root USER message must
+        NOT be used, even if it has usage. This guards against bleed-over from
+        the previous turn's usage into the current turn's estimate.
+        """
+        node = _make_node()
+        # Older turn's assistant reply with usage (should be ignored after USER break).
+        old_assistant = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="old",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 7777}},
+            status=ActionStatus.SUCCESS,
+        )
+        old_assistant.depth = 0
+        # Latest root user message marks the boundary of the current turn.
+        latest_user = ActionHistory.create_action(
+            role=ActionRole.USER,
+            action_type="chat",
+            messages="new question",
+            input_data={},
+            status=ActionStatus.SUCCESS,
+        )
+        latest_user.depth = 0
+        node.actions.extend([old_assistant, latest_user])
+
+        mock_session = MagicMock()
+        mock_session.get_turn_usage = AsyncMock(return_value=[{"user_turn_number": 1, "total_tokens": 111}])
+        node._session = mock_session
+
+        result = await node._count_session_tokens()
+        # Reverse scan hits latest_user first -> break -> fall back to turn_usage (111).
+        assert result == 111
 
 
 # ---------------------------------------------------------------------------
@@ -606,20 +820,21 @@ class _SimpleAgenticNode(AgenticNode):
         yield action
 
 
-def _make_simple_node(**overrides):
+def _make_simple_node(context_length=_UNSET, **overrides):
     """Build a minimal _SimpleAgenticNode bypassing __init__."""
     with patch.object(AgenticNode, "__init__", lambda self, *a, **kw: None):
         node = _SimpleAgenticNode.__new__(_SimpleAgenticNode)
 
+    node._agent_config_ref = None
+    node._pinned_model = None
+    node._node_model_name = None
     node._session = None
     node.ephemeral = False
     node.session_id = None
-    node.last_summary = None
-    node.model = None
     node.tools = []
     node.mcp_servers = {}
     node.actions = []
-    node.context_length = None
+
     node.node_config = {}
     node.agent_config = None
     node.permission_manager = None
@@ -640,6 +855,11 @@ def _make_simple_node(**overrides):
     node.action_bus = ActionBus()
     node.interaction_broker = InteractionBroker()
     node.interrupt_controller = InterruptController()
+
+    if context_length is not _UNSET and context_length is not None:
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = context_length
+        node._pinned_model = mock_model
 
     for k, v in overrides.items():
         setattr(node, k, v)
@@ -772,12 +992,10 @@ class TestResolveWorkspaceRootExtended:
         result = node._resolve_workspace_root()
         assert result == "/tmp/ws"
 
-    def test_agent_config_workspace_root_used(self):
+    def test_agent_config_project_root_used(self):
         node = _make_simple_node()
-        mock_config = MagicMock()
-        mock_config.workspace_root = "/var/data/ws"
-        # no storage attribute
-        del mock_config.storage
+        mock_config = MagicMock(spec=["project_root"])
+        mock_config.project_root = "/var/data/ws"
         node.agent_config = mock_config
         result = node._resolve_workspace_root()
         assert result == "/var/data/ws"
@@ -813,11 +1031,15 @@ class TestSessionManagement:
         assert node._session is None
 
     def test_clear_session_no_model(self):
+        """No-op path: without a model, clear_session leaves session state
+        alone so the node is reusable once a model is later assigned."""
         node = _make_simple_node()
-        node._session = MagicMock()
+        sentinel_session = MagicMock()
+        node._session = sentinel_session
         node.session_id = "sess_3"
-        # no model - should not raise
         node.clear_session()
+        assert node._session is sentinel_session
+        assert node.session_id == "sess_3"
 
     def test_delete_session_ephemeral(self):
         node = _make_simple_node(ephemeral=True, session_id="sess_4")
@@ -851,11 +1073,19 @@ class TestGetSessionInfoExtended:
         assert result["active"] is False
 
     def test_with_session_returns_info(self):
-        node = _make_simple_node()
+        node = _make_simple_node(context_length=4000)
         node.session_id = "sess_x"
         node._session = MagicMock()
-        node._session.get_session_usage = AsyncMock(return_value={"total_tokens": 500})
-        node.context_length = 4000
+        # Provide usage via actions (primary path for _count_session_tokens)
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
 
         result = asyncio.run(node.get_session_info())
         assert result["session_id"] == "sess_x"
@@ -916,18 +1146,19 @@ class TestGetOrCreateSession:
         call_kwargs = mock_sqlite_cls.call_args
         assert call_kwargs[1].get("db_path") == ":memory:" or ":memory:" in str(call_kwargs)
 
-    def test_returns_last_summary_and_clears_it(self):
+    def test_summary_is_no_longer_returned_via_get_or_create_session(self):
+        """Compacted summary now lives inside the session history itself, not
+        on a node attribute. _get_or_create_session must always return None
+        for the summary slot."""
         node = _make_simple_node()
         mock_model = MagicMock()
         mock_session = MagicMock()
         mock_model.create_session.return_value = mock_session
         node.model = mock_model
         node.session_id = "s"
-        node.last_summary = "previous conversation summary"
 
         _, summary = node._get_or_create_session()
-        assert summary == "previous conversation summary"
-        assert node.last_summary is None
+        assert summary is None
 
 
 # ---------------------------------------------------------------------------
@@ -1063,7 +1294,7 @@ class TestManualCompactExtended:
     def test_success_stores_summary(self):
         node = _make_simple_node()
         mock_model = MagicMock()
-        mock_session = MagicMock()
+        mock_session = _make_async_session_mock()
         node.model = mock_model
         node._session = mock_session
         node.session_id = "sess_compact"
@@ -1071,16 +1302,17 @@ class TestManualCompactExtended:
         mock_model.generate_with_tools = AsyncMock(
             return_value={"content": "summary text", "usage": {"output_tokens": 100}}
         )
-        mock_model.delete_session = MagicMock()
 
         result = asyncio.run(node._manual_compact())
         assert result["success"] is True
         assert result["summary"] == "summary text"
-        assert node.last_summary == "summary text"
-        assert node._session is None
-        assert node.session_id is None
+        # Session must be preserved — summary now lives inside the session.
+        assert node._session is mock_session
+        assert node.session_id == "sess_compact"
         mock_model.generate_with_tools.assert_awaited_once()
         assert mock_model.generate_with_tools.await_args.kwargs["agent_name"] == node.get_node_name()
+        mock_session.clear_session.assert_awaited_once()
+        mock_session.add_items.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1095,29 +1327,44 @@ class TestAutoCompactExtended:
         assert result is False
 
     def test_no_context_length_returns_false(self):
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = None
         node = _make_simple_node()
-        node.model = MagicMock()
+        node._pinned_model = mock_model
         result = asyncio.run(node._auto_compact())
         assert result is False
 
     def test_below_threshold_returns_false(self):
-        node = _make_simple_node()
-        node.model = MagicMock()
-        node.context_length = 10000
-        node._session = MagicMock()
-        node._session.get_session_usage = AsyncMock(return_value={"total_tokens": 100})
+        node = _make_simple_node(context_length=10000)
+        # Provide usage via actions (primary path for _count_session_tokens)
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 100, "input_tokens": 200, "total_tokens": 300}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
 
         result = asyncio.run(node._auto_compact())
         assert result is False
 
     def test_above_threshold_triggers_compact(self):
-        node = _make_simple_node()
-        node.model = MagicMock()
-        node.context_length = 1000
-        node._session = MagicMock()
-        node._session.get_session_usage = AsyncMock(return_value={"total_tokens": 950})
-        node.model.generate_with_tools = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 50}})
-        node.model.delete_session = MagicMock()
+        node = _make_simple_node(context_length=1000)
+        node._session = _make_async_session_mock()
+        action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="chat",
+            messages="ok",
+            input_data={},
+            output_data={"usage": {"last_call_input_tokens": 950, "input_tokens": 1500, "total_tokens": 2000}},
+            status=ActionStatus.SUCCESS,
+        )
+        node.actions.append(action)
+        node._pinned_model.generate_with_tools = AsyncMock(
+            return_value={"content": "summary", "usage": {"output_tokens": 50}}
+        )
         node.session_id = "sess_auto"
 
         result = asyncio.run(node._auto_compact())
@@ -1297,3 +1544,103 @@ class TestGetLastTurnUsage:
         result = asyncio.run(node.get_last_turn_usage())
         assert result is not None
         assert result.context_length == 0
+
+
+# ---------------------------------------------------------------------------
+# TestResolveLanguageName + TestInjectResponseLanguage
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLanguageName:
+    def test_known_codes_return_human_names(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("en") == "English"
+        assert _resolve_language_name("zh") == "Chinese"
+        assert _resolve_language_name("ja") == "Japanese"
+
+    def test_case_insensitive(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("EN") == "English"
+        assert _resolve_language_name("ZH-CN") == "Chinese"
+
+    def test_unknown_code_returned_as_is(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("xx-yy") == "xx-yy"
+
+    def test_empty_falls_back_to_english(self):
+        from datus.agent.node.agentic_node import _resolve_language_name
+
+        assert _resolve_language_name("") == "English"
+        assert _resolve_language_name(None) == "English"
+
+
+class TestInjectResponseLanguage:
+    """``_inject_response_language`` appends a single language-policy block
+    driven by ``agent_config.language`` and is invoked from
+    ``_finalize_system_prompt`` for every AgenticNode subclass.
+    """
+
+    class _Cfg:
+        """Lightweight stand-in for AgentConfig. Using a MagicMock would let
+        ``getattr(cfg, "prompt_manager")`` return a MagicMock and short-circuit
+        ``get_prompt_manager``, defeating the real Jinja render under test.
+        """
+
+        def __init__(self, language):
+            self.language = language
+            self.prompt_manager = None
+            self.path_manager = None
+
+    def _agent_config(self, language="en"):
+        return self._Cfg(language)
+
+    def test_explicit_english_appends_english_block(self):
+        """Explicit ``language: en`` still pins output to English — the policy
+        is only skipped when the setting is unset entirely."""
+        node = _make_node(agent_config=self._agent_config("en"))
+        result = node._inject_response_language("BASE")
+        assert "Response Language" in result
+        assert "English (en)" in result
+        assert result.startswith("BASE")
+
+    def test_chinese_override_uses_chinese_name(self):
+        node = _make_node(agent_config=self._agent_config("zh"))
+        result = node._inject_response_language("BASE")
+        assert "Chinese (zh)" in result
+
+    def test_unknown_code_uses_raw_value(self):
+        node = _make_node(agent_config=self._agent_config("xx"))
+        result = node._inject_response_language("BASE")
+        assert "xx (xx)" in result
+
+    def test_none_language_skips_injection(self):
+        """``language=None`` means "let the model decide" — no directive."""
+        node = _make_node(agent_config=self._agent_config(None))
+        result = node._inject_response_language("BASE")
+        assert result == "BASE"
+
+    def test_empty_language_skips_injection(self):
+        """Whitespace-only/empty language is treated as unset."""
+        node = _make_node(agent_config=self._agent_config(""))
+        assert node._inject_response_language("BASE") == "BASE"
+        node2 = _make_node(agent_config=self._agent_config("   "))
+        assert node2._inject_response_language("BASE") == "BASE"
+
+    def test_missing_attribute_skips_injection(self):
+        """agent_config without ``language`` attribute is a no-op."""
+
+        class _Bare:
+            pass
+
+        node = _make_node(agent_config=_Bare())
+        assert node._inject_response_language("BASE") == "BASE"
+
+    def test_render_failure_returns_base_unchanged(self):
+        node = _make_node(agent_config=self._agent_config("zh"))
+        with patch("datus.agent.node.agentic_node.get_prompt_manager") as mgr:
+            mgr.return_value.render_template.side_effect = RuntimeError("boom")
+            result = node._inject_response_language("BASE")
+        assert result == "BASE"

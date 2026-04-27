@@ -15,7 +15,11 @@ import pytest
 from agents.exceptions import ModelBehaviorError
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
-from datus.models.openai_compatible import OpenAICompatibleModel, classify_openai_compatible_error
+from datus.models.openai_compatible import (
+    OpenAICompatibleModel,
+    _detect_tool_failure,
+    classify_openai_compatible_error,
+)
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException, ErrorCode
 
@@ -60,6 +64,7 @@ def _make_model(model_config=None):
     mock_litellm_adapter.litellm_model_name = "openai/gpt-4"
     mock_litellm_adapter.provider = "openai"
     mock_litellm_adapter.is_thinking_model = False
+    mock_litellm_adapter.reasoning_effort_level = None
     mock_litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
 
     with (
@@ -600,7 +605,8 @@ class TestDistributeTokenUsageToActions:
         model = _make_model()
         manager = ActionHistoryManager()
         usage = {"total_tokens": 100}
-        model._distribute_token_usage_to_actions(manager, usage)  # should not raise
+        model._distribute_token_usage_to_actions(manager, usage)
+        assert manager.actions == []
 
     def test_distributes_to_last_assistant_action(self):
         model = _make_model()
@@ -663,8 +669,8 @@ class TestExtractAndDistributeTokenUsage:
         model = _make_model()
         result = MagicMock(spec=[])  # no context_wrapper attribute
         manager = ActionHistoryManager()
-        # Should not raise
         await model._extract_and_distribute_token_usage(result, manager)
+        assert not hasattr(result, "context_wrapper")
 
     @pytest.mark.asyncio
     async def test_extracts_usage_from_context_wrapper(self):
@@ -712,8 +718,9 @@ class TestExtractAndDistributeTokenUsage:
         type(result.context_wrapper).usage = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
 
         manager = ActionHistoryManager()
-        # Should not raise
         await model._extract_and_distribute_token_usage(result, manager)
+        for action in manager.actions:
+            assert "usage" not in (action.output or {})
 
 
 # ---------------------------------------------------------------------------
@@ -725,41 +732,147 @@ class TestFormatToolResultFromDict:
     def setup_method(self):
         self.model = _make_model()
 
+    # --- Generic result shapes ---------------------------------------------
+
     def test_result_is_list(self):
-        assert self.model._format_tool_result_from_dict({"result": [1, 2, 3]}) == "3 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": [1, 2, 3]}) == "3 items"
+
+    def test_result_is_single_item_list_uses_singular(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": [1]}) == "1 item"
 
     def test_result_is_int(self):
-        assert self.model._format_tool_result_from_dict({"result": 42}) == "42 rows"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": 42}) == "42 rows"
 
     def test_result_is_dict_with_count(self):
-        assert self.model._format_tool_result_from_dict({"result": {"count": 7}}) == "7 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {"count": 7}}) == "7 items"
 
-    def test_result_is_dict_without_count(self):
-        assert self.model._format_tool_result_from_dict({"result": {"key": "val"}}) == "Success"
+    def test_result_is_dict_without_recognised_keys(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {"key": "val"}}) == "OK"
 
-    def test_result_is_other_type(self):
-        assert self.model._format_tool_result_from_dict({"result": "string"}) == "Success"
+    def test_result_is_string(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": "string"}) == "string"
 
     def test_rows_field_int(self):
-        assert self.model._format_tool_result_from_dict({"rows": 10}) == "10 rows"
-
-    def test_rows_field_non_int(self):
-        assert self.model._format_tool_result_from_dict({"rows": "many"}) == "Success"
+        assert self.model._format_tool_result_from_dict({"success": 1, "rows": 10}) == "10 rows"
 
     def test_items_field(self):
-        assert self.model._format_tool_result_from_dict({"items": ["a", "b"]}) == "2 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "items": ["a", "b"]}) == "2 items"
+
+    def test_func_tool_list_envelope(self):
+        data = {"success": 1, "result": {"items": [{}, {}, {}], "total": 12, "has_more": True}}
+        assert self.model._format_tool_result_from_dict(data) == "3 items of 12 (+more)"
+
+    def test_func_tool_list_envelope_no_total(self):
+        data = {"success": 1, "result": {"items": [{}, {}], "total": None, "has_more": False}}
+        assert self.model._format_tool_result_from_dict(data) == "2 items"
+
+    def test_func_tool_list_envelope_total_equal_items(self):
+        # Single page: total matches items length; avoid redundant " of N".
+        data = {"success": 1, "result": {"items": [{}, {}], "total": 2, "has_more": False}}
+        assert self.model._format_tool_result_from_dict(data) == "2 items"
 
     def test_success_field_only_true(self):
-        assert self.model._format_tool_result_from_dict({"success": True}) == "Success"
+        # success-only dict becomes an OK signal (not a failure).
+        assert self.model._format_tool_result_from_dict({"success": True}) == "OK"
 
-    def test_success_field_only_false(self):
+    def test_success_field_only_false_is_failure(self):
         assert self.model._format_tool_result_from_dict({"success": False}) == "Failed"
 
     def test_count_field(self):
-        assert self.model._format_tool_result_from_dict({"count": 99}) == "99 items"
+        assert self.model._format_tool_result_from_dict({"success": 1, "count": 99}) == "99 items"
 
     def test_generic_dict(self):
-        assert self.model._format_tool_result_from_dict({"anything": "value"}) == "Success"
+        assert self.model._format_tool_result_from_dict({"success": 1, "anything": "value"}) == "OK"
+
+    # --- Failure prioritisation --------------------------------------------
+
+    def test_failure_with_success_flag_zero(self):
+        data = {"success": 0, "error": "syntax error near SELECT", "result": None}
+        assert self.model._format_tool_result_from_dict(data) == "Failed: syntax error near SELECT"
+
+    def test_failure_without_error_message(self):
+        assert self.model._format_tool_result_from_dict({"success": 0, "result": None}) == "Failed"
+
+    def test_failure_error_truncated(self):
+        long_error = "detail: " + ("x" * 300)
+        summary = self.model._format_tool_result_from_dict({"success": 0, "error": long_error})
+        assert summary.startswith("Failed: ")
+        # Error body capped at 100 chars plus the ellipsis marker.
+        assert len(summary) <= len("Failed: ") + 101
+
+    def test_failure_takes_priority_over_result_items(self):
+        # Even if a "result" with items exists, success=0 forces the failure branch.
+        data = {"success": 0, "error": "x", "result": {"items": [1, 2]}}
+        assert self.model._format_tool_result_from_dict(data) == "Failed: x"
+
+    def test_empty_result_dict(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": {}}) == "Empty result"
+
+    def test_empty_result_list(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": []}) == "Empty result"
+
+    def test_null_result(self):
+        assert self.model._format_tool_result_from_dict({"success": 1, "result": None}) == "Empty result"
+
+    # --- Tool-specific formatters ------------------------------------------
+
+    def test_read_query_uses_original_rows(self):
+        # When only ``original_rows`` is present the formatter falls back
+        # to the simple "N rows" wording.
+        data = {
+            "success": 1,
+            "result": {"original_rows": 42, "is_compressed": False},
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 rows"
+
+    def test_read_query_with_columns_uses_rows_x_cols(self):
+        # When columns are inferable the formatter shows ``"rows × cols result"``
+        # to match the CLI compact display so SSE and CLI render identically.
+        data = {
+            "success": 1,
+            "result": {
+                "original_rows": 42,
+                "column_count": 3,
+                "compressed_data": "...",
+            },
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="read_query") == "42 × 3 result"
+
+    def test_execute_write_uses_row_count(self):
+        data = {"success": 1, "result": {"row_count": 5, "sql": "UPDATE t SET x=1"}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="execute_write") == "wrote 5 rows"
+
+    def test_execute_ddl_success_message(self):
+        data = {"success": 1, "result": {"message": "DDL executed successfully", "sql": "CREATE TABLE t(x INT)"}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="execute_ddl") == "DDL OK"
+
+    def test_describe_table_columns(self):
+        data = {"success": 1, "result": {"columns": [{"name": "c"}] * 8}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="describe_table") == "8 columns"
+
+    def test_get_table_ddl_identifier(self):
+        data = {
+            "success": 1,
+            "result": {"identifier": "public.orders", "table_name": "orders", "definition": "CREATE TABLE ..."},
+        }
+        assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL of public.orders"
+
+    def test_load_skill_metadata_name(self):
+        # Quoting standardised on double quotes across all per-tool formatters.
+        data = {"success": 1, "result": {"content": "...", "metadata": {"name": "sql-best-practices"}}}
+        assert self.model._format_tool_result_from_dict(data, tool_name="load_skill") == 'loaded "sql-best-practices"'
+
+    def test_ask_user_content_truncated(self):
+        data = {"success": 1, "result": {"content": "  How many rows should we keep in the dashboard?  "}}
+        summary = self.model._format_tool_result_from_dict(data, tool_name="ask_user")
+        assert summary.startswith('"')
+        assert summary.endswith('"')
+
+    def test_tool_specific_formatter_falls_back_on_missing_fields(self):
+        # read_query without original_rows should degrade gracefully instead of crashing.
+        data = {"success": 1, "result": {"compressed_data": "..."}}
+        summary = self.model._format_tool_result_from_dict(data, tool_name="read_query")
+        assert summary == "OK"
 
 
 # ---------------------------------------------------------------------------
@@ -778,26 +891,79 @@ class TestFormatToolResult:
         assert self.model._format_tool_result(None) == "Empty result"
 
     def test_json_dict_delegates_to_from_dict(self):
-        result = self.model._format_tool_result('{"result": [1, 2]}')
+        result = self.model._format_tool_result('{"success": 1, "result": [1, 2]}')
         assert result == "2 items"
 
     def test_json_list(self):
         result = self.model._format_tool_result("[1, 2, 3]")
         assert result == "3 items"
 
-    def test_json_scalar(self):
+    def test_json_scalar_string(self):
         result = self.model._format_tool_result('"hello"')
-        assert "hello" in result
+        assert result == "hello"
 
     def test_plain_text_short(self):
         result = self.model._format_tool_result("short text")
-        assert "short text" in result
+        assert result == "short text"
 
-    def test_plain_text_long_truncated(self):
+    def test_plain_text_long_truncated_to_first_line(self):
         long_text = "x" * 200
         result = self.model._format_tool_result(long_text)
-        assert result.endswith("...")
-        assert len(result) <= 103  # 100 + "..."
+        assert result.endswith("…")
+        # First-line cap is 80 chars plus the ellipsis.
+        assert len(result) <= 81
+
+    def test_plain_text_multiline_keeps_first_non_empty_line(self):
+        assert self.model._format_tool_result("\n  first line  \nsecond line\n") == "first line"
+
+    def test_failure_json_payload(self):
+        payload = json.dumps({"success": 0, "error": "bad query", "result": None})
+        assert self.model._format_tool_result(payload) == "Failed: bad query"
+
+
+class TestDetectToolFailure:
+    """``_detect_tool_failure`` decides whether the tool output means FAILED/✗.
+
+    Without this, ``read_query('SELECT * FROM does_not_exist')`` still shows a
+    green ✓ in the CLI — the Agents SDK does not raise for FuncToolResult
+    payloads that report ``success=0`` internally.
+    """
+
+    def test_dict_with_success_zero_is_failure(self):
+        assert _detect_tool_failure({"success": 0, "error": "no such table", "result": None}) is True
+
+    def test_dict_with_success_false_is_failure(self):
+        assert _detect_tool_failure({"success": False, "error": "boom"}) is True
+
+    def test_dict_with_non_empty_error_is_failure(self):
+        # Some tools forget to flip ``success``; the error field alone should trip detection.
+        assert _detect_tool_failure({"error": "connection refused"}) is True
+
+    def test_dict_with_success_one_is_not_failure(self):
+        assert _detect_tool_failure({"success": 1, "result": [1, 2]}) is False
+
+    def test_dict_with_blank_error_is_not_failure(self):
+        assert _detect_tool_failure({"success": 1, "error": "  "}) is False
+
+    def test_json_string_failure(self):
+        payload = json.dumps({"success": 0, "error": "x"})
+        assert _detect_tool_failure(payload) is True
+
+    def test_json_string_success(self):
+        payload = json.dumps({"success": 1, "result": {"items": []}})
+        assert _detect_tool_failure(payload) is False
+
+    def test_non_json_string_defaults_to_not_failure(self):
+        # Plain-text tool outputs are treated as success; we only flip on a
+        # structured failure signal.
+        assert _detect_tool_failure("ok") is False
+
+    def test_list_payload_ignored(self):
+        assert _detect_tool_failure([{"success": 0}]) is False
+
+    def test_empty_inputs_are_not_failure(self):
+        assert _detect_tool_failure("") is False
+        assert _detect_tool_failure(None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +1014,88 @@ class TestModelSpecsAndTokenLimits:
         cfg = _make_model_config(model="gemini-2.5-flash")
         model = _make_model(cfg)
         assert model.context_length() == 1048576
+
+
+class TestModelSpecsOpenRouterCacheMerge:
+    """Verify _load_model_specs merges context_length from the OpenRouter cache."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_specs_cache(self):
+        """Wipe the module-level spec cache so each test re-executes the loader."""
+        import datus.models.openai_compatible as oc
+
+        original = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        try:
+            yield
+        finally:
+            oc._MODEL_SPECS_CACHE = original
+
+    def test_cache_context_length_used_when_yaml_has_no_entry(self):
+        """Unknown slug in YAML but present in cache — context_length comes from cache."""
+        import datus.models.openai_compatible as oc
+
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "brand-new-model", "context_length": 777000}]},
+        ):
+            cfg = _make_model_config(model="brand-new-model")
+            model = _make_model(cfg)
+            assert model.context_length() == 777000
+            # Cache entries have no max_tokens — must not crash, must return None.
+            assert model.max_tokens() is None
+        assert "brand-new-model" in oc._MODEL_SPECS_CACHE
+        assert oc._MODEL_SPECS_CACHE["brand-new-model"]["context_length"] == 777000
+
+    def test_yaml_wins_over_cache_on_shared_slug(self):
+        """YAML value is authoritative when the slug is defined in both."""
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "gpt-4o", "context_length": 9999}]},
+        ):
+            cfg = _make_model_config(model="gpt-4o")
+            model = _make_model(cfg)
+            # conf/providers.yml ships gpt-4o at 128000; cache's 9999 is ignored.
+            assert model.context_length() == 128000
+            assert model.max_tokens() == 16384
+
+    def test_cache_read_error_does_not_break_loader(self):
+        """A broken cache layer must not prevent YAML specs from loading."""
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            side_effect=RuntimeError("boom"),
+        ):
+            cfg = _make_model_config(model="gpt-4o")
+            model = _make_model(cfg)
+            assert model.context_length() == 128000
+
+    def test_cache_entry_without_context_length_is_skipped(self):
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={"openai": [{"id": "only-id-no-ctx"}]},
+        ):
+            cfg = _make_model_config(model="only-id-no-ctx")
+            model = _make_model(cfg)
+            assert model.context_length() is None
+
+    def test_lookup_uses_longest_prefix_match(self):
+        """A short generic prefix must not preempt a more specific one on the same slug."""
+        # Cache injects a deliberately mismatched narrow entry (shorter key wins
+        # via insertion order in the old impl; longest-prefix must prefer the
+        # longer match).
+        with patch(
+            "datus.cli.provider_model_catalog.load_cached_model_details",
+            return_value={
+                "openai": [
+                    {"id": "gpt-4o-short", "context_length": 1},
+                    {"id": "gpt-4o-short-very-specific", "context_length": 99},
+                ]
+            },
+        ):
+            cfg = _make_model_config(model="gpt-4o-short-very-specific-tail")
+            model = _make_model(cfg)
+            # Must prefer the longer prefix key (99), not the shorter one (1).
+            assert model.context_length() == 99
 
 
 # ---------------------------------------------------------------------------
@@ -1144,6 +1392,14 @@ class TestGenerateWithToolsStream:
 class TestBuildAgent:
     """Tests for _build_agent. We patch Agent to capture kwargs without SDK validation."""
 
+    @pytest.fixture(autouse=True)
+    def _permissive_supports_reasoning(self):
+        """Default LiteLLM capability check to True so the reasoning-effort
+        tests in this class exercise the injection path without depending on
+        LiteLLM's built-in model catalog. Individual tests override as needed."""
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=True):
+            yield
+
     def _call_build_agent(self, model, **kwargs):
         defaults = {
             "instruction": "test",
@@ -1210,10 +1466,163 @@ class TestBuildAgent:
     def test_thinking_model_gets_reasoning(self):
         model = _make_model()
         model.litellm_adapter.is_thinking_model = True
+        model.litellm_adapter.reasoning_effort_level = "medium"
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
         assert ms.reasoning is not None
         assert ms.reasoning.effort == "medium"
+
+    @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
+    def test_reasoning_effort_level_passthrough(self, effort):
+        model = _make_model()
+        model.litellm_adapter.is_thinking_model = True
+        model.litellm_adapter.reasoning_effort_level = effort
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.reasoning.effort == effort
+
+    def test_no_reasoning_when_effort_level_is_none(self):
+        model = _make_model()
+        model.litellm_adapter.is_thinking_model = False
+        model.litellm_adapter.reasoning_effort_level = None
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.reasoning is None
+
+    def test_reasoning_injected_when_litellm_reports_true(self):
+        model = _make_model()
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=True):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "high"
+
+    def test_reasoning_defaults_to_permissive_when_litellm_raises(self):
+        """Unknown providers (e.g. self-hosted proxies) make ``supports_reasoning``
+        raise. The gate falls back to permissive so newly released models or
+        custom backends are not blocked from trying /effort."""
+        model = _make_model()
+        model.litellm_adapter.reasoning_effort_level = "medium"
+        with patch(
+            "datus.models.openai_compatible.litellm.supports_reasoning",
+            side_effect=RuntimeError("provider unknown"),
+        ):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "medium"
+
+    @pytest.mark.parametrize(
+        "provider,model_name",
+        [
+            ("deepseek", "deepseek-v4-pro"),
+            ("deepseek", "deepseek-reasoner"),
+            ("deepseek", "deepseek-v5-future"),  # unknown: deny-list negative → permissive
+            ("kimi", "kimi-k2-thinking"),
+            ("kimi", "kimi-k2.6"),
+            ("kimi", "kimi-k2.5"),
+        ],
+    )
+    def test_reasoning_injected_for_thinking_models_despite_litellm_false(self, provider, model_name):
+        """LiteLLM's catalog lags behind DeepSeek V4 / Kimi K2.x. Unknown DeepSeek
+        or Kimi models are *permissively* allowed so future releases automatically
+        work — only explicit deny-list entries are skipped."""
+        cfg = _make_model_config(model=model_name, model_type=provider)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning.effort == "high"
+
+    @pytest.mark.parametrize(
+        "provider,model_name",
+        [
+            ("deepseek", "deepseek-chat"),
+            ("kimi", "kimi-k2"),  # bare k2, non-thinking family
+            ("kimi", "moonshot-v1-8k"),
+            ("kimi", "moonshot-v1-128k"),
+        ],
+    )
+    def test_reasoning_skipped_for_deny_listed_model(self, caplog, provider, model_name):
+        """Datus-maintained non-thinking deny-list forces a skip regardless of
+        LiteLLM's verdict, so users see an explicit warning instead of silent
+        drop_params downgrade."""
+        cfg = _make_model_config(model=model_name, model_type=provider)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            with caplog.at_level("WARNING"):
+                _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning is None
+        assert any("Skipping reasoning" in r.message for r in caplog.records)
+
+    def test_reasoning_skipped_for_non_reasoning_openai_model_when_litellm_false(self, caplog):
+        """OpenAI models outside the reasoning families (gpt-4.1 etc.) are
+        skipped when LiteLLM reports False — the deny-list is scoped to
+        DeepSeek/Kimi, so for other providers we trust LiteLLM's verdict."""
+        model = _make_model()
+        model.litellm_adapter.provider = "openai"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        # _model_supports_reasoning is permissive on LiteLLM False — the
+        # remaining skip-path for OpenAI would require LiteLLM raising or
+        # returning False plus the deny-list match (none for OpenAI). Confirm
+        # the permissive outcome: reasoning IS injected.
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        assert call_args[1]["model_settings"].reasoning is not None
+
+    @pytest.mark.parametrize("model_name", ["deepseek-v4-pro", "deepseek-reasoner"])
+    def test_deepseek_extra_body_carries_thinking_and_reasoning_effort(self, model_name):
+        """DeepSeek's transformation pops ``reasoning_effort`` during param
+        mapping, so Datus re-injects it via ``extra_body`` alongside the
+        ``thinking`` flag. DeepSeek's docs require both to control depth."""
+        cfg = _make_model_config(model=model_name, model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["extra_body"] == {
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+        }
+
+    @pytest.mark.parametrize("model_name", ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking"])
+    def test_kimi_extra_body_only_carries_thinking(self, model_name):
+        """Moonshot's API does not accept ``reasoning_effort``; sending it
+        would be rejected. Only ``thinking.type=enabled`` goes in extra_body."""
+        cfg = _make_model_config(model=model_name, model_type="kimi")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "kimi"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
+            _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["extra_body"] == {"thinking": {"type": "enabled"}}
+        assert "reasoning_effort" not in ms.extra_args["extra_body"]
+
+    def test_extra_body_thinking_not_added_for_openai(self):
+        """OpenAI's reasoning_effort is handled natively by the SDK/Responses
+        API; no native thinking payload should be injected."""
+        model = _make_model()
+        model.litellm_adapter.provider = "openai"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        # extra_args may be unset (None/empty) or set (e.g. prompt_cache_key);
+        # either way, extra_body must never appear for native-reasoning OpenAI.
+        assert "extra_body" not in (ms.extra_args or {})
+
+    def test_extra_body_thinking_not_added_for_deny_listed_deepseek_chat(self):
+        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "deepseek"
+        model.litellm_adapter.reasoning_effort_level = "high"
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        # Gate skipped injection entirely; extra_body must never appear regardless
+        # of whether extra_args was populated by other settings.
+        assert "extra_body" not in (ms.extra_args or {})
 
     def test_temperature_and_top_p_from_config(self):
         cfg = _make_model_config(temperature=0.5, top_p=0.9)

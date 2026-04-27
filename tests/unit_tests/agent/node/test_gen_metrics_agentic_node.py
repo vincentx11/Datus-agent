@@ -24,7 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -52,7 +52,7 @@ class TestGenMetricsAgenticNodeInit:
         assert node.get_node_name() == "gen_metrics"
         assert node.id == "gen_metrics_node"
         assert node.execution_mode == "workflow"
-        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
+        assert node.hooks is None
 
     def test_metrics_has_tools(self, real_agent_config, mock_llm_create):
         """Test that the node has filesystem and generation tools."""
@@ -109,12 +109,29 @@ class TestGenMetricsAgenticNodeInit:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_metrics"] = original
 
+    def test_tool_category_map_splits_semantic_and_db(self, real_agent_config, mock_llm_create):
+        """``_tool_category_map`` buckets semantic helpers into ``semantic_tools`` and
+        DB helpers into ``db_tools`` so profile rules for each match correctly."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        mapping = node._tool_category_map()
+        semantic_names = {t.name for t in mapping.get("semantic_tools", [])}
+        assert "end_metric_generation" in semantic_names
+        assert "check_semantic_object_exists" in semantic_names
+        assert "db_tools" in mapping
+        assert "filesystem_tools" in mapping
+
 
 # ---------------------------------------------------------------------------
 # Execution Tests
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.nightly
 class TestGenMetricsAgenticNodeExecution:
     """Tests for GenMetricsAgenticNode streaming execution."""
 
@@ -220,7 +237,7 @@ class TestGenMetricsAgenticNodeExecution:
             execution_mode="workflow",
         )
 
-        assert not hasattr(node, "hooks")  # hooks removed from gen_metrics
+        assert node.hooks is None
         assert node.execution_mode == "workflow"
 
         node.input = SemanticNodeInput(user_message="Generate metrics")
@@ -417,13 +434,13 @@ class TestSetupDbTools:
         assert node.db_func_tool is not None
 
     def test_db_tools_failure_does_not_break_init(self, real_agent_config, mock_llm_create):
-        """When DBFuncTool.create_dynamic raises, node still initializes with other tools."""
+        """When DBFuncTool() constructor raises, node still initializes with other tools."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         with _patch(
-            "datus.tools.func_tool.DBFuncTool.create_dynamic",
+            "datus.tools.func_tool.DBFuncTool",
             side_effect=RuntimeError("no connection"),
         ):
             node = GenMetricsAgenticNode(
@@ -465,13 +482,13 @@ class TestSetupGenSemanticModelTools:
         assert node.gen_semantic_model_tools is not None
 
     def test_gen_semantic_model_tools_skipped_when_no_db(self, real_agent_config, mock_llm_create):
-        """When DBFuncTool.create_dynamic fails, gen_semantic_model_tools is None but node still works."""
+        """When DBFuncTool() constructor fails, gen_semantic_model_tools is None but node still works."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         with _patch(
-            "datus.tools.func_tool.DBFuncTool.create_dynamic",
+            "datus.tools.func_tool.DBFuncTool",
             side_effect=RuntimeError("no connection"),
         ):
             node = GenMetricsAgenticNode(
@@ -592,6 +609,34 @@ class TestPrepareTemplateContext:
         assert "mcp_tools" in context
 
 
+class TestGetSystemPrompt:
+    def test_workflow_uses_latest_prompt_when_version_unset(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+            mock_pm.return_value.render_template.return_value = "test prompt"
+
+            node._get_system_prompt(template_context={})
+
+            call_kwargs = mock_pm.return_value.render_template.call_args
+            version = call_kwargs.kwargs.get("version")
+            assert version is None
+
+    def test_input_prompt_version_overrides_config(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics", prompt_version="1.2")
+
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
+            mock_pm.return_value.render_template.return_value = "test prompt"
+
+            node._get_system_prompt(template_context={})
+
+            call_kwargs = mock_pm.return_value.render_template.call_args
+            version = call_kwargs.kwargs.get("version")
+            assert version == "1.2", f"Expected explicit version '1.2', got '{version}'"
+
+
 # ---------------------------------------------------------------------------
 # TestGetExistingSubjectTrees
 # ---------------------------------------------------------------------------
@@ -670,23 +715,51 @@ class TestExecuteStreamGenMetricsError:
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
 
+    @pytest.mark.asyncio
+    async def test_final_metric_file_without_publish_fails(self, real_agent_config, mock_llm_create):
+        """A final JSON metric_file is not enough; end_metric_generation must publish."""
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        mock_llm_create.reset(
+            responses=[
+                build_simple_response(
+                    json.dumps(
+                        {
+                            "semantic_model_file": "orders.yml",
+                            "metric_file": "orders_metrics.yml",
+                            "output": "Generated metrics.",
+                        }
+                    )
+                ),
+            ]
+        )
+
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+        )
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        action_manager = ActionHistoryManager()
+        actions = []
+        async for action in node.execute_stream(action_manager):
+            actions.append(action)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert actions[-1].action_type == "error"
+        assert "did not publish to Knowledge Base" in actions[-1].output["error"]
+
 
 class TestGenMetricsFilesystemRootPath:
-    """FilesystemFuncTool is sandboxed to knowledge_base_home (not the type-specific subdir)."""
+    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
 
-    def test_filesystem_root_is_kb_home(self, real_agent_config, mock_llm_create):
+    def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
+        from pathlib import Path
+
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        expected = str(real_agent_config.path_manager.knowledge_base_home)
+        expected = str(Path(real_agent_config.project_root).expanduser())
 
         assert node.filesystem_func_tool is not None
-        assert node.filesystem_func_tool.config.root_path == expected
-        assert node.filesystem_func_tool._path_normalizer is not None
-
-        ns = real_agent_config.current_namespace
-        # metric kind co-locates under semantic_models/
-        assert (
-            node.filesystem_func_tool._path_normalizer("metrics/orders.yaml", None)
-            == f"semantic_models/{ns}/metrics/orders.yaml"
-        )
+        assert node.filesystem_func_tool.root_path == expected

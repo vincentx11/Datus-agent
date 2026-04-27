@@ -12,6 +12,7 @@ from datus.api.models.explorer_models import (
     DeleteSubjectInput,
     EditKnowledgeInput,
     EditMetricInput,
+    EditSemanticModelInput,
     KnowledgeInfo,
     MetricInfo,
     ReferenceSQLInfo,
@@ -39,18 +40,20 @@ class ExplorerService:
             agent_config: Agent configuration object
         """
         self.agent_config = agent_config
-        self.datasource_id = agent_config.current_namespace
+        self.datasource_id = agent_config.current_datasource
         logger.info("ExplorerService initialized")
 
         from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
+        from datus.storage.semantic_model.store import SemanticModelRAG
 
         self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
         self.knowledge_rag = ExtKnowledgeRAG(agent_config, datasource_id=self.datasource_id)
-        self.subject_tree_store = get_subject_tree_store(namespace=self.datasource_id)
+        self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
+        self.subject_tree_store = get_subject_tree_store(project=agent_config.project_name)
 
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""
@@ -742,7 +745,7 @@ class ExplorerService:
             yaml_content=yaml_content,
             file_path=file_path,
             datus_home=self.agent_config.home,
-            namespace=self.agent_config.current_namespace,
+            datasource=self.agent_config.current_datasource,
         )
 
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:
@@ -760,7 +763,6 @@ class ExplorerService:
 
             from datus.api.models.config_models import ErrorCode
             from datus.cli.generation_hooks import GenerationHooks
-            from datus.utils.path_manager import DatusPathManager
 
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
@@ -830,9 +832,9 @@ class ExplorerService:
                     errorMessage=f"Metric '{metric_name}' already exists at path: {'/'.join(parent_path)}",
                 )
 
-            # Step 3: Determine file path
-            path_manager = DatusPathManager(datus_home=self.agent_config.home)
-            semantic_dir = path_manager.semantic_model_path(self.agent_config.current_namespace)
+            # Step 3: Determine file path. Use the agent_config's own path_manager so
+            # the project_root/subject anchoring propagates to derived paths.
+            semantic_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
             file_path = os.path.join(str(semantic_dir), "metrics", f"{metric_name}.yml")
 
             # Step 4: Check for file conflict
@@ -1028,6 +1030,54 @@ class ExplorerService:
 
         except Exception as e:
             logger.error(f"Failed to edit metric: {e}")
+            from datus.api.models.config_models import ErrorCode
+
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=str(e),
+            )
+
+    async def edit_semantic_model(self, request: EditSemanticModelInput) -> Result[dict]:
+        """Edit a semantic model entry (table or column).
+
+        Updates the vector DB and syncs changes back to the YAML file.
+
+        Args:
+            request: Edit semantic model input with entry_id and update_values
+
+        Returns:
+            Result[dict]
+        """
+        try:
+            from datus.api.models.config_models import ErrorCode
+
+            logger.info(f"Editing semantic model entry: {request.entry_id}")
+
+            if not request.entry_id:
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.INVALID_PARAMETERS,
+                    errorMessage="entry_id cannot be empty",
+                )
+
+            if not request.update_values:
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.INVALID_PARAMETERS,
+                    errorMessage="update_values cannot be empty",
+                )
+
+            self.semantic_model_rag.storage.update_entry(
+                entry_id=request.entry_id,
+                update_values=request.update_values,
+            )
+
+            logger.info(f"Successfully updated semantic model entry: {request.entry_id}")
+            return Result[dict](success=True, data={})
+
+        except Exception as e:
+            logger.error(f"Failed to edit semantic model: {e}")
             from datus.api.models.config_models import ErrorCode
 
             return Result[dict](

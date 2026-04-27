@@ -411,7 +411,7 @@ def document_store(platform: str) -> DocumentStore:
     """Get a cached DocumentStore instance for a platform.
 
     Each unique *platform* produces an isolated vector database via a
-    dedicated namespace (``docstore__{platform}``), so different platforms
+    dedicated datasource prefix (``docstore__{platform}``), so different platforms
     never share the same table.  This is backend-agnostic — LanceDB
     creates a separate directory, pgvector would use a separate schema.
 
@@ -435,6 +435,48 @@ def document_store(platform: str) -> DocumentStore:
         )
 
     from datus.storage.backend_holder import create_vector_connection
+    from datus.utils.path_manager import get_path_manager
 
-    db = create_vector_connection(namespace=f"{_DOCUMENT_NS_PREFIX}{platform}")
+    # Compose a project identifier for per-platform document isolation within
+    # the active project: e.g. ``my_project__document__snowflake``.
+    # _SEGMENT_RE (backend path validator) accepts the double-underscore form.
+    active_project = get_path_manager().project_name
+    if not active_project:
+        raise DatusException(
+            ErrorCode.STORAGE_FAILED,
+            message="get_document_store requires an active project_name on the current path manager.",
+        )
+    doc_project = f"{active_project}__{_DOCUMENT_NS_PREFIX}{platform}"
+    db = create_vector_connection(doc_project)
     return DocumentStore(embedding_model=get_document_embedding_model(), db=db)
+
+
+def list_indexed_platforms() -> List[str]:
+    """Enumerate platforms with an on-disk docstore dir for the active project.
+
+    Presence of a per-platform directory is treated as "indexed"; we avoid
+    calling ``has_data()`` per platform to keep the scan cheap.  A stale
+    directory whose table was manually dropped will let the tool be
+    exposed and fail at call time, which is an acceptable trade-off.
+    """
+    import os
+
+    from datus.storage import backend_holder
+    from datus.utils.path_manager import get_path_manager
+
+    active_project = get_path_manager().project_name
+    data_dir = getattr(backend_holder, "_data_dir", "")
+    if not active_project or not data_dir or not os.path.isdir(data_dir):
+        return []
+
+    prefix = f"{active_project}__{_DOCUMENT_NS_PREFIX}"
+    platforms: List[str] = []
+    try:
+        for entry in os.listdir(data_dir):
+            if entry.startswith(prefix):
+                platform = entry[len(prefix) :]
+                if platform:
+                    platforms.append(platform)
+    except OSError:
+        return []
+    return sorted(platforms)

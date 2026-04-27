@@ -23,7 +23,7 @@ from datus.utils.constants import SYS_SUB_AGENTS
 def mock_agent_config():
     config = Mock(spec=AgentConfig)
     config.db_type = "sqlite"
-    config.current_database = "test_db"
+    config.current_datasource = "test_db"
     config.agentic_nodes = {
         "chat": {"model": "default"},
         "gen_sql": {"model": "default", "system_prompt": "gen_sql", "node_class": "gen_sql"},
@@ -96,7 +96,7 @@ class TestGetAvailableTypes:
     def test_includes_agent_without_node_class(self):
         """Subagent without node_class should still be discovered (defaults to gen_sql)."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "custom": {"model": "default"},  # no node_class
@@ -106,32 +106,32 @@ class TestGetAvailableTypes:
         assert "gen_sql" in types
         assert "custom" in types
 
-    def test_excludes_scoped_agent_wrong_namespace(self):
-        """Subagent with scoped_context bound to a different namespace should be excluded."""
+    def test_excludes_scoped_agent_wrong_datasource(self):
+        """Subagent with scoped_context bound to a different datasource should be excluded."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
                 "model": "default",
                 "node_class": "gen_sql",
-                "scoped_context": {"namespace": "other_ns", "tables": "t1"},
+                "scoped_context": {"datasource": "other_ds", "tables": "t1"},
             },
         }
         tool = SubAgentTaskTool(agent_config=config)
         types = tool._get_available_types()
         assert "scoped_agent" not in types
 
-    def test_includes_scoped_agent_matching_namespace(self):
-        """Subagent with scoped_context matching current namespace should be included."""
+    def test_includes_scoped_agent_matching_datasource(self):
+        """Subagent with scoped_context matching current datasource should be included."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "sales"
+        config.current_datasource = "sales"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "scoped_agent": {
                 "model": "default",
                 "node_class": "gen_sql",
-                "scoped_context": {"namespace": "sales", "tables": "orders"},
+                "scoped_context": {"datasource": "sales", "tables": "orders"},
             },
         }
         tool = SubAgentTaskTool(agent_config=config)
@@ -139,9 +139,9 @@ class TestGetAvailableTypes:
         assert "scoped_agent" in types
 
     def test_includes_agent_without_scoped_context(self):
-        """Subagent without scoped_context should not be filtered by namespace."""
+        """Subagent without scoped_context should not be filtered by datasource."""
         config = Mock(spec=AgentConfig)
-        config.current_database = "default"
+        config.current_datasource = "default"
         config.agentic_nodes = {
             "chat": {"model": "default"},
             "global_agent": {
@@ -153,6 +153,41 @@ class TestGetAvailableTypes:
         tool = SubAgentTaskTool(agent_config=config)
         types = tool._get_available_types()
         assert "global_agent" in types
+
+    def test_explicit_list_filters_out_unknown_types(self, caplog):
+        """Unknown types in explicit allowed_subagents are skipped with a warning."""
+        config = Mock(spec=AgentConfig)
+        config.current_datasource = "default"
+        config.agentic_nodes = {"chat": {"model": "default"}}
+        tool = SubAgentTaskTool(
+            agent_config=config,
+            allowed_subagents=["gen_sql", "nonexistent_foo", "explore"],
+            parent_node_name="chat",
+        )
+
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="datus.tools.func_tool.sub_agent_task_tool"):
+            types = tool._get_available_types()
+
+        assert "gen_sql" in types
+        assert "explore" in types
+        assert "nonexistent_foo" not in types
+        assert any("nonexistent_foo" in rec.message for rec in caplog.records)
+
+    def test_explicit_list_excludes_self(self):
+        """The parent node name is excluded even if listed in allowed_subagents."""
+        config = Mock(spec=AgentConfig)
+        config.current_datasource = "default"
+        config.agentic_nodes = {"chat": {"model": "default"}}
+        tool = SubAgentTaskTool(
+            agent_config=config,
+            allowed_subagents=["gen_sql", "explore"],
+            parent_node_name="gen_sql",
+        )
+        types = tool._get_available_types()
+        assert "gen_sql" not in types
+        assert "explore" in types
 
 
 # ── _resolve_node_type ─────────────────────────────────────────────
@@ -198,7 +233,6 @@ class TestResolveNodeType:
             "explore": NodeType.TYPE_EXPLORE,
             "gen_table": NodeType.TYPE_GEN_TABLE,
             "gen_job": NodeType.TYPE_GEN_JOB,
-            "migration": NodeType.TYPE_MIGRATION,
             "gen_skill": NodeType.TYPE_GEN_SKILL,
             "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
             "scheduler": NodeType.TYPE_SCHEDULER,
@@ -245,6 +279,22 @@ class TestBuildTaskDescription:
         desc = task_tool._build_task_description()
         assert "PARALLEL" in desc
         assert "direction-specific prompt" in desc
+
+    def test_migration_subagent_removed(self, task_tool):
+        """Migration has been merged into gen_job — it should no longer be a standalone type."""
+        desc = task_tool._build_task_description()
+        # The literal subagent name 'migration' should not appear as a bullet entry
+        assert "- migration:" not in desc
+
+    def test_gen_job_description_mentions_cross_database_migration(self, task_tool):
+        """Parent ChatAgenticNode routes to gen_job for migration — description must carry the signal."""
+        desc = task_tool._build_task_description()
+        # Pin the exact routing keywords the description commits to so the
+        # parent agent's routing LLM has a deterministic match.
+        haystack = desc.lower()
+        assert "gen_job" in haystack
+        assert "migration" in haystack
+        assert "cross-database migration" in haystack
 
 
 # ── node creation (fresh per invocation) ──────────────────────────
@@ -372,6 +422,53 @@ class TestTaskExecution:
         result = await task_tool.task(type="nonexistent", prompt="test")
         assert result.success == 0
         assert "disallowed subagent type" in result.error
+        # repr of the offending value is included so hidden characters become visible
+        assert "'nonexistent'" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_type_with_whitespace_is_normalized(self, task_tool):
+        """LLM sometimes emits ``" gen_sql "`` — _execute_node must strip before matching."""
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 1, "success": True}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node) as create:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="  gen_sql\n", prompt="test")
+
+        assert result.success == 1
+        # The normalized (stripped) type is what gets passed to _create_node.
+        create.assert_called_once_with("gen_sql")
+
+    @pytest.mark.asyncio
+    async def test_execute_type_with_quotes_is_normalized(self, task_tool):
+        """LLM sometimes wraps the type in quotes — outer quotes must be stripped."""
+        mock_action = Mock(spec=ActionHistory)
+        mock_action.status = ActionStatus.SUCCESS
+        mock_action.role = ActionRole.TOOL
+        mock_action.output = {"sql": "SELECT 1", "response": "ok", "tokens_used": 1, "success": True}
+
+        mock_node = MagicMock()
+
+        async def mock_stream(ahm):
+            yield mock_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node) as create:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type='"gen_sql"', prompt="test")
+
+        assert result.success == 1
+        create.assert_called_once_with("gen_sql")
 
     @pytest.mark.asyncio
     async def test_execute_missing_type(self, task_tool):
@@ -794,9 +891,14 @@ class TestBuildTaskDescriptionFileStorage:
 @pytest.mark.ci
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
-        """All 4 SYS_SUB_AGENTS appear in available types."""
+        """All SYS_SUB_AGENTS appear in available types, except 'feedback'
+        which is a top-level node and not task()-delegatable."""
         types = task_tool._get_available_types()
+        # feedback is a top-level node and must NEVER be exposed as delegatable.
+        assert "feedback" not in types, "feedback must not be exposed as a delegatable subagent"
         for name in SYS_SUB_AGENTS:
+            if name == "feedback":
+                continue
             assert name in types, f"{name} not found in available types"
 
     def test_no_duplicates(self, task_tool):
@@ -816,10 +918,12 @@ class TestGetAvailableTypesBuiltIn:
         assert types.count("gen_sql_summary") == 1
 
     def test_builtin_types_sorted(self, task_tool):
-        """Built-in types appear in sorted order after gen_sql."""
+        """Built-in types appear in sorted order after gen_sql (excluding 'feedback',
+        which is not task()-delegatable)."""
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        assert builtin_in_list == sorted(SYS_SUB_AGENTS)
+        expected = sorted(name for name in SYS_SUB_AGENTS if name != "feedback")
+        assert builtin_in_list == expected
 
 
 # ── Built-in subagent: _resolve_node_type ──────────────────────────
@@ -864,6 +968,7 @@ class TestCreateBuiltinNode:
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
@@ -872,6 +977,7 @@ class TestCreateBuiltinNode:
         mock_init.assert_called_once_with(
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
@@ -881,6 +987,7 @@ class TestCreateBuiltinNode:
             node_name="gen_sql_summary",
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_ext_knowledge_agentic_node.GenExtKnowledgeAgenticNode.__init__", return_value=None)
@@ -890,6 +997,7 @@ class TestCreateBuiltinNode:
             node_name="gen_ext_knowledge",
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
+            is_subagent=True,
         )
 
     @patch("datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__", return_value=None)
@@ -901,6 +1009,40 @@ class TestCreateBuiltinNode:
             agent_config=task_tool.agent_config,
             execution_mode="interactive",
             node_id=ANY,
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.gen_job_agentic_node.GenJobAgenticNode.__init__", return_value=None)
+    def test_gen_job(self, mock_init, task_tool):
+        task_tool._create_builtin_node("gen_job")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__", return_value=None)
+    def test_gen_dashboard(self, mock_init, task_tool):
+        from unittest.mock import ANY
+
+        task_tool._create_builtin_node("gen_dashboard")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            node_id=ANY,
+            is_subagent=True,
+        )
+
+    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
+    def test_scheduler(self, mock_init, task_tool):
+        from unittest.mock import ANY
+
+        task_tool._create_builtin_node("scheduler")
+        mock_init.assert_called_once_with(
+            agent_config=task_tool.agent_config,
+            execution_mode="interactive",
+            node_id=ANY,
+            is_subagent=True,
         )
 
     def test_unknown_builtin_raises(self, task_tool):
@@ -912,6 +1054,20 @@ class TestCreateBuiltinNode:
         with patch.object(task_tool, "_create_builtin_node", return_value=Mock()) as mock_builtin:
             task_tool._create_node("gen_semantic_model")
             mock_builtin.assert_called_once_with("gen_semantic_model")
+
+    def test_create_node_custom_passes_is_subagent_true(self, task_tool):
+        """Custom agents must receive ``is_subagent=True`` via Node.new_instance.
+
+        This enforces 2-level depth at the source: the child never constructs a
+        SubAgentTaskTool, so there is nothing to strip post-construction.
+        """
+        with patch("datus.agent.node.node.Node.new_instance", return_value=Mock()) as mock_new_instance:
+            task_tool._create_node("sales_analyst")
+
+        mock_new_instance.assert_called_once()
+        call_kwargs = mock_new_instance.call_args.kwargs
+        assert call_kwargs["is_subagent"] is True
+        assert call_kwargs["node_name"] == "sales_analyst"
 
 
 # ── _resolve_execution_mode ─────────────────────────────────────────
@@ -1060,7 +1216,11 @@ class TestBuildNodeInputBuiltIn:
 class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
         desc = task_tool._build_task_description()
+        # feedback is a top-level node; must NEVER be advertised to the LLM.
+        assert "feedback" not in desc, "feedback must not appear in task description"
         for name in SYS_SUB_AGENTS:
+            if name == "feedback":
+                continue
             assert name in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):

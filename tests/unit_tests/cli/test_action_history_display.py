@@ -390,8 +390,9 @@ class TestNoSubAgentNormalFlow:
         assert len(ctx._subagent_groups) == 0
         assert len(printed) > 0
 
-    def test_processing_tool_pauses(self):
-        """depth=0 PROCESSING TOOL pauses _process_actions (returns without advancing)."""
+    def test_processing_tool_pins_frame_and_advances(self):
+        """depth=0 PROCESSING TOOL pins a blinking frame and advances the index
+        so the paired SUCCESS action can be consumed on arrival."""
         actions = []
         display = ActionHistoryDisplay()
         ctx = InlineStreamingContext(actions, display)
@@ -410,11 +411,13 @@ class TestNoSubAgentNormalFlow:
         )
 
         with patch.object(display.console, "print"):
-            with patch("datus.cli.action_display.streaming.Live"):
+            with patch("datus.cli.action_display.streaming.Live") as MockLive:
                 ctx._process_actions()
 
-        # Index should NOT advance past PROCESSING
-        assert ctx._processed_index == 0
+        # Index advances past PROCESSING; the blink keeps repainting via Rich Live.
+        assert ctx._processed_index == 1
+        # Non-TUI path instantiates Rich Live with the PROCESSING renderable.
+        assert MockLive.called
 
 
 @pytest.mark.ci
@@ -2567,7 +2570,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"result": [{"name": "t1"}, {"name": "t2"}]}'},
         )
         tc = _build_list_tables(action, verbose=False)
-        assert "2 tables" in tc.output_preview
+        assert "2 tables" in tc.compact_result
 
     def test_describe_table_function(self):
         """describe_table function shows column count via registered builder."""
@@ -2580,7 +2583,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"result": [{"col": "a"}, {"col": "b"}, {"col": "c"}]}'},
         )
         tc = _build_describe_table(action, verbose=False)
-        assert "3 columns" in tc.output_preview
+        assert "3 columns" in tc.compact_result
 
     def test_error_output(self):
         """Failed output with error message shows failure."""
@@ -2641,7 +2644,7 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"original_rows": 42}'},
         )
         tc = _build_read_query(action, verbose=False)
-        assert "42 rows" in tc.output_preview
+        assert "42 rows" in tc.compact_result
 
     def test_search_table_function(self):
         """search_table function shows metadata and sample counts via registered builder."""
@@ -2654,8 +2657,8 @@ class TestGetToolOutputPreview:
             output_data={"raw_output": '{"metadata": [{"t": 1}, {"t": 2}], "sample_data": [{"r": 1}]}'},
         )
         tc = _build_search_table(action, verbose=False)
-        assert "2 tables" in tc.output_preview
-        assert "1 sample rows" in tc.output_preview
+        assert "2 tables" in tc.compact_result
+        assert "1 sample row" in tc.compact_result
 
     def test_search_metrics_function(self):
         """search_metrics function shows metrics count via registered builder."""
@@ -2668,7 +2671,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1, 2]},
         )
         tc = _build_search_metrics(action, verbose=False)
-        assert "metrics" in tc.output_preview
+        assert "metrics" in tc.compact_result
 
     def test_search_reference_sql_function(self):
         """search_reference_sql function shows SQL count via registered builder."""
@@ -2681,7 +2684,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_reference_sql(action, verbose=False)
-        assert "reference SQLs" in tc.output_preview
+        assert "1 reference SQL matched" in tc.compact_result
 
     def test_search_external_knowledge_function(self):
         """search_external_knowledge function shows knowledge count via registered builder."""
@@ -2694,7 +2697,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_external_knowledge(action, verbose=False)
-        assert "knowledge entries" in tc.output_preview
+        assert "1 knowledge entry matched" in tc.compact_result
 
     def test_search_documents_function(self):
         """search_documents function shows document count via registered builder."""
@@ -2707,7 +2710,7 @@ class TestGetToolOutputPreview:
             output_data={"result": [1]},
         )
         tc = _build_search_documents(action, verbose=False)
-        assert "documents" in tc.output_preview
+        assert "1 document matched" in tc.compact_result
 
     def test_generic_success_fallback(self):
         """Generic success output without items shows 'Success'."""
@@ -2935,7 +2938,7 @@ class TestRenderInteraction:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             messages="Choose option",
-            input_data={"contents": ["Please confirm"], "content_type": "text", "choices": [{}]},
+            input_data={"events": [{"content": "Please confirm", "content_type": "text", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
@@ -2951,7 +2954,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["key: value"], "content_type": "yaml", "choices": [{}]},
+            input_data={"events": [{"content": "key: value", "content_type": "yaml", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         from rich.syntax import Syntax
@@ -2966,7 +2969,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["SELECT 1"], "content_type": "sql", "choices": [{}]},
+            input_data={"events": [{"content": "SELECT 1", "content_type": "sql", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         from rich.syntax import Syntax
@@ -2981,7 +2984,7 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
-            input_data={"contents": ["## Title\nBody"], "content_type": "markdown", "choices": [{}]},
+            input_data={"events": [{"content": "## Title\nBody", "content_type": "markdown", "choices": {}}]},
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
         assert any(isinstance(r, Markdown) for r in renderables)
@@ -2995,9 +2998,13 @@ class TestRenderInteraction:
             ActionRole.INTERACTION,
             ActionStatus.PROCESSING,
             input_data={
-                "contents": ["Pick one: y=Yes, n=No"],
-                "content_type": "text",
-                "choices": [{"y": "Yes", "n": "No"}],
+                "events": [
+                    {
+                        "content": "Pick one: y=Yes, n=No",
+                        "content_type": "text",
+                        "choices": {"y": "Yes", "n": "No"},
+                    }
+                ],
             },
         )
         renderables = renderer.render_interaction_request(action, verbose=False)
@@ -3015,8 +3022,9 @@ class TestRenderInteraction:
         action = _make_action(
             ActionRole.INTERACTION,
             ActionStatus.SUCCESS,
-            messages="Confirmed",
-            output_data={"content": "Saved!", "content_type": "text", "user_choice": "y"},
+            messages="Saved!",
+            input_data={"events": [{"content": "Confirm?", "content_type": "text"}]},
+            output_data={"user_choice": "y"},
         )
         renderables = renderer.render_interaction_success(action, verbose=False)
         texts = [r.plain if hasattr(r, "plain") else str(r) for r in renderables]
@@ -3261,14 +3269,6 @@ class TestInlineStreamingContextProperties:
         assert not ctx._verbose_toggle_event.is_set()
         ctx.toggle_verbose()
         assert ctx._verbose_toggle_event.is_set()
-
-    def test_recreate_live_display_calls_restart(self):
-        """recreate_live_display is a compatibility shim for restart_display."""
-        display = ActionHistoryDisplay()
-        ctx = InlineStreamingContext([], display)
-        ctx._paused = True
-        ctx.recreate_live_display()
-        assert ctx._paused is False
 
 
 @pytest.mark.ci
@@ -4686,6 +4686,181 @@ class TestPendingTaskToolSkips:
         assert "parse_temporal_expressions" in output
         subagent_standalone = [line for line in lines if "subagent" in line.lower() and "result" in line.lower()]
         assert len(subagent_standalone) == 0
+
+
+@pytest.mark.ci
+class TestSubagentTaskSkipOrderIndependence:
+    """The skip of standalone ``task`` tool calls must be order-independent.
+
+    The ActionBus may yield the outer ``task`` SUCCESS before the queued
+    ``subagent_complete`` (FIRST_COMPLETED race in ``ActionBus.merge``).
+    When that happens the action list slice handed to ``render_action_history``
+    has the task action *before* the subagent_complete that names it. The
+    counter-only skip (``pending_task_tool_skips``) misses this case and
+    renders BOTH a standalone ``⏺ explore(...) result - ✓ Success`` block
+    and the collapsed ``⏴ explore(...) Done ✓`` block.
+    """
+
+    def _build_reordered_actions(self, *, with_response: bool = False):
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        output_data = (
+            {"raw_output": '{"success": 1, "result": {"response": "found tables"}}'} if with_response else None
+        )
+        return [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Find tables",
+                input_data={"_task_description": "Find tables"},
+                start_time=t0,
+                parent_action_id="call_42",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_schema",
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="call_42",
+            ),
+            # Reordered: task SUCCESS arrives BEFORE subagent_complete.
+            # The model layer (``openai_compatible``/``claude_model``/
+            # ``codex_model``) prefixes the SUCCESS action_id with
+            # ``complete_``; the matching ``subagent_complete`` carries
+            # the bare ``call_id`` in ``parent_action_id``.
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                messages="task",
+                input_data={"function_name": "task", "type": "explore", "prompt": "Find tables"},
+                output_data=output_data,
+                start_time=t0,
+                end_time=t1,
+                action_id="complete_call_42",
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="call_42",
+            ),
+        ]
+
+    def test_compact_does_not_double_render_when_task_arrives_before_complete(self):
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+        display.render_action_history(self._build_reordered_actions(), verbose=False)
+
+        output = buf.getvalue()
+        # Only the collapsed marker should appear, never the expanded ⏺
+        # header that ``render_task_tool_as_subagent`` emits in compact mode.
+        assert "\u23f4" in output, "Expected collapsed ⏴ subagent marker"
+        assert "\u23fa" not in output, "Expanded ⏺ marker indicates duplicate render"
+        # ``result - …  ✓ Success`` is the unique compact-mode signature of
+        # ``render_task_tool_as_subagent`` — it must not appear here.
+        assert "result -" not in output
+
+    def _build_forward_actions(self, *, with_response: bool = False):
+        """Action ordering used during a normal end-of-turn reprint.
+
+        ``subagent_complete`` arrives first, then the outer ``task`` SUCCESS
+        action carrying the ``complete_`` prefix that
+        ``openai_compatible``/``claude_model``/``codex_model`` apply.
+        """
+        t0 = datetime(2025, 1, 1, 12, 0, 0)
+        t1 = datetime(2025, 1, 1, 12, 0, 1)
+        output_data = (
+            {"raw_output": '{"success": 1, "result": {"response": "found tables"}}'} if with_response else None
+        )
+        return [
+            _make_action(
+                ActionRole.USER,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="explore",
+                messages="User: Find tables",
+                input_data={"_task_description": "Find tables"},
+                start_time=t0,
+                parent_action_id="call_42",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=1,
+                action_type="search_schema",
+                messages="search_schema",
+                input_data={"function_name": "search_schema"},
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="call_42",
+            ),
+            _make_action(
+                ActionRole.SYSTEM,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type=SUBAGENT_COMPLETE_ACTION_TYPE,
+                messages="",
+                start_time=t0,
+                end_time=t1,
+                parent_action_id="call_42",
+            ),
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                depth=0,
+                action_type="task",
+                messages="task",
+                input_data={"function_name": "task", "type": "explore", "prompt": "Find tables"},
+                output_data=output_data,
+                start_time=t0,
+                end_time=t1,
+                action_id="complete_call_42",
+            ),
+        ]
+
+    def test_compact_full_screen_reprint_with_complete_prefix(self):
+        """End-of-turn / Ctrl+O compact reprint must skip the ``complete_<call_id>`` task SUCCESS."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+        display.render_action_history(self._build_forward_actions(), verbose=False)
+
+        output = buf.getvalue()
+        assert "\u23f4" in output, "Expected collapsed ⏴ subagent marker"
+        assert "\u23fa" not in output, "Expanded ⏺ marker indicates duplicate render"
+        assert "result -" not in output
+
+    def test_verbose_renders_response_when_task_arrives_before_complete(self):
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=200)
+        display = ActionHistoryDisplay(console)
+        display.render_action_history(self._build_reordered_actions(with_response=True), verbose=True)
+
+        output = buf.getvalue()
+        # Exactly one Done summary, group rendered expanded with response.
+        assert output.count("Done") == 1
+        assert "search_schema" in output
+        assert "found tables" in output
+        # ``result - …`` is the unique compact/verbose signature of
+        # ``render_task_tool_as_subagent`` and must not leak through —
+        # the response is owned by ``render_subagent_response``.
+        assert "result -" not in output
+        # Only one ``⏺`` marker (the subagent group header). A second one
+        # would indicate the standalone task render was produced too.
+        assert output.count("\u23fa") == 1
 
 
 @pytest.mark.ci

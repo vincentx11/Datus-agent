@@ -43,9 +43,9 @@ class PrintModeRunner:
         self.scope = getattr(args, "session_scope", None)
         self.stream_thinking = getattr(args, "stream_thinking", False)
 
-        # Database context from args
+        # Datasource context from args
         self.catalog = getattr(args, "catalog", None)
-        self.database = getattr(args, "database", None) or None
+        self.database = getattr(args, "datasource", None) or None
         self.db_schema = getattr(args, "schema", None)
 
     def run(self):
@@ -97,7 +97,7 @@ class PrintModeRunner:
                     )
                     if not self.proxy_tool_patterns:
                         user_input = await asyncio.to_thread(self._read_interaction_input)
-                        await node.interaction_broker.submit(action.action_id, user_input)
+                        await node.interaction_broker.submit(action.action_id, [[user_input]])
                     continue
 
                 # Streaming thinking deltas: emit only when --stream is enabled

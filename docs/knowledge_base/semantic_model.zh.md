@@ -50,13 +50,13 @@
 ```bash
 # 从 CSV（历史 SQLs）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components semantic_model \
     --success_story path/to/success_story.csv
 
 # 从 YAML（现有语义模型文件）
 datus-agent bootstrap-kb \
-    --namespace <your_namespace> \
+    --datasource <your_datasource> \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
 ```
@@ -65,7 +65,7 @@ datus-agent bootstrap-kb \
 
 | 参数 | 必需 | 描述 | 示例 |
 |-----------|----------|-------------|---------|
-| `--namespace` | ✅ | 数据库命名空间 | `sales_db` |
+| `--datasource` | ✅ | 数据库数据源 | `sales_db` |
 | `--components` | ✅ | 要初始化的组件 | `semantic_model` |
 | `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件（如果没有 `--semantic_yaml` 则必需） | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件（如果没有 `--success_story` 则必需） | `semantic_model.yaml` |
@@ -158,11 +158,11 @@ Agent 处理流程：
 
 ## 与上下文搜索集成
 
-语义模型可通过 `@subject` 上下文命令搜索：
+语义模型可通过 `/subject` 上下文命令搜索：
 
 ```bash
 # 在 CLI 聊天模式中
-@subject <domain>/<layer1>/<layer2>
+/subject <domain>/<layer1>/<layer2>
 
 # 搜索语义对象
 search_semantic_objects(query="customer revenue", kinds=["table", "column"])

@@ -69,7 +69,7 @@ class Agent:
         if db_manager:
             self.db_manager = db_manager
         else:
-            self.db_manager = db_manager_instance(self.global_config.namespaces)
+            self.db_manager = db_manager_instance(self.global_config.datasource_configs)
 
         self.tools = {}
         self.storage_modules = {}
@@ -159,23 +159,23 @@ class Agent:
     def check_db(self):
         """Validate database connectivity."""
         logger.info("Checking database connectivity")
-        namespace = self.global_config.current_database
-        if namespace in self.global_config.namespaces:
-            connections = self.db_manager.get_connections(namespace)
+        datasource = self.global_config.current_datasource
+        if datasource in self.global_config.datasource_configs:
+            connections = self.db_manager.get_connections(datasource)
             if not connections:
-                logger.warning(f"No connections found for {namespace}")
-                return {"status": "error", "message": f"No connections found for {namespace}"}
+                logger.warning(f"No connections found for {datasource}")
+                return {"status": "error", "message": f"No connections found for {datasource}"}
             if isinstance(connections, dict):
                 for name, conn in connections.items():
                     conn.test_connection()
                     logger.info(f"Database connection test successful for {name}")
             else:
                 connections.test_connection()
-                logger.info(f"Database connection test successful {namespace}")
+                logger.info(f"Database connection test successful {datasource}")
             return {"status": "success", "message": "Database connection test successful"}
         else:
-            logger.error(f"Database connection test failed: {namespace} not found in namespaces")
-            return {"status": "error", "message": f"{namespace} not found in namespaces"}
+            logger.error(f"Database connection test failed: {datasource} not found in datasources")
+            return {"status": "error", "message": f"{datasource} not found in datasources"}
 
     def probe_llm(self):
         """Test LLM model connectivity."""
@@ -411,7 +411,7 @@ class Agent:
                     init_dev_schema(
                         self.metadata_store,
                         self.db_manager,
-                        self.global_config.current_database,
+                        self.global_config.current_datasource,
                         benchmark_path,
                         kb_update_strategy,
                         pool_size=pool_size,
@@ -437,11 +437,11 @@ class Agent:
 
             elif component == "semantic_model":
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
+                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_database
+                            self.global_config.current_datasource
                         )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
@@ -487,11 +487,11 @@ class Agent:
 
             elif component == "metrics":
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{namespace} directory when NOT using --from_adapter
+                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
                     if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_database
+                            self.global_config.current_datasource
                         )
                         force = self._force_delete
                         if semantic_yaml_dir.exists() and not safe_rmtree(
@@ -540,10 +540,8 @@ class Agent:
                 return result
             elif component == "ext_knowledge":
                 if kb_update_strategy == "overwrite":
-                    # Also clear ext_knowledge/{namespace} directory
-                    ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path(
-                        self.global_config.current_database
-                    )
+                    # Also clear the ext_knowledge directory
+                    ext_knowledge_dir = self.global_config.path_manager.ext_knowledge_path()
                     force = self._force_delete
                     if ext_knowledge_dir.exists() and not safe_rmtree(
                         ext_knowledge_dir, "external knowledge directory", force=force
@@ -584,10 +582,8 @@ class Agent:
                 }
             elif component == "reference_sql":
                 if kb_update_strategy == "overwrite":
-                    # Also clear sql_summaries/{namespace} directory (YAML files)
-                    sql_summary_dir = self.global_config.path_manager.sql_summary_path(
-                        self.global_config.current_database
-                    )
+                    # Also clear the sql_summaries directory (YAML files)
+                    sql_summary_dir = self.global_config.path_manager.sql_summary_path()
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force
@@ -694,8 +690,8 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
-        _, conn = db_manager_instance(self.global_config.namespaces).first_conn_with_name(
-            self.global_config.current_database
+        _, conn = db_manager_instance(self.global_config.datasource_configs).first_conn_with_name(
+            self.global_config.current_datasource
         )
         self.check_db()
 
@@ -831,18 +827,18 @@ class Agent:
 
     def _cleanup_benchmark_output_paths(self, benchmark_path: str):
         """Clean up previous benchmark execution results to avoid interference."""
-        current_database = self.global_config.current_database
+        current_datasource = self.global_config.current_datasource
 
-        # Clean up namespace directory in output directory
+        # Clean up datasource directory in output directory
         output_dir = self.global_config.output_dir
-        namespace_dir = os.path.join(output_dir, current_database)
-        if os.path.exists(namespace_dir):
-            logger.info(f"Cleaning up namespace directory: {namespace_dir}")
+        datasource_dir = os.path.join(output_dir, current_datasource)
+        if os.path.exists(datasource_dir):
+            logger.info(f"Cleaning up datasource directory: {datasource_dir}")
             try:
-                shutil.rmtree(namespace_dir)
-                logger.info(f"Successfully removed namespace directory: {namespace_dir}")
+                shutil.rmtree(datasource_dir)
+                logger.info(f"Successfully removed datasource directory: {datasource_dir}")
             except Exception as e:
-                logger.warning(f"Failed to clean namespace directory {namespace_dir}: {e}")
+                logger.warning(f"Failed to clean datasource directory {datasource_dir}: {e}")
 
         # Clean up gold directory (which contains exec_result)
         gold_path = os.path.join(benchmark_path, "gold")
@@ -1029,10 +1025,10 @@ class Agent:
 
 
 def bootstrap_platform_doc(args: argparse.Namespace, agent_config: AgentConfig):
-    """Initialize platform documentation (namespace-independent).
+    """Initialize platform documentation (datasource-independent).
 
     Standalone function that uses AgentConfig for path resolution but does NOT
-    require a valid namespace or Agent instance.
+    require a valid datasource or Agent instance.
 
     Parameters are resolved with: CLI args > YAML config (agent.document.{platform}) > defaults.
 

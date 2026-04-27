@@ -48,32 +48,52 @@ Once installed, Datus Agent will automatically detect and load the adapter.
 
 ## Configuration
 
-Configure your semantic layer in the `agent.yml` file under the `semantic` section:
+Configure semantic adapters under `agent.services.semantic_layer` in `agent.yml`:
+
+The entire `semantic_layer` block is optional when you use MetricFlow with default settings. In that case Datus defaults to `metricflow` automatically.
 
 ### MetricFlow
 
 ```yaml
-semantic:
-  type: metricflow
-  namespace: my_project
-  timeout: 30  # optional, default is 30 seconds
-  config_path: /path/to/agent.yml  # optional, uses default lookup if not specified
+agent:
+  services:
+    semantic_layer:
+      metricflow:
+        timeout: 300  # optional, default is 300 seconds
+        config_path: /path/to/agent.yml  # optional advanced override
+
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: metricflow
+    gen_metrics:
+      semantic_adapter: metricflow
 ```
 
 **Semantic Model File Location**:
-MetricFlow automatically locates semantic model files at:
+By default, Datus points MetricFlow at the current project's semantic model directory:
 ```text
-{agent.home}/semantic_models/{namespace}/
+{project_root}/subject/semantic_models/
 ```
-- `agent.home` is read from `agent.yml` (defaults to `~/.datus`)
+- `project_root` is the active Datus project root.
+- The configured semantic model directory is treated as authoritative. Generated YAML files under project-local or gitignored directories are still included in MetricFlow validation.
 
-### Configuration Lookup Priority
+### Selection Rules
 
-When initializing MetricFlow adapter:
+- The key under `services.semantic_layer` **must equal the adapter type** (for example `metricflow`). If a `type:` field is present, it must match the key; otherwise Datus raises a configuration error at startup. Comparison is case-insensitive and trims surrounding whitespace, so `MetricFlow` and ` metricflow ` also match.
+- Semantic nodes choose the adapter with `semantic_adapter`.
+- If both `services.semantic_layer` and `semantic_adapter` are omitted, Datus defaults to `metricflow`.
+- If `semantic_adapter` is omitted and only one semantic layer is configured, Datus uses that adapter automatically.
+- If multiple semantic layers are configured, set `semantic_adapter` explicitly.
 
-1. `config_path` parameter (if explicitly provided)
-2. `./conf/agent.yml` (current directory)
-3. `~/.datus/conf/agent.yml` (home directory)
+### About `config_path`
+
+`config_path` is optional. The normal runtime path builds MetricFlow config from:
+
+1. the selected datasource in `services.datasources`
+2. the current project's semantic model directory
+3. the active `agent.home`
+
+Use `config_path` only when you explicitly need MetricFlow to initialize from a different agent config file.
 
 ## Core Interfaces
 
@@ -115,7 +135,7 @@ from datus.tools.semantic_tools import semantic_adapter_registry
 from datus_semantic_metricflow.config import MetricFlowConfig
 
 async def main():
-    config = MetricFlowConfig(namespace="my_project")
+    config = MetricFlowConfig(datasource="my_project")
     adapter = semantic_adapter_registry.create_adapter("metricflow", config)
 
     metrics = await adapter.list_metrics(limit=10)
@@ -140,7 +160,7 @@ asyncio.run(dry_run_example())
 ### Bootstrap from Adapter
 
 ```bash
-datus-agent bootstrap-kb --database my_project --components metrics \
+datus-agent bootstrap-kb --datasource my_project --components metrics \
   --from_adapter metricflow --kb-update-strategy overwrite
 ```
 
@@ -161,6 +181,7 @@ All semantic adapters support:
 - Full MetricFlow API integration
 - YAML-based semantic model files
 - Three-stage validation (lint, parse, semantic)
+- Validation reports YAML issues even when the MetricFlow client cannot be fully initialized from invalid generated files
 - SQL generation and explain
 - Time range filtering with granularity
 
@@ -215,7 +236,7 @@ See the MetricFlow adapter implementation for a complete example:
 | Issue | Solution |
 |-------|----------|
 | Adapter not found | Install the adapter: `pip install datus-semantic-metricflow` |
-| Connection issues | Verify `agent.yml` config, check namespace matches semantic model directory |
+| Connection issues | Verify `agent.yml` config, check the selected database and semantic model directory |
 | Validation errors | Run `adapter.validate_semantic()` to check configuration |
 
 ## Next Steps

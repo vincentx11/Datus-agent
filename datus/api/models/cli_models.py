@@ -18,6 +18,7 @@ class ExecuteSQLInput(BaseModel):
                 "sql_query": "SELECT * FROM users WHERE status = 'active'",
                 "result_format": "csv",
                 "system": False,
+                "execute_task_id": "caller-generated-task-id",
             }
         }
     )
@@ -26,6 +27,14 @@ class ExecuteSQLInput(BaseModel):
     sql_query: str = Field(..., description="SQL query to execute")
     result_format: str = Field("arrow", description="Result format (arrow, csv, json)")
     system: bool = Field(False, description="Whether this is a system command")
+    execute_task_id: Optional[str] = Field(
+        None,
+        description=(
+            "Caller-supplied task ID used to identify this execution so it can later be "
+            "cancelled via /sql/stop_execute. Returned unchanged in ExecuteSQLData. "
+            "If omitted, the server generates one."
+        ),
+    )
 
 
 class ExecuteSQLData(BaseModel):
@@ -110,6 +119,7 @@ class ChatInput(BaseModel):
             "example": {
                 "message": "Show me total sales for last month",
                 "session_id": "session_123",
+                "model": "openai/gpt-4.1",
                 "catalog": "main",
                 "database": "sales_db",
                 "db_schema": "public",
@@ -124,6 +134,14 @@ class ChatInput(BaseModel):
     # Core message fields
     message: str = Field(..., description="Chat message")
     session_id: Optional[str] = Field(None, description="Session ID")
+    model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Per-request model override in 'provider/model_id' format "
+            "(e.g. 'openai/gpt-4.1', 'custom/my-model'). "
+            "Takes highest priority over all other model config."
+        ),
+    )
     plan_mode: bool = Field(False, description="Whether in plan mode")
     source: Optional[str] = Field(None, description="chat source, web/vscode")
     interactive: Optional[bool] = Field(
@@ -261,6 +279,40 @@ class StreamChatInput(ChatInput):
     subagent_id: Optional[str] = Field(default=None, description="Subagent ID (builtin name or DB SubAgent id)")
     prompt_version: Optional[str] = Field(default=None, description="Prompt version")
     prompt_language: str = Field(default="en", description="Prompt language")
+    language: Optional[str] = Field(
+        default=None,
+        description=(
+            "Response language override for all agentic node outputs (e.g. 'en', 'zh'). "
+            "Falls back to agent.language from yaml when unset."
+        ),
+    )
+    source_session_id: Optional[str] = Field(
+        default=None,
+        description="Source session to seed the agent with (currently used by feedback agent to copy history).",
+    )
+
+
+class FeedbackChatInput(ChatInput):
+    """Input for /chat/feedback — reaction-triggered feedback agent.
+
+    ``message`` is server-rendered from the reaction fields via
+    :func:`datus.utils.feedback_prompt.build_reaction_feedback_prompt`, so callers
+    can leave it empty.
+    """
+
+    message: str = Field(default="", description="Leave empty; server derives it from reaction fields")
+    source_session_id: str = Field(..., description="Session that produced the message being reacted to")
+    reaction_emoji: str = Field(..., description="Normalized emoji name (e.g. 'thumbsup')")
+    reference_msg: str = Field(..., description="Text of the bot message the user reacted to")
+    reaction_msg: Optional[str] = Field(default=None, description="Optional free-text comment attached to the reaction")
+
+    @field_validator("source_session_id", "reaction_emoji", "reference_msg")
+    @classmethod
+    def _reject_blank_required_field(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Feedback field must not be empty or whitespace-only")
+        return stripped
 
 
 class UserInteractionInput(BaseModel):

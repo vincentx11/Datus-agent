@@ -78,7 +78,7 @@ After extraction, the directory structure should look like:
 Then bootstrap the knowledge base for the BIRD dataset:
 
 ```bash title="Terminal"
-datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
+datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 ```
 
 ### Step 4: Run Benchmark Tests
@@ -94,7 +94,7 @@ datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 === "Run by Task ID"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --database bird_sqlite \
+    --datasource bird_sqlite \
     --benchmark bird_dev \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -102,7 +102,7 @@ datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 === "Run All Tasks"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --database bird_sqlite \
+    --datasource bird_sqlite \
     --benchmark bird_dev
     ```
 
@@ -117,7 +117,7 @@ datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 === "Run by Task ID"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --database snowflake \
+    --datasource snowflake \
     --benchmark spider2 \
     --benchmark_task_ids <task_id1> <task_id2>
     ```
@@ -125,7 +125,7 @@ datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 === "Run All Tasks"
     ```bash title="Terminal"
     datus-agent benchmark \
-    --database snowflake \
+    --datasource snowflake \
     --benchmark spider2
     ```
 
@@ -135,7 +135,7 @@ datus-agent bootstrap-kb --database bird_sqlite --benchmark bird_dev
 === "Evaluate by Task IDs"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --database snowflake \
+  --datasource snowflake \
   --benchmark spider2 \
   --output_file evaluation.json \
   --task_ids <task_id1> <task_id2>
@@ -143,7 +143,7 @@ datus-agent eval \
 === "Evaluate All"
 ```bash title="Run Evaluation"
 datus-agent eval \
-  --database snowflake \
+  --datasource snowflake \
   --output_file evaluation.json \
   --benchmark spider2
 ```
@@ -310,12 +310,12 @@ This step does the following:
 
 ### Benchmarking and evaluation
 ```bash
-datus-agent benchmark --database california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
+datus-agent benchmark --datasource california_schools --benchmark california_schools --benchmark_task_ids 0 1 2 --workflow <your workflow>
 ```
 👉 See [Step 4: Run Benchmark Tests](#step-4-run-benchmark-tests)
 
 ```bash
-datus-agent eval --database california_schools --benchmark california_schools --task_ids 0 1 2 
+datus-agent eval --datasource california_schools --benchmark california_schools --task_ids 0 1 2
 ```
 👉 See [Step 5: Evaluate Results](#step-5-evaluate-results)
 
@@ -325,11 +325,11 @@ datus-agent eval --database california_schools --benchmark california_schools --
 
 ```yaml
 agent:
-  namespace:
-    california_schools:
-      type: sqlite
-      name: california_schools
-      uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.
+  services:
+    databases:
+      california_schools:
+        type: sqlite
+        uri: sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite # Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.
   benchmark:
     california_schools:              # Benchmark name
       question_file: california_schools.csv       # File containing benchmark questions
@@ -384,17 +384,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 === "datus-agent subcommand"
     ```bash title="Terminal"
     datus-agent multi-round-benchmark \
-      --database bird_sqlite \
-      --benchmark bird_dev \
-      --workflow chat_agentic \
-      --round 4 \
-      --workers 2
-    ```
-
-=== "Standalone CLI"
-    ```bash title="Terminal"
-    datus-multi-benchmark \
-      --database bird_sqlite \
+      --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -404,7 +394,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 === "Python module"
     ```bash title="Terminal"
     python -m datus.multi_round_benchmark \
-      --database bird_sqlite \
+      --datasource bird_sqlite \
       --benchmark bird_dev \
       --workflow chat_agentic \
       --round 4 \
@@ -415,7 +405,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 
 | Option                  | Required | Default                                       | Description                                                          |
 |-------------------------|----------|-----------------------------------------------|----------------------------------------------------------------------|
-| `--database`           | Yes      | —                                             | Namespace to benchmark, e.g. `bird_sqlite`                           |
+| `--datasource`           | Yes      | —                                             | Datasource to benchmark, e.g. `bird_sqlite`                           |
 | `--benchmark`           | Yes      | —                                             | Benchmark name, e.g. `bird_dev`                                      |
 | `--workflow`            | No       | `reflection`                                  | Workflow plan to execute                                             |
 | `--round`               | No       | `4`                                           | Number of benchmark iterations to run                                |
@@ -441,7 +431,7 @@ For each round the tool creates an isolated output directory under `{agent.home}
 ```text
 {agent.home}/integration/
 ├── {group_name}_0/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json                                     # Task metadata
 │   │   ├── 0.sql                                      # Generated SQL
 │   │   ├── 0.csv                                      # Query execution result
@@ -449,13 +439,13 @@ For each round the tool creates an isolated output directory under `{agent.home}
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml                                # Workflow trace (e.g. 0_1769611836.yaml)
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...
 │   └── evaluation_round_{timestamp}_0.json            # Evaluation report for round 0
 ├── {group_name}_1/
-│   ├── save/{namespace}/{timestamp}/
+│   ├── save/{datasource}/{timestamp}/
 │   │   ├── 0.json
 │   │   ├── 0.sql
 │   │   ├── 0.csv
@@ -463,7 +453,7 @@ For each round the tool creates an isolated output directory under `{agent.home}
 │   │   ├── 1.sql
 │   │   ├── 1.csv
 │   │   └── ...
-│   ├── trajectory/{namespace}/{timestamp}/
+│   ├── trajectory/{datasource}/{timestamp}/
 │   │   ├── 0_{ts}.yaml
 │   │   ├── 1_{ts}.yaml
 │   │   └── ...

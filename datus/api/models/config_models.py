@@ -43,8 +43,8 @@ class ModelConfig(BaseModel):
     model: str = Field(..., description="Model name")
 
 
-class NamespaceConfig(BaseModel):
-    """Database namespace configuration."""
+class DatasourceConfig(BaseModel):
+    """Database datasource configuration."""
 
     model_config = ConfigDict(exclude_none=True)
 
@@ -83,7 +83,7 @@ class AgentConfigData(BaseModel):
     models: Optional[Dict[str, ModelConfig]] = Field(None, description="Model configurations")
     nodes: Optional[Dict[str, Dict]] = Field(None, description="Node configurations")
     benchmark: Optional[Dict[str, Dict]] = Field(None, description="Benchmark configurations")
-    namespace: Optional[Dict[str, NamespaceConfig]] = Field(None, description="Namespace configurations")
+    datasources: Optional[Dict[str, DatasourceConfig]] = Field(None, description="Datasource configurations")
     metrics: Optional[Dict[str, Dict]] = Field(None, description="Metrics configurations")
     storage: Optional[StorageConfig] = Field(None, description="Storage configuration")
     workflow: Optional[Dict] = Field(None, description="Workflow configuration")
@@ -112,12 +112,12 @@ class DatabaseInfo(BaseModel):
 
     version: str = Field(..., description="Database version")
     databases: List[str] = Field(..., description="Available databases")
-    current_database: str = Field(..., description="Current database name")
+    current_datasource: str = Field(..., description="Current database name")
     catalogs: Optional[List[str]] = Field(None, description="Available catalogs (if supported)")
 
 
-class NamespaceConnectivityTest(BaseModel):
-    """Namespace connectivity test result."""
+class DatasourceConnectivityTest(BaseModel):
+    """Datasource connectivity test result."""
 
     status: str = Field(..., description="Test status (success/failed)")
     type: str = Field(..., description="Database type")
@@ -130,7 +130,7 @@ class ConnectivityTests(BaseModel):
     """All connectivity test results."""
 
     models: Dict[str, ModelConnectivityTest] = Field(..., description="Model connectivity test results")
-    namespace: Dict[str, NamespaceConnectivityTest] = Field(..., description="Namespace connectivity test results")
+    datasources: Dict[str, DatasourceConnectivityTest] = Field(..., description="Datasource connectivity test results")
 
 
 class ValidationSummary(BaseModel):
@@ -153,7 +153,7 @@ class UpdateAgentConfigData(BaseModel):
 class FailedTest(BaseModel):
     """Failed test information."""
 
-    component: str = Field(..., description="Component that failed (model/namespace)")
+    component: str = Field(..., description="Component that failed (model/datasource)")
     name: str = Field(..., description="Name of the failed component")
     error: str = Field(..., description="Error message")
     suggestion: str = Field(..., description="Suggestion to fix the error")
@@ -199,3 +199,45 @@ class DatabaseTypesData(BaseModel):
 
     database_types: List[DatabaseTypeInfo] = Field(..., description="Available database types")
     default: str = Field(..., description="Default database type")
+
+
+# Model Catalog Models
+class ModelPricing(BaseModel):
+    """Per-token pricing for a single model, in OpenRouter's native format.
+
+    Values are preserved as strings to avoid floating-point rounding at the API
+    boundary. Units are USD per token unless the upstream source overrides.
+    """
+
+    model_config = ConfigDict(exclude_none=True)
+
+    prompt: Optional[str] = Field(None, description="Price per input token")
+    completion: Optional[str] = Field(None, description="Price per output token")
+
+
+class ModelInfo(BaseModel):
+    """A single model entry returned by the catalog endpoint."""
+
+    model_config = ConfigDict(exclude_none=True)
+
+    provider: str = Field(..., description="Provider key from providers.yml, or 'custom' for agent.models entries")
+    id: str = Field(..., description="Model slug as consumed by the SDK")
+    model: Optional[str] = Field(
+        None, description="Actual model name (same as id for provider models, ModelConfig.model for custom)"
+    )
+    name: Optional[str] = Field(None, description="Human-readable model name")
+    context_length: Optional[int] = Field(None, description="Maximum context window in tokens")
+    max_tokens: Optional[int] = Field(None, description="Maximum completion tokens")
+    pricing: Optional[ModelPricing] = Field(None, description="Per-token pricing, when available")
+
+
+class ModelsData(BaseModel):
+    """Response payload for GET /api/v1/models."""
+
+    model_config = ConfigDict(exclude_none=True)
+
+    models: List[ModelInfo] = Field(..., description="Flat list of available models")
+    providers: List[str] = Field(..., description="Provider keys represented in this response")
+    current_model: Optional[str] = Field(None, description="Currently active model as 'provider/model'")
+    fetched_at: Optional[str] = Field(None, description="ISO-8601 timestamp of the OpenRouter cache")
+    source: str = Field(..., description="Where the data came from: cache or catalog")

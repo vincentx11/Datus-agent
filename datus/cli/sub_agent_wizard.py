@@ -31,6 +31,7 @@ from pygments.lexers.html import HtmlLexer
 
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
 from datus.cli.autocomplete import TableCompleter
+from datus.cli.cli_styles import SUB_AGENT_WIZARD_STYLE, render_tui_title_bar
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool import PlatformDocSearchTool
@@ -1684,7 +1685,7 @@ class SubAgentWizard:
         prompt_context = prepare_template_context(
             node_config=self.data,
             agent_config=self.cli_instance.agent_config,
-            workspace_root=self.cli_instance.agent_config.workspace_root,
+            workspace_root=self.cli_instance.agent_config.project_root,
         )
         # Select template based on node_class for preview
         node_class = self.data.node_class or "gen_sql"
@@ -1800,7 +1801,7 @@ class SubAgentWizard:
     def _update_layout(self):
         """Update the layout for the new step."""
         self.left_pane.children = [self._get_step_layout()]
-        self.title_control.text = f" Agent Add Wizard - Step {self.step + 1}/4 "
+        self._title_text = f"Agent Add Wizard - Step {self.step + 1}/4"
 
         if self.step == 0:
             self.app.layout.focus(self.name_buffer)
@@ -1818,7 +1819,7 @@ class SubAgentWizard:
             self._focus_rules_list()
 
     def _init_layout(self):
-        self.title_control = FormattedTextControl(f" Agent Add Wizard - Step {self.step + 1}/4 ")
+        self._title_text = f"Agent Add Wizard - Step {self.step + 1}/4"
 
         self.left_pane = HSplit([self._get_step_layout()])
 
@@ -1859,10 +1860,8 @@ class SubAgentWizard:
         root_container = HSplit(
             [
                 Window(
-                    content=self.title_control,
+                    content=FormattedTextControl(lambda: render_tui_title_bar(self._title_text)),
                     height=1,
-                    style="class:status-bar",
-                    align=WindowAlign.LEFT,
                 ),
                 body,
                 Window(
@@ -1881,32 +1880,18 @@ class SubAgentWizard:
 
         self.layout = Layout(FloatContainer(root_container, floats=[]), focused_element=self.name_buffer)
 
-        self.style = Style.from_dict(
-            {
-                "status-bar": "bg:#000044 #ffffff",
-                "input-window": "fg:ansigreen",
-                "textarea": "fg:ansigreen",
-                "label": "fg:ansicyan",
-                "tip": "fg:ansiyellow bold",
-                "separator": "fg:ansigray",
-                "dialog": "bg:#444444",
-                "dialog frame.label": "fg:#ffffff bg:#000000",
-                "dialog.body": "bg:#444444 fg:#ffffff",
-                "dialog shadow": "bg:#000000",
-                "rule": "",
-                "rule.selected": "bg:ansiblue fg:ansiwhite",
-                "rule.editing": "bg:ansigreen fg:ansiwhite",
-            }
-        )
+        self.style = Style.from_dict(SUB_AGENT_WIZARD_STYLE)
 
     def run(self) -> Optional[SubAgentConfig]:
         """Run the wizard application."""
         # Ensure selection watchers start exactly when the event loop is running.
-        try:
-            return self.app.run(pre_run=self._start_selection_watchers)
-        except TypeError:
-            # Fallback for older prompt_toolkit where pre_run is not supported
-            return self.app.run()
+        # __init__ calls _start_selection_watchers() but the event loop is not
+        # yet active at that point, so call_later/call_soon silently fails.
+        # Register via pre_run_callables so the watcher starts once the loop is live.
+        from datus.cli._cli_utils import _run_sub_application
+
+        self.app.pre_run_callables = [self._start_selection_watchers]
+        return _run_sub_application(self.app)
 
     def native_tools_choices(self) -> Dict[str, List[str]]:
         from datus.tools.func_tool import ContextSearchTools, DBFuncTool

@@ -122,17 +122,17 @@ Configure Datus to connect to both the PostgreSQL database and Superset dashboar
 ### Install Required Extensions
 
 ```bash
-pip install datus-postgresql datus-semantic-metricflow
+pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
 ```
 
 ### Update agent.yml
 
-Add the following configuration to your `~/.datus/agent.yml`:
+Add the following configuration to your `~/.datus/conf/agent.yml`:
 
 ```yaml
 agent:
-  service:
-    databases:
+  services:
+    datasources:
       superset:
         type: postgresql
         host: 127.0.0.1
@@ -140,20 +140,25 @@ agent:
         username: superset
         password: superset
         database: examples
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra:
-        provider: db
+    semantic_layer:
+      metricflow: {}
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra:
+          provider: db
 ```
 
 !!! note "Configuration Sections"
-    - **service.databases**: Defines database connections for SQL execution
-    - **dashboard**: Defines the BI platform credentials for dashboard access
+    - **services.datasources**: Defines datasource connections for SQL execution
+    - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
+    - **services.bi_platforms**: Defines the BI platform credentials for dashboard access
 
 !!! tip
-    You can also add the database interactively with `datus-agent configure` instead of editing YAML manually.
+    You can add SQL datasources interactively with `datus-agent service add`; semantic layer and BI platform entries still need to be edited in YAML.
 
 ## Step 3: Bootstrap from Dashboard
 
@@ -162,7 +167,7 @@ Now use the `bootstrap-bi` command to automatically generate context and subagen
 ### Run Bootstrap Command
 
 ```bash
-datus-agent bootstrap-bi --database superset
+datus-agent bootstrap-bi --datasource superset
 ```
 
 ### Interactive Flow

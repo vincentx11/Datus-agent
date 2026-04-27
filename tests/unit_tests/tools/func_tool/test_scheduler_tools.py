@@ -15,7 +15,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Mock datus_scheduler_core if not installed (CI has no external scheduler deps)
+# Mock datus_scheduler_core if not installed. This MUST run at module scope —
+# the `from datus.tools.func_tool.scheduler_tools import ...` below transitively
+# imports datus_scheduler_core, so a fixture-scoped patch would happen too late.
+# The mock is idempotent (guarded by `not in sys.modules`) and the modules are
+# namespaced under `datus_scheduler_core.*`, so there's no bleed into other tests.
 if "datus_scheduler_core" not in sys.modules:
 
     class _MockPayload:
@@ -25,12 +29,13 @@ if "datus_scheduler_core" not in sys.modules:
 
     _mock_core = MagicMock()
     _mock_core.models.SchedulerJobPayload = _MockPayload
-    sys.modules["datus_scheduler_core"] = _mock_core
-    sys.modules["datus_scheduler_core.models"] = _mock_core.models
-    sys.modules["datus_scheduler_core.registry"] = _mock_core.registry
-    sys.modules["datus_scheduler_core.config"] = _mock_core.config
+    sys.modules["datus_scheduler_core"] = _mock_core  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.models"] = _mock_core.models  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.registry"] = _mock_core.registry  # audit-noqa: module_level_sys_modules
+    sys.modules["datus_scheduler_core.config"] = _mock_core.config  # audit-noqa: module_level_sys_modules
 
 from datus.tools.func_tool.scheduler_tools import SchedulerTools
+from datus.utils.exceptions import DatusException, ErrorCode
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -48,7 +53,36 @@ def _make_agent_config(scheduler_config=None):
         }
     else:
         cfg.scheduler_config = scheduler_config
+    cfg.scheduler_services = {"airflow_local": cfg.scheduler_config} if cfg.scheduler_config else {}
+
+    def _get_scheduler_config(service_name=None):
+        if service_name:
+            if service_name not in cfg.scheduler_services:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=f"No scheduler service named `{service_name}` found.",
+                )
+            return cfg.scheduler_services[service_name]
+        if cfg.scheduler_services:
+            return next(iter(cfg.scheduler_services.values()))
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message="No scheduler configured in `agent.services.schedulers`.",
+        )
+
+    cfg.get_scheduler_config.side_effect = _get_scheduler_config
     return cfg
+
+
+class _SchedulerPage:
+    """Minimal stand-in for ``PaginatedScheduledResult`` / ``ListJobsResult`` /
+    ``ListRunsResult``. The SchedulerTools envelope builder only looks at
+    ``.items`` and ``.total``, so mirroring those two attributes is enough.
+    """
+
+    def __init__(self, items, total=None):
+        self.items = list(items)
+        self.total = total
 
 
 def _make_scheduled_job(job_id="spark_pi_test"):
@@ -84,19 +118,94 @@ class TestGetAdapter:
     def test_success_with_mocked_registry(self):
         mock_adapter = MagicMock()
         tools = SchedulerTools(_make_agent_config())
-        with patch(
-            "datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry",
-            create=True,
-        ):
-            # The import happens inside _get_adapter; patch sys.modules so it resolves
-            mock_registry = MagicMock()
-            mock_registry.create_adapter.return_value = mock_adapter
-            with patch.dict(
-                "sys.modules",
-                {"datus_scheduler_core.registry": MagicMock(SchedulerAdapterRegistry=mock_registry)},
-            ):
-                adapter = tools._get_adapter()
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = mock_adapter
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
+            adapter = tools._get_adapter()
         assert adapter is mock_adapter
+
+    def test_airflow_injects_project_name_as_file_scope_only(self):
+        """Datus auto-injects ``agent.project_name`` into the Airflow
+        adapter config — but *only* for the filesystem-scoping role
+        (DAG subdirectory under ``dags_folder_root``). In the adapter
+        0.2.0+ schema ``project_name`` no longer drives ``dag_id_prefix``
+        defaulting, so list/get operations aren't silently filtered by
+        the Datus workspace. Users who want list-level multi-tenant
+        isolation set ``dag_id_prefix`` explicitly in agent.yml.
+        """
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "airflow_local",
+                "type": "airflow",
+                "api_base_url": "http://localhost:8080/api/v1",
+                "username": "admin",
+                "password": "admin",
+                "dags_folder_root": "/opt/airflow/dags",
+                # Deliberately no explicit project_name — adapter expects
+                # Datus to fill it from agent.project_name.
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
+            tools._get_adapter()
+
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert call_kwargs["platform"] == "airflow"
+        # File-scoping is auto-filled so DAG files land in a per-workspace subdir.
+        assert call_kwargs["config"]["project_name"] == "reports-team"
+        # dag_id_prefix is NOT auto-set — that's an explicit opt-in.
+        assert "dag_id_prefix" not in call_kwargs["config"]
+
+    def test_airflow_explicit_project_name_takes_precedence(self):
+        """setdefault semantics: if user writes project_name in agent.yml, Datus
+        must NOT overwrite it with agent.project_name."""
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "airflow_local",
+                "type": "airflow",
+                "api_base_url": "http://localhost:8080/api/v1",
+                "username": "admin",
+                "password": "admin",
+                "dags_folder_root": "/opt/airflow/dags",
+                "project_name": "explicit-override",
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
+            tools._get_adapter()
+
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert call_kwargs["config"]["project_name"] == "explicit-override"
+
+    def test_non_airflow_platform_not_injected(self):
+        """Only Airflow config schema has a project_name field; don't inject for
+        DS/Azkaban (their 'project' semantics are platform-side, not Datus)."""
+        agent_cfg = _make_agent_config(
+            scheduler_config={
+                "name": "ds_prod",
+                "type": "dolphinscheduler",
+                "api_base_url": "http://localhost:12345/dolphinscheduler",
+                "token": "fake-token",
+            }
+        )
+        agent_cfg.project_name = "reports-team"
+        tools = SchedulerTools(agent_cfg)
+
+        mock_registry = MagicMock()
+        mock_registry.create_adapter.return_value = MagicMock()
+        with patch("datus.tools.func_tool.scheduler_tools.SchedulerAdapterRegistry", mock_registry):
+            tools._get_adapter()
+
+        call_kwargs = mock_registry.create_adapter.call_args.kwargs
+        assert "project_name" not in call_kwargs["config"]
 
 
 # ── SchedulerTools.available_tools ─────────────────────────────────────────
@@ -134,11 +243,21 @@ class TestAdapterCloseError:
                 {},
                 lambda a: setattr(a, "get_job", MagicMock(return_value=_make_scheduled_job())),
             ),
-            ("list_scheduler_jobs", (), {}, lambda a: setattr(a, "list_jobs", MagicMock(return_value=[]))),
+            (
+                "list_scheduler_jobs",
+                (),
+                {},
+                lambda a: setattr(a, "list_jobs", MagicMock(return_value=_SchedulerPage(items=[], total=0))),
+            ),
             ("pause_job", ("dag_1",), {}, None),
             ("resume_job", ("dag_1",), {}, None),
             ("delete_job", ("dag_1",), {}, None),
-            ("list_job_runs", ("dag_1",), {}, lambda a: setattr(a, "list_job_runs", MagicMock(return_value=[]))),
+            (
+                "list_job_runs",
+                ("dag_1",),
+                {},
+                lambda a: setattr(a, "list_job_runs", MagicMock(return_value=_SchedulerPage(items=[], total=0))),
+            ),
             (
                 "get_run_log",
                 ("dag_1", "run_1"),
@@ -256,7 +375,10 @@ class TestAdapterCreationErrors:
 
 
 try:
+    from datus_scheduler_airflow.adapter import AirflowSchedulerAdapter
     from datus_scheduler_airflow.dag_template import render_spark_dag_source
+    from datus_scheduler_core.config import AirflowConfig
+    from datus_scheduler_core.models import SchedulerJobPayload
 
     _HAS_SCHEDULER_AIRFLOW = True
 except ImportError:
@@ -266,13 +388,17 @@ except ImportError:
 @pytest.mark.skipif(not _HAS_SCHEDULER_AIRFLOW, reason="datus-scheduler-airflow not installed")
 class TestRenderSparkDagSource:
     def test_renders_valid_python(self):
-        """Generated DAG source must compile without errors."""
+        """Generated DAG source must be valid Python and carry the given dag_id."""
         source = render_spark_dag_source(
             dag_id="test_spark_pi",
             job_name="test_spark_pi",
             spark_script='print("hello")',
         )
+        # compile() raises SyntaxError on invalid Python — that's the primary contract.
         compile(source, "<test_dag>", "exec")
+        # Verify the rendered source actually incorporates the caller's arguments.
+        assert "test_spark_pi" in source, "dag_id should appear in rendered source"
+        assert isinstance(source, str) and len(source) > 0
 
     def test_embeds_spark_script(self):
         """The spark_script content must appear in the rendered source."""
@@ -383,9 +509,12 @@ class TestGetSchedulerJob:
 
 class TestListSchedulerJobs:
     def test_list_jobs(self):
-        """list_scheduler_jobs returns a list of job summaries."""
+        """list_scheduler_jobs returns the canonical FuncToolListResult envelope."""
         mock_adapter = MagicMock()
-        mock_adapter.list_jobs.return_value = [_make_scheduled_job("dag_a"), _make_scheduled_job("dag_b")]
+        mock_adapter.list_jobs.return_value = _SchedulerPage(
+            items=[_make_scheduled_job("dag_a"), _make_scheduled_job("dag_b")],
+            total=2,
+        )
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -393,23 +522,22 @@ class TestListSchedulerJobs:
             result = tools.list_scheduler_jobs(limit=10)
 
         assert result.success == 1
-        assert result.result["total"] == 2
-        assert result.result["jobs"][0]["job_id"] == "dag_a"
+        envelope = result.result
+        assert envelope["total"] == 2
+        assert len(envelope["items"]) == 2
+        assert envelope["items"][0]["job_id"] == "dag_a"
+        # 2 items with total=2 and offset=0 → last page, no next_offset.
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
 
 
 # ── adapter.py: submit_job with job_type=spark ───────────────────────────
 
 
+@pytest.mark.skipif(not _HAS_SCHEDULER_AIRFLOW, reason="datus-scheduler-airflow not installed")
 class TestAdapterSparkBranch:
     def test_submit_job_spark_calls_render_spark(self):
         """adapter.submit_job with job_type='spark' uses render_spark_dag_source."""
-        try:
-            from datus_scheduler_airflow.adapter import AirflowSchedulerAdapter
-            from datus_scheduler_core.config import AirflowConfig
-            from datus_scheduler_core.models import SchedulerJobPayload
-        except ImportError:
-            pytest.skip("datus-airflow not installed")
-
         config = AirflowConfig(
             name="test",
             type="airflow",
@@ -843,8 +971,8 @@ class TestListSchedulerConnections:
         tools = SchedulerTools(cfg)
         result = tools.list_scheduler_connections()
 
-        assert result.success == 1
-        assert result.result["total"] == 0
+        assert result.success == 0
+        assert "scheduler" in (result.error or "").lower()
 
 
 # ── available_tools: conn_id injection into description ──────────────────
@@ -884,7 +1012,7 @@ class TestListJobRuns:
         mock_run.ended_at = datetime(2025, 1, 1, 8, 5, 0, tzinfo=timezone.utc)
 
         mock_adapter = MagicMock()
-        mock_adapter.list_job_runs.return_value = [mock_run]
+        mock_adapter.list_job_runs.return_value = _SchedulerPage(items=[mock_run], total=1)
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -892,11 +1020,14 @@ class TestListJobRuns:
             result = tools.list_job_runs("my_dag", limit=5)
 
         assert result.success == 1
-        assert result.result["total"] == 1
-        run = result.result["runs"][0]
+        envelope = result.result
+        assert envelope["total"] == 1
+        assert len(envelope["items"]) == 1
+        run = envelope["items"][0]
         assert run["run_id"] == "run_001"
         assert run["started_at"] == "2025-01-01T08:00:00+00:00"
         assert run["ended_at"] == "2025-01-01T08:05:00+00:00"
+        assert envelope["has_more"] is False
 
     def test_list_runs_string_timestamps(self):
         """Runs with string timestamps should pass through as-is."""
@@ -907,7 +1038,7 @@ class TestListJobRuns:
         mock_run.ended_at = None
 
         mock_adapter = MagicMock()
-        mock_adapter.list_job_runs.return_value = [mock_run]
+        mock_adapter.list_job_runs.return_value = _SchedulerPage(items=[mock_run], total=None)
 
         tools = SchedulerTools(_make_agent_config())
 
@@ -915,7 +1046,7 @@ class TestListJobRuns:
             result = tools.list_job_runs("my_dag")
 
         assert result.success == 1
-        run = result.result["runs"][0]
+        run = result.result["items"][0]
         assert run["started_at"] == "2025-01-01T08:00:00Z"
         assert run["ended_at"] is None
 
@@ -958,3 +1089,77 @@ class TestGetRunLog:
 
         assert result.success == 0
         assert "run not found" in (result.error or "")
+
+
+# ── SchedulerTools deliverable_target self-reporting ──────────────────────
+
+
+class TestSchedulerDeliverableTarget:
+    """The 3 mutating scheduler tools (submit_sql_job / submit_sparksql_job /
+    update_job) must attach a ``SchedulerJobTarget`` to ``result.result`` so
+    ValidationHook can see the delivered job."""
+
+    def _mock_adapter(self, job_id="job_x"):
+        mock_job = _make_scheduled_job(job_id)
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        mock_adapter.update_job.return_value = mock_job
+        return mock_adapter
+
+    def test_submit_sql_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=self._mock_adapter("job_x")):
+            result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["platform"] == "airflow"
+        assert target["job_id"] == "job_x"
+        assert target["job_name"] == "job_x"
+
+    def test_submit_sparksql_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=self._mock_adapter("spark_x")):
+            result = tools.submit_sparksql_job(job_name="spark_x", sql_file_path=str(sql_file))
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["job_id"] == "spark_x"
+
+    def test_update_job_emits_deliverable_target(self, tmp_path):
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        mock_adapter = self._mock_adapter("job_u")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="job_u",
+                sql_file_path=str(sql_file),
+                job_name="job_u",
+                job_type="sql",
+                conn_id="c1",
+            )
+        assert result.success == 1
+        target = result.result.get("deliverable_target")
+        assert target is not None
+        assert target["type"] == "scheduler_job"
+        assert target["job_id"] == "job_u"
+
+    def test_failure_does_not_attach_target(self, tmp_path):
+        """When the adapter fails, no deliverable_target is emitted (since nothing was delivered)."""
+        sql_file = tmp_path / "q.sql"
+        sql_file.write_text("SELECT 1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.side_effect = Exception("boom")
+        tools = SchedulerTools(_make_agent_config())
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="job_x", sql_file_path=str(sql_file), conn_id="c1")
+        assert result.success == 0
+        # On failure the tool sets result=None, so there's no dict to contain a target.
+        assert result.result is None or "deliverable_target" not in (result.result or {})

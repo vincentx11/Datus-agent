@@ -33,6 +33,10 @@ class ErrorCode(Enum):
     # Node execution errors
     NODE_EXECUTION_FAILED = ("200001", "Node execution failed")
     NODE_NO_SQL_CONTEXT = ("200002", "No SQL context available. Please run a SQL generation node first.")
+    NODE_EXT_KNOWLEDGE_GOLD_SQL_INVALID = (
+        "200003",
+        "Gold SQL failed to execute before ext_knowledge generation: {error_message}",
+    )
 
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
@@ -83,6 +87,24 @@ class ErrorCode(Enum):
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
 
+    # Validation errors (ValidationHook for table-producing subagents)
+    VALIDATION_BLOCKING_FAILURE = (
+        "400010",
+        "Deliverable validation failed: {failures}",
+    )
+    VALIDATION_OUTPUT_MALFORMED = (
+        "400011",
+        "Validator skill '{skill_name}' returned malformed output: {reason}",
+    )
+    VALIDATION_RUNNER_ERROR = (
+        "400012",
+        "Validation infrastructure error while running skill '{skill_name}': {error_message}",
+    )
+    SKILL_FRONTMATTER_INVALID = (
+        "400020",
+        "Skill at {location}: invalid frontmatter — {error_message}",
+    )
+
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
     STORAGE_CONNECTION_FAILED = ("410001", "Failed to connect to vector database at path: {storage_path}")
@@ -99,6 +121,8 @@ class ErrorCode(Enum):
         ),
     )
     STORAGE_INDEX_FAILED = ("410005", "Vector database index operation failed: {error_message}")
+    STORAGE_ENTRY_NOT_FOUND = ("410006", "Storage entry not found: {entry_id}")
+    STORAGE_INVALID_ARGUMENT = ("410007", "Invalid storage argument: {error_message}")
 
     # Database errors
     DB_FAILED = ("500000", "Database operation failed. Error details: {error_message}")

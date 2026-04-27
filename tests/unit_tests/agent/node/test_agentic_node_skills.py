@@ -102,7 +102,7 @@ def mock_agent_config():
     config.permissions_config = None
     config.skills_config = None
     config.prompt_version = None
-    config.workspace_root = "."
+    config.project_root = "."
 
     # Prevent model creation by returning None for active_model
     config.active_model.return_value = None
@@ -154,7 +154,8 @@ class TestFinalizeSystemPrompt:
             agent_config=mock_agent_config,
         )
         node.skill_func_tool = None
-        monkeypatch.setattr(node, "_inject_memory_context", lambda p: p)
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
@@ -182,10 +183,13 @@ class TestFinalizeSystemPrompt:
         assert "<available_skills>" in result
         assert "sql-analysis" in result
 
-    def test_with_skill_func_tool_empty_xml_returns_prompt_unchanged(
+    def test_with_skill_func_tool_empty_xml_appends_explicit_none_block(
         self, mock_agent_config, skill_manager, monkeypatch
     ):
-        """When skills context returns empty string, prompt unchanged (memory injection mocked out)."""
+        """With skill tools active but no visible skills, the prompt must still
+        contain an explicit ``<available_skills>`` block stating that none are
+        available — prevents the LLM from hallucinating skill names (e.g. from
+        subagent types listed in the ``task()`` tool schema)."""
         # Configure node with pattern that matches no skills
         mock_agent_config.agentic_nodes = {"test_node": {"skills": "nonexistent-*"}}
 
@@ -197,14 +201,17 @@ class TestFinalizeSystemPrompt:
         )
         node.skill_manager = skill_manager
         node.skill_func_tool = SkillFuncTool(manager=skill_manager, node_name="test_node")
-        monkeypatch.setattr(node, "_inject_memory_context", lambda p: p)
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
 
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
 
-        # When no skills match, XML generation returns empty string
-        # So result should just be base_prompt
-        assert result == base_prompt
+        assert result.startswith(base_prompt)
+        assert "<available_skills>" in result
+        # Explicitly marked as empty, with anti-hallucination guidance.
+        assert "(none)" in result or "no skills" in result.lower()
+        assert "subagent" in result.lower()
 
     def test_calls_ensure_skill_tools(self, mock_agent_config, skill_manager):
         """Verify _ensure_skill_tools_in_tools() is called."""
@@ -552,6 +559,169 @@ class TestSkillManagerSetup:
         assert node.skill_manager.get_skill_count() > 0
 
 
+@pytest.fixture
+def scoped_skill_manager(tmp_path, permission_manager):
+    """A SkillManager whose directory contains skills with allowed_agents scoping."""
+    skills_dir = tmp_path / "scoped_skills"
+    skills_dir.mkdir()
+
+    # Skill only for the "gen_dashboard" subagent.
+    scoped = skills_dir / "scoped-dashboard"
+    scoped.mkdir()
+    (scoped / "SKILL.md").write_text(
+        """---
+name: scoped-dashboard
+description: Scoped dashboard workflow
+allowed_agents:
+  - gen_dashboard
+---
+
+# Scoped Dashboard
+Body for the subagent only.
+"""
+    )
+
+    # Skill unrestricted (no allowed_agents), visible to every agent.
+    shared = skills_dir / "shared-helper"
+    shared.mkdir()
+    (shared / "SKILL.md").write_text(
+        """---
+name: shared-helper
+description: Shared across agents
+---
+
+# Shared Helper
+Body visible to everyone.
+"""
+    )
+
+    config = SkillConfig(directories=[str(skills_dir)])
+    return SkillManager(config=config, permission_manager=permission_manager)
+
+
+class TestAllowedAgentsInAgenticNode:
+    """Agent-scoped skills must be filtered out of a node's <available_skills> XML."""
+
+    def test_disallowed_agent_hides_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": "*"}}
+
+        node = MinimalAgenticNode(
+            node_id="scoped1",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        # test_node is not in any skill's allowed_agents → scoped-dashboard hidden.
+        assert "scoped-dashboard" not in xml
+        # Unrestricted skill still visible.
+        assert "shared-helper" in xml
+
+    def test_allowed_agent_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        mock_agent_config.agentic_nodes = {"gen_dashboard": {"skills": "*"}}
+
+        class DashboardNode(MinimalAgenticNode):
+            def get_node_name(self) -> str:
+                return "gen_dashboard"
+
+        node = DashboardNode(
+            node_id="scoped2",
+            description="Dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml
+        assert "shared-helper" in xml
+
+    def test_alias_capable_subclass_without_NODE_NAME_resolves_via_base(
+        self, mock_agent_config, tmp_path, permission_manager
+    ):
+        """Regression guard for CodeRabbit review: an alias-capable subclass
+        that overrides ``get_node_name()`` but hasn't declared ``NODE_NAME``
+        must still resolve ``get_node_class_name()`` to a stable class-level
+        identifier (derived via the base ``AgenticNode.get_node_name``), not
+        the alias. Mirrors the real ``ExploreAgenticNode`` shape prior to the
+        fix (override returns alias, no class constant)."""
+        skills_dir = tmp_path / "explore_skills"
+        skills_dir.mkdir()
+        scoped = skills_dir / "explore-guide"
+        scoped.mkdir()
+        # The class below is ``MockedExploreAgenticNode``; the base
+        # ``AgenticNode.get_node_name`` strips the ``AgenticNode`` suffix and
+        # lowercases, yielding ``"mockedexplore"`` as the canonical class id.
+        (scoped / "SKILL.md").write_text(
+            """---
+name: explore-guide
+description: Scoped to the explore subagent
+allowed_agents:
+  - mockedexplore
+---
+
+# Explore Guide
+"""
+        )
+
+        from datus.tools.skill_tools.skill_config import SkillConfig as _Cfg
+
+        manager = SkillManager(config=_Cfg(directories=[str(skills_dir)]), permission_manager=permission_manager)
+
+        mock_agent_config.agentic_nodes = {"my_explorer": {"skills": "*"}}
+
+        class MockedExploreAgenticNode(MinimalAgenticNode):
+            """No NODE_NAME; ``get_node_name`` returns the alias — same shape
+            as pre-fix ExploreAgenticNode. ``AgenticNode.get_node_name``
+            strips the ``AgenticNode`` suffix and lowercases, yielding
+            ``"mockedexplore"`` as the class-derived identifier."""
+
+            def get_node_name(self) -> str:  # returns the alias
+                return "my_explorer"
+
+        node = MockedExploreAgenticNode(
+            node_id="alias_no_nodename",
+            description="alias-capable no NODE_NAME",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = manager
+
+        # get_node_class_name must ignore the override and return the stable
+        # class-derived name.
+        assert node.get_node_class_name() == "mockedexplore"
+
+        # ``allowed_agents: [mockedexplore]`` matches via class name even
+        # though the alias ``my_explorer`` is not whitelisted.
+        xml = node._get_available_skills_context()
+        assert "explore-guide" in xml
+
+    def test_custom_alias_with_matching_class_sees_scoped_skill(self, mock_agent_config, scoped_skill_manager):
+        """A subagent registered under a custom alias should still match a
+        class-scoped ``allowed_agents`` whitelist via its ``NODE_NAME``."""
+        mock_agent_config.agentic_nodes = {"my_dashboard": {"skills": "*"}}
+
+        class AliasedDashboardNode(MinimalAgenticNode):
+            NODE_NAME = "gen_dashboard"
+
+            def get_node_name(self) -> str:
+                return "my_dashboard"
+
+        node = AliasedDashboardNode(
+            node_id="scoped3",
+            description="Aliased dashboard node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = scoped_skill_manager
+
+        xml = node._get_available_skills_context()
+        assert "scoped-dashboard" in xml, "alias should inherit class-level scope"
+        assert "shared-helper" in xml
+
+
 class TestSkillIntegrationEdgeCases:
     """Edge case tests for skill integration."""
 
@@ -620,3 +790,192 @@ class TestSkillIntegrationEdgeCases:
 
             # Should handle exception gracefully
             assert node.skill_func_tool is None
+
+
+class _DefaultSkillsNode(MinimalAgenticNode):
+    """Subclass that declares a class-level DEFAULT_SKILLS pattern."""
+
+    DEFAULT_SKILLS = "data-*"
+
+
+class TestDefaultSkillsFallback:
+    """``DEFAULT_SKILLS`` activates skill loading when yml omits ``skills:``."""
+
+    def test_default_skills_used_when_node_config_missing(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {}  # node missing entirely
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_1",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "data-*"
+
+    def test_default_skills_used_when_skills_key_omitted(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"max_turns": 10}}
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_2",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "data-*"
+
+    def test_yml_override_wins_over_default(self, mock_agent_config, skill_manager):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": "report-*"}}
+        mock_agent_config.skills_config = skill_manager.config
+        mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_3",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert isinstance(node.skill_func_tool, SkillFuncTool)
+        assert node.node_config["skills"] == "report-*"
+
+    def test_explicit_empty_string_disables_default(self, mock_agent_config):
+        mock_agent_config.agentic_nodes = {"test_node": {"skills": ""}}
+
+        node = _DefaultSkillsNode(
+            node_id="default_skills_4",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.skill_func_tool is None
+
+
+class TestBuiltinNodeDefaultSkills:
+    """Built-in subagents declare DEFAULT_SKILLS that match their SKILL.md scope."""
+
+    def test_gen_job_defaults(self):
+        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+
+        assert GenJobAgenticNode.DEFAULT_SKILLS == "gen-table, data-migration"
+
+    def test_gen_table_defaults(self):
+        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+
+        assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
+
+    def test_gen_metrics_defaults(self):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics"
+
+    def test_gen_semantic_model_defaults(self):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "gen-semantic-model"
+
+    def test_gen_dashboard_leaves_defaults_unset(self):
+        """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
+        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+
+        assert GenDashboardAgenticNode.DEFAULT_SKILLS is None
+
+    def test_gen_skill_defaults(self):
+        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+
+        assert SkillCreatorAgenticNode.DEFAULT_SKILLS == "create-skill, optimize-skill"
+
+
+class TestMergeSkillPatterns:
+    """``_merge_skill_patterns`` (base class helper for dynamic injection)."""
+
+    def test_string_plus_list_merges_with_order_preserved(self):
+        result = AgenticNode._merge_skill_patterns("tenant-*, custom-skill", ["platform-workflow", "shared-validation"])
+        assert result == "tenant-*, custom-skill, platform-workflow, shared-validation"
+
+    def test_list_plus_list_merges(self):
+        result = AgenticNode._merge_skill_patterns(["a", "b"], ["c"])
+        assert result == "a, b, c"
+
+    def test_none_existing_returns_injected_only(self):
+        result = AgenticNode._merge_skill_patterns(None, ["a", "b"])
+        assert result == "a, b"
+
+    def test_duplicates_dropped_preserving_first_occurrence(self):
+        result = AgenticNode._merge_skill_patterns("a, b", ["b", "c"])
+        assert result == "a, b, c"
+
+    def test_whitespace_and_empty_entries_stripped(self):
+        result = AgenticNode._merge_skill_patterns("  a  ,, b ", ["c"])
+        assert result == "a, b, c"
+
+    def test_non_string_list_entries_ignored(self):
+        # Existing config could be a list from yaml; filter out non-string items.
+        result = AgenticNode._merge_skill_patterns(["a", 42, None, "b"], ["c"])
+        assert result == "a, b, c"
+
+
+class TestSkillAllowedAgentsConsistency:
+    """Every skill referenced by a built-in node must whitelist that node.
+
+    The node may expose the skill via ``DEFAULT_SKILLS`` (static) or inject it
+    at runtime (e.g. ``gen_dashboard`` picks ``{platform}-dashboard``). In both
+    cases, ``SKILL.md``'s ``allowed_agents`` is the authoritative permission
+    gate — a mismatch here means ``load_skill`` gets denied.
+    """
+
+    @staticmethod
+    def _read_skill_frontmatter(name: str) -> dict:
+        import pathlib
+
+        import yaml
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        skill_path = project_root / "datus" / "resources" / "skills" / name / "SKILL.md"
+        content = skill_path.read_text()
+        assert content.startswith("---\n"), f"skill {name} missing frontmatter"
+        _, fm, _ = content.split("---", 2)
+        return yaml.safe_load(fm)
+
+    @pytest.mark.parametrize(
+        "node_name,skills",
+        [
+            ("gen_job", ["gen-table", "table-validation", "data-migration"]),
+            ("gen_table", ["gen-table", "table-validation"]),
+            ("gen_semantic_model", ["gen-semantic-model"]),
+            ("gen_metrics", ["gen-metrics"]),
+            ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
+            ("gen_skill", ["create-skill", "optimize-skill"]),
+            ("scheduler", ["airflow-workflow", "scheduler-validation"]),
+        ],
+    )
+    def test_skill_frontmatter_whitelists_expected_node(self, node_name, skills):
+        for skill in skills:
+            fm = self._read_skill_frontmatter(skill)
+            allowed = fm.get("allowed_agents") or []
+            assert node_name in allowed, f"Skill '{skill}' must list '{node_name}' in allowed_agents — got {allowed}"
+
+    def test_dashboard_router_skill_is_not_exposed_to_chat(self):
+        """Dashboard routing is handled by task(type="gen_dashboard"), not a chat-visible skill."""
+        import pathlib
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        skills_dir = project_root / "datus" / "resources" / "skills"
+        manager = SkillManager(config=SkillConfig(directories=[str(skills_dir)]))
+
+        chat_names = {skill.name for skill in manager.get_available_skills("chat")}
+        assert "gen-dashboard" not in chat_names
+        assert "superset-dashboard" not in chat_names
+        assert "grafana-dashboard" not in chat_names
+
+        dashboard_names = {skill.name for skill in manager.get_available_skills("gen_dashboard")}
+        assert "superset-dashboard" in dashboard_names
+        assert "grafana-dashboard" in dashboard_names

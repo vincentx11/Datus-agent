@@ -7,8 +7,52 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult, normalize_null
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult
+
+
+class TestGenerationEvidence:
+    def test_missing_success_key_is_not_success(self):
+        evidence = GenerationEvidence()
+
+        evidence.record_validation_result({"result": {"valid": True, "issues": []}})
+        evidence.record_metric_dry_run(["revenue"], {"result": {"metadata": {"sql": "SELECT 1"}}})
+
+        assert evidence.validation_passed is False
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_sqls == {}
+
+    def test_attr_payload_metadata_is_recorded(self):
+        evidence = GenerationEvidence()
+        payload = Mock()
+        payload.metadata = {"sql": "SELECT 1"}
+        result = FuncToolResult(success=1, result=payload)
+
+        evidence.record_metric_dry_run(["revenue"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT 1"}
+
+    def test_single_sql_fallback_not_fanned_out_to_multiple_metrics(self):
+        evidence = GenerationEvidence()
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence.record_metric_dry_run(["revenue", "cost"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"__query_metrics_dry_run__": "SELECT 1"}
+        assert evidence.has_metric_dry_run(["revenue", "cost"]) is True
+
+    def test_dry_run_success_without_sql_metadata_records_coverage(self):
+        evidence = GenerationEvidence()
+        result = FuncToolResult(success=1, result={"metadata": {}})
+
+        evidence.record_metric_dry_run(["revenue"], result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {}
+        assert evidence.has_metric_dry_run(["revenue"]) is True
 
 
 class TestNormalizeNull:
@@ -45,6 +89,8 @@ def semantic_tools():
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
+        mock_config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        mock_config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
         tool = SemanticTools(agent_config=mock_config, adapter_type="mock_adapter")
         return tool
 
@@ -193,8 +239,37 @@ class TestQueryMetricsCompression:
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
         assert result.result["metadata"] == {"sql": "SELECT ...", "row_count": 1}
 
-    def test_query_metrics_sanitizes_non_serializable_metadata(self, semantic_tools):
-        """Test that non-JSON-serializable metadata values are converted to strings."""
+    def test_query_metrics_dry_run_records_generation_evidence(self, semantic_tools):
+        """Successful dry-run evidence gates metric publishing."""
+        evidence = GenerationEvidence()
+        semantic_tools.generation_evidence = evidence
+        query_result = QueryResult(
+            columns=[],
+            data=[],
+            metadata={"sql": "SELECT SUM(revenue) AS revenue FROM orders"},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+
+        assert result.success == 1
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
+
+    def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):
+        evidence = GenerationEvidence()
+        semantic_tools.generation_evidence = evidence
+        query_result = QueryResult(columns=[], data=[], metadata={"sql": "SELECT 1"})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=False)
+
+        assert result.success == 1
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_sqls == {}
+
+    def test_query_metrics_drops_non_serializable_metadata(self, semantic_tools):
+        """Test that non-JSON-serializable metadata values are dropped."""
 
         class FakePlan:
             def __str__(self):
@@ -211,9 +286,8 @@ class TestQueryMetricsCompression:
 
         assert result.success == 1
         meta = result.result["metadata"]
-        # Non-serializable object should be converted to str
-        assert meta["dataflow_plan"] == "<FakePlan: node1 -> node2>"
-        # Serializable values should be preserved as-is
+        # Non-serializable entries are dropped; serializable ones pass through.
+        assert "dataflow_plan" not in meta
         assert meta["sql"] == "SELECT 1"
         assert meta["count"] == 42
 
@@ -287,6 +361,8 @@ def semantic_tools_ext():
 
         config = Mock()
         config.active_model.return_value.model = "gpt-4o"
+        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
         tool = SemanticTools(agent_config=config)
         return tool
 
@@ -301,6 +377,8 @@ def semantic_tools_with_adapter():
 
         config = Mock()
         config.active_model.return_value.model = "gpt-4o"
+        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
         tool = SemanticTools(agent_config=config, adapter_type="metricflow")
         mock_adapter = Mock()
         tool._adapter = mock_adapter
@@ -377,20 +455,37 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics()
 
         assert result.success == 1
-        # Result is now a compressed dict
-        assert isinstance(result.result, dict)
-        assert result.result["original_rows"] == 1
-        assert "orders" in result.result["compressed_data"]
+        envelope = result.result
+        assert envelope["items"] == [
+            {
+                "name": "orders",
+                "description": "Order count",
+                "type": "count",
+                "dimensions": [],
+                "measures": [],
+                "unit": None,
+                "format": None,
+                "path": ["Sales"],
+            }
+        ]
+        assert envelope["total"] == 1
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
+        # Contract: list_metrics MUST NOT carry compressor artefacts anymore.
+        assert "compressed_data" not in envelope
+        assert "original_rows" not in envelope
 
-    def test_empty_storage_no_adapter_returns_compressed_empty(self, semantic_tools_ext):
+    def test_empty_storage_no_adapter_returns_empty_envelope(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
 
         result = semantic_tools_ext.list_metrics()
 
         assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert result.result["original_rows"] == 0
-        assert result.result["is_compressed"] is False
+        envelope = result.result
+        assert envelope["items"] == []
+        assert envelope["total"] == 0
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
 
     def test_path_filter_applied(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
@@ -419,9 +514,11 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics(path=["Finance"])
 
         assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert result.result["original_rows"] == 1
-        assert "m1" in result.result["compressed_data"]
+        envelope = result.result
+        names = [row["name"] for row in envelope["items"]]
+        assert names == ["m1"]
+        assert envelope["total"] == 1
+        assert envelope["has_more"] is False
 
     def test_pagination(self, semantic_tools_ext):
         metrics = [
@@ -442,9 +539,36 @@ class TestListMetrics:
         result = semantic_tools_ext.list_metrics(limit=3, offset=2)
 
         assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert result.result["original_rows"] == 3
-        assert "m2" in result.result["compressed_data"]
+        envelope = result.result
+        assert [row["name"] for row in envelope["items"]] == ["m2", "m3", "m4"]
+        assert envelope["total"] == 10
+        assert envelope["has_more"] is True
+        assert envelope["extra"] == {"next_offset": 5}
+
+    def test_pagination_last_page(self, semantic_tools_ext):
+        metrics = [
+            {
+                "name": f"m{i}",
+                "subject_path": [],
+                "description": "",
+                "metric_type": "",
+                "dimensions": [],
+                "base_measures": [],
+                "unit": None,
+                "format": None,
+            }
+            for i in range(5)
+        ]
+        semantic_tools_ext.metric_rag.search_all_metrics.return_value = metrics
+
+        result = semantic_tools_ext.list_metrics(limit=3, offset=3)
+
+        assert result.success == 1
+        envelope = result.result
+        assert [row["name"] for row in envelope["items"]] == ["m3", "m4"]
+        assert envelope["total"] == 5
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
 
     def test_falls_back_to_adapter(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -457,9 +581,13 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        assert isinstance(result.result, dict)
-        assert result.result["original_rows"] == 1
-        assert "revenue" in result.result["compressed_data"]
+        envelope = result.result
+        assert len(envelope["items"]) == 1
+        assert envelope["items"][0]["name"] == "revenue"
+        # Adapter path has no upstream total — envelope signals unknown via None.
+        assert envelope["total"] is None
+        # has_more heuristic: len(items) == limit (1) < default limit (100) → False.
+        assert envelope["has_more"] is False
 
     def test_exception_returns_failure(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.side_effect = Exception("db error")
@@ -477,7 +605,10 @@ class TestGetDimensions:
             result = tool.get_dimensions("revenue")
 
         assert result.success == 1
-        assert result.result == ["date", "region"]
+        envelope = result.result
+        assert envelope["items"] == [{"name": "date"}, {"name": "region"}]
+        assert envelope["total"] == 2
+        assert envelope["has_more"] is False
 
     def test_no_adapter_from_storage(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
@@ -487,7 +618,9 @@ class TestGetDimensions:
         result = semantic_tools_ext.get_dimensions("revenue")
 
         assert result.success == 1
-        assert result.result == ["date", "channel"]
+        envelope = result.result
+        assert envelope["items"] == [{"name": "date"}, {"name": "channel"}]
+        assert envelope["total"] == 2
 
     def test_no_adapter_metric_not_found(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = []
@@ -496,6 +629,9 @@ class TestGetDimensions:
 
         assert result.success == 0
         assert "not found" in result.error
+        # Even the error path returns an envelope shape, keeping the
+        # consumer contract uniform.
+        assert result.result == {"items": [], "total": 0, "has_more": False, "extra": None}
 
     def test_with_path_filter(self, semantic_tools_ext):
         mock_storage = Mock()
@@ -505,7 +641,8 @@ class TestGetDimensions:
         result = semantic_tools_ext.get_dimensions("revenue", path=["Finance"])
 
         assert result.success == 1
-        assert result.result == ["date"]
+        envelope = result.result
+        assert envelope["items"] == [{"name": "date"}]
 
     def test_exception_returns_failure(self, semantic_tools_ext):
         semantic_tools_ext.metric_rag.search_all_metrics.side_effect = Exception("conn error")
@@ -524,6 +661,8 @@ class TestValidateSemantic:
 
     def test_valid_result(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
 
         mock_validation = Mock()
         mock_validation.valid = True
@@ -536,9 +675,12 @@ class TestValidateSemantic:
         assert result.success == 1
         assert result.result["valid"] is True
         assert result.result["issues"] == []
+        assert evidence.validation_passed is True
 
     def test_invalid_result(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
 
         mock_issue = Mock()
         mock_issue.model_dump.return_value = {"severity": "error", "message": "bad config"}
@@ -553,6 +695,7 @@ class TestValidateSemantic:
         assert result.result["valid"] is False
         assert len(result.result["issues"]) == 1
         assert "1 validation errors" in result.error
+        assert evidence.validation_passed is False
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -645,9 +788,9 @@ class TestAttributionAnalyze:
 class TestExtractDbConfig:
     """Tests for _extract_db_config helper method."""
 
-    def test_returns_none_when_namespace_not_in_namespaces(self, semantic_tools):
-        """Should return None when namespace is not found in agent_config.namespaces."""
-        semantic_tools.agent_config.namespaces = {}
+    def test_returns_none_when_datasource_not_found(self, semantic_tools):
+        """Should return None when the database config cannot be resolved."""
+        semantic_tools.agent_config.current_db_config.side_effect = Exception("missing")
         result = semantic_tools._extract_db_config("missing_ns")
         assert result is None
 
@@ -664,7 +807,7 @@ class TestExtractDbConfig:
             "path_pattern": "skip",
             "catalog": "skip",
         }
-        semantic_tools.agent_config.namespaces = {"ns1": {"default": mock_db_config}}
+        semantic_tools.agent_config.current_db_config.return_value = mock_db_config
 
         result = semantic_tools._extract_db_config("ns1")
 
@@ -719,8 +862,14 @@ class TestCompressorModelName:
             tool = SemanticTools(agent_config=config)
             assert tool.compressor.model_name == "deepseek/deepseek-chat"
 
-    def test_list_metrics_returns_compressed_dict(self, semantic_tools_ext):
-        """list_metrics result should be a compressed dict, not a raw list."""
+    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_ext):
+        """list_metrics returns the canonical FuncToolListResult envelope.
+
+        Regression: list_metrics used to wrap rows in DataCompressor output
+        (``{original_rows, compressed_data, ...}``) regardless of size.
+        After the envelope migration it returns ``{items, total, has_more,
+        extra}`` with NO compressor artefacts — list_* never compresses.
+        """
         semantic_tools_ext.metric_rag.search_all_metrics.return_value = [
             {
                 "name": "orders",
@@ -735,5 +884,10 @@ class TestCompressorModelName:
         ]
         result = semantic_tools_ext.list_metrics()
         assert result.success == 1
-        assert "original_rows" in result.result
-        assert "compression_type" in result.result
+        envelope = result.result
+        assert set(envelope.keys()) == {"items", "total", "has_more", "extra"}
+        assert envelope["items"][0]["name"] == "orders"
+        # No compressor residue leaks through.
+        assert "original_rows" not in envelope
+        assert "compressed_data" not in envelope
+        assert "compression_type" not in envelope

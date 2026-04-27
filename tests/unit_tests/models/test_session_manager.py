@@ -30,7 +30,11 @@ from types import SimpleNamespace
 import pytest
 from agents.extensions.memory import AdvancedSQLiteSession
 
-from datus.models.session_manager import SessionManager
+from datus.models.session_manager import (
+    SessionManager,
+    extract_agent_from_session_id,
+    session_matches_agent,
+)
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
@@ -111,9 +115,14 @@ class TestSessionManagerInit:
     """Tests for SessionManager.__init__."""
 
     def test_init_creates_session_dir(self, sm):
-        """SessionManager creates the session directory on init."""
+        """SessionManager creates the session directory on init.
+
+        After the project-aware refactor the default sessions root is
+        ``{home}/sessions/{project_name}``; assert on the prefix (``sessions``
+        followed by a separator) instead of a strict ``endswith``.
+        """
         assert os.path.isdir(sm.session_dir)
-        assert sm.session_dir.endswith("sessions")
+        assert f"{os.sep}sessions{os.sep}" in sm.session_dir or sm.session_dir.endswith("sessions")
 
     def test_init_sessions_cache_is_empty(self, sm):
         """SessionManager starts with an empty session cache."""
@@ -1081,8 +1090,10 @@ class TestSessionManagerCustomDir:
         """SessionManager(session_dir=None) uses the default path_manager sessions dir directly."""
         manager = SessionManager(session_dir=None)
         try:
-            # Default should end with 'sessions' (no scope subdirectory)
-            assert manager.session_dir.endswith("sessions")
+            # Default lives under the project-sharded ``sessions/{project_name}/``
+            # tree. Assert the path contains the ``sessions`` segment and the
+            # directory exists; sharding appends a project subdir after it.
+            assert f"{os.sep}sessions{os.sep}" in manager.session_dir or manager.session_dir.endswith("sessions")
             assert os.path.isdir(manager.session_dir)
         finally:
             manager.close_all_sessions()
@@ -1106,7 +1117,7 @@ class TestSessionManagerCustomDir:
 
 class TestSessionManagerPathManagerInjection:
     def test_uses_explicit_path_manager_when_session_dir_missing(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         manager = SessionManager(path_manager=path_manager)
         try:
             assert manager.session_dir == str(path_manager.sessions_dir)
@@ -1115,7 +1126,7 @@ class TestSessionManagerPathManagerInjection:
             manager.close_all_sessions()
 
     def test_uses_agent_config_path_manager_when_session_dir_missing(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         agent_config = SimpleNamespace(path_manager=path_manager)
         manager = SessionManager(agent_config=agent_config)
         try:
@@ -1125,7 +1136,7 @@ class TestSessionManagerPathManagerInjection:
             manager.close_all_sessions()
 
     def test_blank_session_dir_falls_back_to_path_manager(self, tmp_path):
-        path_manager = DatusPathManager(tmp_path / "tenant_home")
+        path_manager = DatusPathManager(tmp_path / "tenant_home", project_name="tenant")
         manager = SessionManager(session_dir="   ", path_manager=path_manager)
         try:
             assert manager.session_dir == str(path_manager.sessions_dir)
@@ -1206,6 +1217,80 @@ class TestGetSessionMessages:
         assert len(assistant_messages) >= 1
         assert assistant_messages[0].get("sql") == "SELECT COUNT(*) FROM customer"
         assert assistant_messages[0]["content"] == "There are 30000 customers."
+
+    def test_interleaved_function_call_outputs_pair_by_call_id(self, sm):
+        """Parallel tool calls must be paired with their outputs via call_id on resume.
+
+        Regression for a bug where two function_call messages emitted back-to-back
+        (before any output) were paired with outputs by list order, causing the
+        SUCCESS action for the first call to inherit the input of the second call.
+        """
+        session_id = f"test_pair_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        call_id_a = "toolu_call_a"
+        call_id_b = "toolu_call_b"
+        args_a = json.dumps({"type": "gen_sql_summary", "description": "archive sql"})
+        args_b = json.dumps({"type": "gen_ext_knowledge", "description": "archive knowledge"})
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            rows = [
+                (
+                    json.dumps({"role": "user", "content": "go"}),
+                    "2025-01-01T00:00:00",
+                ),
+                (
+                    json.dumps({"type": "function_call", "call_id": call_id_a, "name": "task", "arguments": args_a}),
+                    "2025-01-01T00:00:01",
+                ),
+                (
+                    json.dumps({"type": "function_call", "call_id": call_id_b, "name": "task", "arguments": args_b}),
+                    "2025-01-01T00:00:02",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id_a,
+                            "output": "{'success': 1, 'result': 'ok'}",
+                        }
+                    ),
+                    "2025-01-01T00:00:03",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id_b,
+                            "output": "{'success': 0, 'error': 'Max turns (70) exceeded'}",
+                        }
+                    ),
+                    "2025-01-01T00:00:04",
+                ),
+            ]
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, data, ts) for data, ts in rows],
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups, "expected at least one assistant group"
+        actions = assistant_groups[0].get("actions", [])
+
+        success_by_call_id = {
+            a.action_id.removeprefix("complete_"): a for a in actions if a.action_id.startswith("complete_")
+        }
+        assert call_id_a in success_by_call_id, "SUCCESS action for call A missing"
+        assert call_id_b in success_by_call_id, "SUCCESS action for call B missing"
+
+        # Each SUCCESS action must inherit the input of its own call_id, not the
+        # most-recent PROCESSING action in insertion order.
+        assert success_by_call_id[call_id_a].input["arguments"] == args_a
+        assert success_by_call_id[call_id_b].input["arguments"] == args_b
 
 
 # ===========================================================================
@@ -1519,3 +1604,240 @@ class TestGetDetailedUsage:
             assert "legacy-session" in sessions
         finally:
             manager.close_all_sessions()
+
+
+# ---------------------------------------------------------------------------
+# Tests: copy_session
+# ---------------------------------------------------------------------------
+
+
+class TestCopySession:
+    """Tests for SessionManager.copy_session with real SQLite data."""
+
+    def _setup_source_session(self, sm, session_id, messages):
+        """Create a source session and populate it with messages."""
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            for idx, msg in enumerate(messages):
+                created_at = msg.get("created_at", f"2025-01-01T00:00:{idx:02d}")
+                msg_copy = {k: v for k, v in msg.items() if k != "created_at"}
+                conn.execute(
+                    "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                    (session_id, json.dumps(msg_copy), created_at),
+                )
+            conn.commit()
+
+    def test_copy_session_changes_prefix(self, sm):
+        """Copied session_id uses target_node_name prefix, not the source prefix."""
+        source_id = "chat_session_abc12345"
+        self._setup_source_session(
+            sm,
+            source_id,
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ],
+        )
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        assert new_id.startswith("gensql_session_")
+        assert new_id != source_id
+
+    def test_copy_session_preserves_all_messages(self, sm):
+        """All messages from the source session are copied to the new session."""
+        source_id = "chat_session_copy1"
+        self._setup_source_session(
+            sm,
+            source_id,
+            [
+                {"role": "user", "content": "Q1", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "A1", "created_at": "2025-01-01T00:00:01"},
+                {"role": "user", "content": "Q2", "created_at": "2025-01-01T00:00:02"},
+                {"role": "assistant", "content": "A2", "created_at": "2025-01-01T00:00:03"},
+            ],
+        )
+
+        new_id = sm.copy_session(source_id, "gen_report")
+
+        msgs = _read_messages(sm.session_dir, new_id)
+        assert len(msgs) == 4
+        assert msgs[0]["content"] == "Q1"
+        assert msgs[1]["content"] == "A1"
+        assert msgs[2]["content"] == "Q2"
+        assert msgs[3]["content"] == "A2"
+
+    def test_copy_session_new_db_file_created(self, sm):
+        """A separate .db file is created for the new session."""
+        source_id = "chat_session_dbcheck"
+        self._setup_source_session(sm, source_id, [{"role": "user", "content": "test"}])
+
+        new_id = sm.copy_session(source_id, "explore")
+
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        assert os.path.exists(new_db)
+        # Source DB should still exist untouched
+        source_db = os.path.join(sm.session_dir, f"{source_id}.db")
+        assert os.path.exists(source_db)
+
+    def test_copy_session_cached(self, sm):
+        """The new session should be cached in SessionManager._sessions."""
+        source_id = "chat_session_cached"
+        self._setup_source_session(sm, source_id, [{"role": "user", "content": "test"}])
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        assert new_id in sm._sessions
+
+    def test_copy_nonexistent_source_returns_fresh_id(self, sm):
+        """When source DB doesn't exist, return a fresh session_id (no crash)."""
+        new_id = sm.copy_session("nonexistent_session_xxx", "gensql")
+
+        assert new_id.startswith("gensql_session_")
+        # No DB file should be created since there was nothing to copy
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        assert not os.path.exists(new_db)
+
+    def test_copy_session_copies_turn_usage(self, sm):
+        """turn_usage rows are also copied to the new session."""
+        source_id = "chat_session_usage"
+        # Create session via get_session so the DB file exists with base tables
+        sm.get_session(source_id)
+        db_path = os.path.join(sm.session_dir, f"{source_id}.db")
+
+        # Populate messages and turn_usage directly
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (source_id,))
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (source_id, json.dumps({"role": "user", "content": "test"}), "2025-01-01T00:00:00"),
+            )
+            # turn_usage may or may not already exist; create if missing
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS turn_usage ("
+                "session_id TEXT NOT NULL, branch_id TEXT NOT NULL DEFAULT 'main', "
+                "user_turn_number INTEGER NOT NULL, requests INTEGER DEFAULT 0, "
+                "input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, "
+                "total_tokens INTEGER DEFAULT 0, input_tokens_details TEXT, "
+                "output_tokens_details TEXT, created_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO turn_usage "
+                "(session_id, branch_id, user_turn_number, requests, input_tokens, "
+                "output_tokens, total_tokens, input_tokens_details, output_tokens_details, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source_id, "main", 1, 2, 100, 50, 150, "{}", "{}", "2025-01-01T00:00:00"),
+            )
+            conn.commit()
+
+        # Verify source turn_usage exists before copy
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (source_id,))
+            assert cursor.fetchone()[0] == 1
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        # Verify turn_usage was copied
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        with sqlite3.connect(new_db) as conn:
+            cursor = conn.execute("SELECT session_id, total_tokens FROM turn_usage WHERE session_id = ?", (new_id,))
+            rows = cursor.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == new_id
+        assert rows[0][1] == 150
+
+    def test_copy_session_get_items_returns_copied_messages(self, sm):
+        """Copied session must return history via AdvancedSQLiteSession.get_items().
+
+        Regression for the bug where switching agents printed
+        "Copied session ... (N messages, ...)" but the new agent's LLM call
+        did not include the history.  AdvancedSQLiteSession.get_items() joins
+        agent_messages with message_structure, so copy_session must preserve
+        message_structure rows and agent_messages.id references.
+        """
+        import asyncio
+
+        source_id = "chat_session_items"
+        # Populate via AdvancedSQLiteSession.add_items so message_structure is
+        # created by the SDK exactly as in production.
+        source_db = os.path.join(sm.session_dir, f"{source_id}.db")
+        source = AdvancedSQLiteSession(session_id=source_id, db_path=source_db, create_tables=True)
+        items = [
+            {"role": "user", "content": "Q1"},
+            {"role": "assistant", "content": "A1"},
+            {"role": "user", "content": "Q2"},
+            {"role": "assistant", "content": "A2"},
+        ]
+        asyncio.run(source.add_items(items))
+
+        new_id = sm.copy_session(source_id, "gensql")
+
+        # Open via the SDK class to exercise the real read path.
+        new_db = os.path.join(sm.session_dir, f"{new_id}.db")
+        new_session = AdvancedSQLiteSession(session_id=new_id, db_path=new_db, create_tables=True)
+        read_items = asyncio.run(new_session.get_items())
+        assert len(read_items) == 4
+        assert [it.get("content") for it in read_items] == ["Q1", "A1", "Q2", "A2"]
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers: extract_agent_from_session_id, session_matches_agent
+# ---------------------------------------------------------------------------
+
+
+class TestExtractAgentFromSessionId:
+    """Tests for extract_agent_from_session_id."""
+
+    def test_chat_prefix(self):
+        """Default chat-prefixed ids resolve to 'chat'."""
+        assert extract_agent_from_session_id("chat_session_abc123") == "chat"
+
+    def test_subagent_prefix(self):
+        """Subagent-prefixed ids return the subagent name."""
+        assert extract_agent_from_session_id("gen_metrics_session_abc123") == "gen_metrics"
+
+    def test_multi_underscore_prefix(self):
+        """Splits on the last '_session_' so underscores in the agent name survive."""
+        assert extract_agent_from_session_id("my_custom_agent_session_x") == "my_custom_agent"
+
+    def test_legacy_no_prefix_defaults_to_chat(self):
+        """Session IDs without the _session_ delimiter fall back to chat."""
+        assert extract_agent_from_session_id("legacy-session-id") == "chat"
+        assert extract_agent_from_session_id("abc123") == "chat"
+
+
+class TestSessionMatchesAgent:
+    """Tests for session_matches_agent."""
+
+    def test_chat_session_matches_none(self):
+        """None agent selects the default chat agent."""
+        assert session_matches_agent("chat_session_1", None) is True
+
+    def test_chat_session_matches_chat_string(self):
+        """Explicit 'chat' matches chat-prefixed sessions."""
+        assert session_matches_agent("chat_session_1", "chat") is True
+
+    def test_chat_session_matches_empty_string(self):
+        """Empty-string agent_name is treated as the chat agent."""
+        assert session_matches_agent("chat_session_1", "") is True
+
+    def test_subagent_match(self):
+        """Subagent session matches its own name."""
+        assert session_matches_agent("gen_metrics_session_1", "gen_metrics") is True
+
+    def test_subagent_does_not_match_chat(self):
+        """Subagent session must not surface under the chat filter."""
+        assert session_matches_agent("gen_metrics_session_1", None) is False
+        assert session_matches_agent("gen_metrics_session_1", "chat") is False
+
+    def test_chat_does_not_match_subagent(self):
+        """Chat session must not surface under a subagent filter."""
+        assert session_matches_agent("chat_session_1", "gen_metrics") is False
+
+    def test_legacy_session_matches_chat(self):
+        """Legacy prefix-less sessions are visible to the chat agent."""
+        assert session_matches_agent("legacy-id", None) is True
+        assert session_matches_agent("legacy-id", "chat") is True
+        assert session_matches_agent("legacy-id", "gen_metrics") is False

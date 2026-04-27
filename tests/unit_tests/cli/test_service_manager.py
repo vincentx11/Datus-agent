@@ -9,16 +9,17 @@ from unittest.mock import MagicMock, patch
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-def _make_agent_config(databases=None):
-    """Build a minimal mock AgentConfig with service.databases."""
-    db_map = databases if databases is not None else {}
-    service = MagicMock()
-    service.databases = db_map
-    service.default_database = next(iter(db_map), None)
-    service.bi_tools = {}
-    service.schedulers = {}
+def _make_agent_config(datasources=None):
+    """Build a minimal mock AgentConfig with services.datasources."""
+    db_map = datasources if datasources is not None else {}
+    services = MagicMock()
+    services.datasources = db_map
+    services.default_datasource = next(iter(db_map), None)
+    services.semantic_layer = {}
+    services.bi_platforms = {}
+    services.schedulers = {}
     agent_config = MagicMock()
-    agent_config.service = service
+    agent_config.services = services
     return agent_config
 
 
@@ -178,11 +179,11 @@ class TestServiceManagerList:
             calls = [str(c) for c in mock_console.print.call_args_list]
             assert any("No databases" in c for c in calls)
 
-    def test_list_shows_bi_tools_when_present(self):
-        """list() prints BI tools section when bi_tools are configured."""
+    def test_list_shows_bi_platforms_when_present(self):
+        """list() prints BI platforms section when bi_platforms are configured."""
         db_cfg = _make_db_config()
         mock_config = _make_agent_config({"my_db": db_cfg})
-        mock_config.service.bi_tools = {"tableau": {"url": "http://tableau"}}
+        mock_config.services.bi_platforms = {"tableau": {"url": "http://tableau"}}
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -229,7 +230,7 @@ class TestServiceManagerList:
         """list() prints schedulers section when schedulers are configured."""
         db_cfg = _make_db_config()
         mock_config = _make_agent_config({"my_db": db_cfg})
-        mock_config.service.schedulers = {"airflow": {"url": "http://airflow"}}
+        mock_config.services.schedulers = {"airflow": {"url": "http://airflow"}}
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -243,12 +244,12 @@ class TestServiceManagerList:
             calls = [str(c) for c in mock_console.print.call_args_list]
             assert any("Schedulers" in c or "airflow" in c for c in calls)
 
-    def test_list_marks_default_database(self):
+    def test_list_marks_default_datasource(self):
         """list() marks the default database with '*' in the Default column."""
         db_cfg_default = _make_db_config(default=True)
         db_cfg_other = _make_db_config(default=False)
         mock_config = _make_agent_config({"default_db": db_cfg_default, "other_db": db_cfg_other})
-        mock_config.service.default_database = "default_db"
+        mock_config.services.default_datasource = "default_db"
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -881,8 +882,8 @@ class TestServiceManagerDelete:
     def test_delete_confirmed_saves_and_returns_0(self):
         """delete() removes the database, saves config, and returns 0 on success."""
         db_cfg = _make_db_config()
-        databases = {"my_db": db_cfg}
-        mock_config = _make_agent_config(databases)
+        datasources = {"my_db": db_cfg}
+        mock_config = _make_agent_config(datasources)
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -906,8 +907,8 @@ class TestServiceManagerDelete:
     def test_delete_confirmed_save_failure_returns_1(self):
         """delete() returns 1 when save fails after confirmed deletion."""
         db_cfg = _make_db_config()
-        databases = {"my_db": db_cfg}
-        mock_config = _make_agent_config(databases)
+        datasources = {"my_db": db_cfg}
+        mock_config = _make_agent_config(datasources)
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -929,7 +930,7 @@ class TestServiceManagerSaveConfiguration:
     """Tests for ServiceManager._save_configuration()."""
 
     def test_save_configuration_builds_correct_structure(self):
-        """_save_configuration() calls configure_manager.update with correct service section."""
+        """_save_configuration() calls configure_manager.update with the correct services section."""
         db_cfg = _make_db_config(db_type="sqlite", uri="data/db.sqlite", default=True)
         mock_config = _make_agent_config({"main_db": db_cfg})
 
@@ -949,8 +950,8 @@ class TestServiceManagerSaveConfiguration:
             mock_cm.update.assert_called_once()
             call_kwargs = mock_cm.update.call_args
             updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-            assert "service" in updates
-            assert "databases" in updates["service"]
+            assert "services" in updates
+            assert "datasources" in updates["services"]
 
     def test_save_configuration_returns_false_on_exception(self):
         """_save_configuration() returns False when configuration_manager raises."""
@@ -1009,32 +1010,10 @@ class TestServiceManagerSaveConfiguration:
         db_cfg.to_dict.assert_called_once()
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        pg_entry = updates["service"]["databases"]["pg_db"]
+        pg_entry = updates["services"]["datasources"]["pg_db"]
         # Internal fields should be removed
         assert "logic_name" not in pg_entry
         assert "path_pattern" not in pg_entry
-
-    def test_save_configuration_removes_legacy_namespace_key(self):
-        """_save_configuration() removes legacy 'namespace' key when present."""
-        db_cfg = _make_db_config(db_type="sqlite", uri="data/db.sqlite")
-        mock_config = _make_agent_config({"main_db": db_cfg})
-
-        mock_cm = MagicMock()
-        mock_cm.data = {"namespace": {"old_db": {}}, "service": {}}
-
-        with (
-            patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
-            patch("datus.cli.service_manager.configuration_manager", return_value=mock_cm),
-            patch("datus.cli.service_manager.console"),
-        ):
-            from datus.cli.service_manager import ServiceManager
-
-            sm = ServiceManager("agent.yml")
-            result = sm._save_configuration()
-
-        assert result is True
-        assert "namespace" not in mock_cm.data
-        mock_cm.save.assert_called_once()
 
     def test_save_configuration_with_default_db_includes_default_flag(self):
         """_save_configuration() includes 'default: True' in output when db has default=True."""
@@ -1057,7 +1036,7 @@ class TestServiceManagerSaveConfiguration:
         assert result is True
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        main_entry = updates["service"]["databases"]["main_db"]
+        main_entry = updates["services"]["datasources"]["main_db"]
         assert main_entry.get("default") is True
 
     def test_save_configuration_non_default_sqlite_no_logic_name_diff(self):
@@ -1111,7 +1090,7 @@ class TestServiceManagerSaveConfiguration:
         assert result is True
         call_kwargs = mock_cm.update.call_args
         updates = call_kwargs[1]["updates"] if call_kwargs[1] else call_kwargs[0][0]
-        main_entry = updates["service"]["databases"]["main_db"]
+        main_entry = updates["services"]["datasources"]["main_db"]
         assert main_entry.get("name") == "alias_name"
 
 

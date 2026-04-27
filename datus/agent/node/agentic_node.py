@@ -39,11 +39,53 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+_LANGUAGE_NAME_MAP: Dict[str, str] = {
+    "en": "English",
+    "zh": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-tw": "Traditional Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "it": "Italian",
+}
+
+
+def _resolve_language_name(code: str) -> str:
+    """Map a language code (e.g. ``"zh"``) to a human-readable name.
+
+    Unknown codes are returned as-is so operators can plug in custom values
+    without a code change.
+    """
+    if not code:
+        return "English"
+    return _LANGUAGE_NAME_MAP.get(code.strip().lower(), code)
+
+
 class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
     with tool integration and automatic context management.
     """
+
+    DEFAULT_SUBAGENTS = "explore"
+
+    # Default skill patterns injected into ``<available_skills>`` when the user's
+    # ``agent.yml`` does not override ``skills:`` for this node. Subclasses declare
+    # the skills their workflow expects so every built-in subagent works out of
+    # the box without forcing users to wire each skill manually. Set to an explicit
+    # empty string in yml to opt out of the defaults.
+    DEFAULT_SKILLS: Optional[str] = None
+
+    # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
+    # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
+    # read any skill by name (used by ``gen_skill`` for edit/optimize flows).
+    # Visibility in ``<available_skills>`` is still filtered normally.
+    SKILL_AUTHORING_MODE: bool = False
 
     def __init__(
         self,
@@ -55,6 +97,8 @@ class AgenticNode(Node):
         tools: Optional[List[Tool]] = None,
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
+        memory_enabled: Optional[bool] = None,
     ):
         """
         Initialize the agentic node.
@@ -68,6 +112,13 @@ class AgenticNode(Node):
             tools: List of function tools available to this node
             mcp_servers: Dictionary of MCP servers available to this node
             scope: Optional session scope for directory isolation
+            is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
+            memory_enabled: Whether this node should get the Auto Memory section injected
+                into its system prompt. When ``None`` (default), resolved from
+                ``has_memory(self.get_node_name())`` — built-in subagents (gen_sql,
+                gen_report, feedback, etc.) default to ``False``; only ``chat`` and
+                custom/user-defined subagents default to ``True``. Pass an explicit
+                bool to override.
         """
         # Initialize Node base class
         super().__init__(node_id, description, node_type, input_data, agent_config, tools)
@@ -79,14 +130,39 @@ class AgenticNode(Node):
         self.session_id: Optional[str] = None
         self._session: Optional[AdvancedSQLiteSession] = None
         self.ephemeral: bool = False  # When True, use in-memory session (no SQLite persistence)
-        self.last_summary: Optional[str] = None
-        self.context_length: Optional[int] = None
+        # Populated lazily via the ``model`` property so ``/model`` switches
+        # take effect on the next access without rebuilding the node.
+        # ``_pinned_model`` exists because the parent :class:`Node` writes
+        # ``self.model = None`` / ``self.model = llm_model`` directly; the
+        # property setter routes those writes here.
+        self._agent_config_ref: Optional[AgentConfig] = None
+        self._node_model_name: Optional[str] = None
+        self._pinned_model: Optional[LLMBaseModel] = None
+
+        # Name of the previous node (set externally by the caller, e.g. the CLI
+        # on agent switch). Nodes that need caller context — like feedback,
+        # which injects the caller's MEMORY.md — read this instead of inferring
+        # it from the session id prefix. ``None`` when no switch occurred.
+        self.caller_node_name: Optional[str] = None
+
+        # Whether memory context is injected into this node's system prompt.
+        # Resolves from has_memory() when not explicitly set by the caller.
+        from datus.utils.memory_loader import has_memory
+
+        self.memory_enabled: bool = memory_enabled if memory_enabled is not None else has_memory(self.get_node_name())
 
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
+        # PermissionHooks is attached lazily once tools are set up — see
+        # ``_ensure_permission_hooks``. Every subclass that runs the LLM
+        # loop must pass ``self._compose_hooks()`` into
+        # ``generate_with_tools_stream`` so rules actually fire.
+        self.permission_hooks: Optional[Any] = None
         self.skill_manager: Optional["SkillManager"] = None
         self.skill_func_tool = None
         self.ask_user_tool = None
+        self.sub_agent_task_tool = None
+        self._is_subagent = is_subagent
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
         # ActionBus - merges tool sub-actions into the main action stream
@@ -119,14 +195,72 @@ class AgenticNode(Node):
         # Setup skill func tools for non-chat nodes when explicitly configured
         self._setup_skill_func_tools()
 
-        # Initialize model: use node-specific model if configured, otherwise use default from agent_config
-        if agent_config:
-            model_name = self.node_config.get("model")  # Can be None, which will use active_model()
-            self.model = LLMBaseModel.create_model(model_name=model_name, agent_config=agent_config, scope=self.scope)
-            self.context_length = self.model.context_length() if self.model else None
+        # Resolve model lazily so ``/model`` can flip the active target at
+        # runtime without rebuilding every node. The node-specific override
+        # (``agent.agentic_nodes.<name>.model``) — when present — still wins
+        # because ``_resolve_model_name()`` forwards it to
+        # :meth:`LLMBaseModel.create_model`; otherwise the resolver falls
+        # back to ``agent_config.active_model()`` each call.
+        self._agent_config_ref = agent_config
+        self._node_model_name = self.node_config.get("model") if agent_config else None
 
         self.interaction_broker = InteractionBroker()
         self.interrupt_controller = InterruptController()
+
+    @property
+    def model(self) -> Optional[LLMBaseModel]:
+        """Return the currently active :class:`LLMBaseModel` for this node.
+
+        Reads :meth:`AgentConfig.active_model` on every access so a runtime
+        ``/model`` switch is picked up without recreating the node. The
+        heavy lifting is absorbed by :meth:`LLMBaseModel.create_model`'s
+        process-wide LRU cache — calls for the same config are O(1).
+
+        An explicit ``self.model = ...`` assignment (used by the parent
+        :class:`Node` initializer and by tests that inject a mock) pins
+        the instance via the setter below; pinned values win over lazy
+        resolution until explicitly cleared with ``self.model = None``.
+        """
+        if self._pinned_model is not None:
+            return self._pinned_model
+        if self._agent_config_ref is None:
+            return None
+        return LLMBaseModel.create_model(
+            agent_config=self._agent_config_ref,
+            model_name=self._node_model_name,
+            scope=self.scope,
+        )
+
+    @model.setter
+    def model(self, value: Optional[LLMBaseModel]) -> None:
+        """Pin (or clear) the model instance used by this node.
+
+        The parent :class:`Node` class writes ``self.model = None`` during
+        its own ``__init__`` and ``self.model = llm_model`` inside
+        ``_initialize``. Without a setter those assignments would raise
+        because ``model`` is declared as a property here. Storing the
+        value in ``_pinned_model`` preserves the existing contract for
+        legacy callers while still letting ``/model`` switches take effect
+        whenever callers clear the pin.
+        """
+        self._pinned_model = value
+
+    @property
+    def context_length(self) -> Optional[int]:
+        """Context window of the current model, refreshed per access.
+
+        Used by ``/compact`` / auto-compaction heuristics that divide
+        current token usage by the model's context budget. Falling back
+        to ``None`` (rather than 0) keeps those heuristics inert when the
+        active model doesn't publish a window.
+        """
+        current = self.model
+        if current is None:
+            return None
+        try:
+            return current.context_length()
+        except Exception:
+            return None
 
     def get_node_name(self) -> str:
         """
@@ -147,6 +281,34 @@ class AgenticNode(Node):
             template_name = class_name
 
         return template_name.lower()
+
+    def get_node_class_name(self) -> str:
+        """Canonical identifier for this node's underlying class.
+
+        ``get_node_name()`` may return a per-instance alias when a subagent is
+        registered under a custom id (e.g. ``my_dashboard`` backed by
+        ``GenDashboardAgenticNode``). Scoping mechanisms like
+        ``SkillMetadata.allowed_agents`` need a stable class-level identifier so
+        a whitelist written against the canonical class (``gen_dashboard``)
+        still applies to all aliases of that class.
+
+        Resolution order:
+        1. ``type(self).NODE_NAME`` if the subclass declares it — the
+           recommended form, used by ``gen_dashboard``, ``gen_table``,
+           ``scheduler``, ``gen_skill`` etc.
+        2. Otherwise derive from the class name via the *base*
+           ``AgenticNode.get_node_name`` (e.g. ``ExploreAgenticNode`` →
+           ``explore``). This is the safety net for alias-capable subclasses
+           that haven't added ``NODE_NAME``: we must NOT fall back to
+           ``self.get_node_name()``, since overrides there return the alias.
+
+        Returns:
+            A stable class-level identifier independent of any alias.
+        """
+        node_class = getattr(type(self), "NODE_NAME", None)
+        if node_class:
+            return node_class
+        return AgenticNode.get_node_name(self)
 
     def _get_system_prompt(
         self, conversation_summary: Optional[str] = None, prompt_version: Optional[str] = None
@@ -169,8 +331,8 @@ class AgenticNode(Node):
             version = self.agent_config.prompt_version
 
         root_path = "."
-        if self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            root_path = self.agent_config.workspace_root
+        if self.agent_config and hasattr(self.agent_config, "project_root"):
+            root_path = self.agent_config.project_root
 
         # Construct template name: {template_name}_system_{version}
         template_name = f"{self.get_node_name()}_system"
@@ -182,7 +344,7 @@ class AgenticNode(Node):
                 version=version,
                 # Add common template variables
                 agent_config=self.agent_config,
-                namespace=getattr(self.agent_config, "current_database", None) if self.agent_config else None,
+                datasource=getattr(self.agent_config, "current_datasource", None) if self.agent_config else None,
                 workspace_root=root_path,  # DEPRECATED: Use semantic_model_dir or sql_summary_dir instead
                 # Add conversation summary if available
                 conversation_summary=conversation_summary,
@@ -204,7 +366,7 @@ class AgenticNode(Node):
 
         return self._finalize_system_prompt(base_prompt)
 
-    def _finalize_system_prompt(self, base_prompt: str) -> str:
+    def _finalize_system_prompt(self, base_prompt: str, memory_node_name_override: Optional[str] = None) -> str:
         """
         Finalize system prompt by injecting skill context, memory context, and ensuring skill tools.
 
@@ -213,6 +375,9 @@ class AgenticNode(Node):
 
         Args:
             base_prompt: The rendered template prompt
+            memory_node_name_override: When provided, inject memory for this node name instead of
+                ``self.get_node_name()``. Used by FeedbackAgenticNode to inject the caller's memory
+                (the feedback node has no memory of its own).
 
         Returns:
             Prompt with skills XML and memory context appended
@@ -232,17 +397,66 @@ class AgenticNode(Node):
                 base_prompt = base_prompt + "\n\n" + skills_xml
 
         # Inject memory context for eligible nodes.
-        base_prompt = self._inject_memory_context(base_prompt)
+        base_prompt = self._inject_memory_context(base_prompt, override_node_name=memory_node_name_override)
+
+        # Inject response language policy so every agentic node — including
+        # sub-agents invoked via ``task`` — honors the configured output language.
+        base_prompt = self._inject_response_language(base_prompt)
 
         return base_prompt
 
-    def _inject_memory_context(self, base_prompt: str) -> str:
-        """Inject memory context into system prompt if this node has memory enabled."""
-        from datus.utils.memory_loader import get_memory_dir, has_memory, load_memory_context
+    def _inject_response_language(self, base_prompt: str) -> str:
+        """Append a language directive driven by ``agent_config.language``.
 
-        node_name = self.get_node_name()
-        if not has_memory(node_name):
+        When ``language`` is unset (``None`` or empty), this is a no-op so the
+        model decides the response language on its own. Setting a code (e.g.
+        ``"en"``/``"zh"``) in yaml or via the Chat API pins every AgenticNode
+        to that output language through a single append hook.
+        """
+        language_raw = getattr(self.agent_config, "language", None)
+        if not language_raw or not str(language_raw).strip():
             return base_prompt
+        language_code = str(language_raw).strip()
+        try:
+            language_section = get_prompt_manager(agent_config=self.agent_config).render_template(
+                template_name="response_language",
+                version=None,
+                language_code=language_code,
+                language_name=_resolve_language_name(language_code),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to render response_language template: {e}")
+            return base_prompt
+        if language_section and language_section.strip():
+            base_prompt = base_prompt + "\n\n" + language_section
+        return base_prompt
+
+    def _inject_memory_context(self, base_prompt: str, override_node_name: Optional[str] = None) -> str:
+        """Inject memory context into the system prompt.
+
+        Injection rules:
+        - When ``override_node_name`` is provided (feedback path): inject
+          unconditionally, targeting that node's memory directory. Feedback
+          uses this to attach the caller's memory even when the caller itself
+          would not have memory enabled by default.
+        - Otherwise: inject only if ``self.memory_enabled`` is True. Built-in
+          subagents (gen_sql, gen_report, etc.) default to disabled so their
+          prompts stay focused; ``chat`` and custom subagents default to enabled.
+
+        Args:
+            base_prompt: The prompt to append memory context to.
+            override_node_name: When provided, look up memory for this node name instead of
+                ``self.get_node_name()``. Enables injecting another node's memory (e.g. the
+                feedback node injects its caller's memory).
+        """
+        from datus.utils.memory_loader import get_memory_dir, load_memory_context
+
+        if override_node_name:
+            node_name = override_node_name
+        else:
+            if not self.memory_enabled:
+                return base_prompt
+            node_name = self.get_node_name()
 
         try:
             workspace_root = self._resolve_workspace_root()
@@ -300,11 +514,11 @@ class AgenticNode(Node):
         Get or create the session for this node.
 
         Returns:
-            Tuple of (session, summary) where summary is the conversation summary
-            from previous compact (if any), None otherwise
+            Tuple of (session, summary). The summary slot is always None now
+            that compaction persists the summary directly into the session
+            history; it is kept in the return type for backward compatibility
+            with existing call sites that unpack two values.
         """
-        summary = None
-
         if self._session is None:
             if self.session_id is None:
                 self.session_id = self._generate_session_id()
@@ -323,42 +537,65 @@ class AgenticNode(Node):
                     self._session = self.model.create_session(self.session_id)
                     logger.debug(f"Created session: {self.session_id}")
 
-                # If we have a summary from previous compact, return it
-                if self.last_summary:
-                    summary = self.last_summary
-                    logger.debug(f"Returning summary from previous compact: {len(summary)} chars")
-
-                    # Clear the summary after using it once
-                    self.last_summary = None
-
-        return self._session, summary
+        return self._session, None
 
     async def _count_session_tokens(self) -> int:
         """
-        Count the total tokens in the current session.
+        Estimate current context window usage in tokens.
 
-        Reads from session's turn_usage table first. Falls back to summing
-        usage from action history (for native API paths that bypass the SDK).
+        Returns the last API call's input_tokens from the most recent execute,
+        which represents the actual conversation size in the context window.
+        Falls back to the last turn's total_tokens from turn_usage table.
 
         Returns:
-            Total token count in the session
+            Estimated context window token usage
         """
-        if self._session and hasattr(self._session, "get_session_usage"):
-            usage = await self._session.get_session_usage()
-            total = usage.get("total_tokens", 0) if usage else 0
-            if total > 0:
-                return total
-        # Fallback: sum usage from action history (native Anthropic API path)
-        total_from_actions = 0
-        for action in self.actions:
-            if isinstance(action.output, dict) and "usage" in action.output:
-                total_from_actions += action.output["usage"].get("total_tokens", 0)
-        return total_from_actions
+        # Primary: get last_call_input_tokens from the most recent root assistant action.
+        # Scope to root-level actions (depth == 0) so child/tool usage from sub-agents
+        # doesn't leak into the parent session's context estimate.
+        for action in reversed(self.actions):
+            # Stop at the last root-level user message to scope to the current turn
+            if action.role == ActionRole.USER and action.depth == 0:
+                break
+            if (
+                action.role == ActionRole.ASSISTANT
+                and action.depth == 0
+                and isinstance(action.output, dict)
+                and isinstance(action.output.get("usage"), dict)
+            ):
+                usage = action.output["usage"]
+                last_call = usage.get("last_call_input_tokens", 0)
+                if last_call > 0:
+                    return last_call
+                # Fallback within action: use input_tokens (still per-turn, not cumulative sum)
+                input_tokens = usage.get("input_tokens", 0)
+                if input_tokens > 0:
+                    return input_tokens
+                break
+
+        # Fallback: get the latest turn's total_tokens from turn_usage table
+        if self._session and hasattr(self._session, "get_turn_usage"):
+            try:
+                turn_usage = await self._session.get_turn_usage()
+                if turn_usage:
+                    # turn_usage is a list of per-turn records; use the last one
+                    last_turn = turn_usage[-1] if isinstance(turn_usage, list) else turn_usage
+                    if isinstance(last_turn, dict):
+                        return last_turn.get("total_tokens", 0)
+            except Exception as e:
+                logger.debug(f"Failed to get turn usage for token counting: {e}")
+
+        return 0
 
     async def _manual_compact(self) -> dict:
         """
         Manually compact the session by summarizing conversation history.
-        This clears the session and stores summary for next session creation.
+
+        Generates an LLM summary of the current session, clears the session's
+        history, then writes a `user marker + assistant summary` pair back
+        into the SAME session so subsequent LLM requests and UI history reads
+        see the summary as the new visible turn. The session_id / .db file
+        are preserved; no new session is created.
 
         Returns:
             Dict with success, summary, and summary_token count
@@ -370,15 +607,27 @@ class AgenticNode(Node):
             logger.debug("Skipped compaction for ephemeral session")
             return {"success": False, "summary": "", "summary_token": 0}
 
-        if not self.model or not self._session:
-            logger.warning("Cannot compact: no model or session available")
+        try:
+            model = self.model
+        except Exception as exc:
+            logger.warning("Cannot compact: model resolution failed: %s", exc)
+            return {"success": False, "summary": "", "summary_token": 0}
+        if not model:
+            logger.warning("Cannot compact: no model available")
+            return {"success": False, "summary": "", "summary_token": 0}
+
+        # Lazily materialize the SQLite session when only session_id is known.
+        # This happens after .resume, which sets self.session_id but leaves
+        # self._session as None until the first execute call.
+        if self._session is None and self.session_id:
+            self._get_or_create_session()
+
+        if not self._session:
+            logger.warning("Cannot compact: no session available")
             return {"success": False, "summary": "", "summary_token": 0}
 
         try:
             logger.info(f"Starting manual compacting for session {self.session_id}")
-
-            # Store old session info for logging
-            old_session_id = self.session_id
 
             # 1. Generate summary using LLM with existing session
             summarization_prompt = (
@@ -405,24 +654,34 @@ class AgenticNode(Node):
                 logger.error(f"Failed to generate summary with LLM: {e}")
                 return {"success": False, "summary": "", "summary_token": 0}
 
-            # 2. Store summary for next session creation
-            self.last_summary = summary
-            logger.info(f"Stored summary for next session: {len(summary)} characters")
-
-            # 3. Clear current session
-            if old_session_id:
-                try:
-                    self.model.delete_session(old_session_id)
-                    logger.debug(f"Deleted old session: {old_session_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete old session {old_session_id}: {e}")
-
-            # Clear session references
-            self.session_id = None
-            self._session = None
+            # 2. Persist summary back into the session: clear the existing history
+            #    and append a user/assistant pair so the summary becomes the new
+            #    visible turn. Subsequent LLM requests will pick it up as context
+            #    via the OpenAI Agents SDK session, and UI history reads will
+            #    surface the summary instead of an empty session.
+            try:
+                await self._session.clear_session()
+                await self._session.add_items(
+                    [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": "[Previous conversation was compacted to save context. Summary below.]",
+                        },
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": summary}],
+                        },
+                    ]
+                )
+            except Exception as persist_err:
+                logger.error(f"Failed to persist compact summary: {persist_err}")
+                return {"success": False, "summary": "", "summary_token": 0}
 
             logger.info(
-                f"Manual compacting completed. Cleared session: {old_session_id}, Summary stored: {len(summary)} chars"
+                f"Manual compacting completed. Session {self.session_id} cleared and "
+                f"summary persisted ({len(summary)} chars, {summary_token} output tokens)"
             )
             return {"success": True, "summary": summary, "summary_token": summary_token}
 
@@ -437,7 +696,11 @@ class AgenticNode(Node):
         Returns:
             True if compacting was triggered and successful, False otherwise
         """
-        if not self.model or not self.context_length:
+        try:
+            model = self.model
+        except Exception:
+            return False
+        if not model or not self.context_length:
             return False
 
         try:
@@ -505,9 +768,12 @@ class AgenticNode(Node):
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
+            "semantic_adapter",
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",
+            "scheduler_service",
+            "subagents",
         ]
         for attr in direct_attributes:
             # Handle both dict and object access patterns
@@ -559,6 +825,7 @@ class AgenticNode(Node):
             self.permission_manager = PermissionManager(
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
+                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
             )
             # Forward existing callback to permission manager
             if self._permission_callback:
@@ -618,6 +885,14 @@ class AgenticNode(Node):
         setup_tools() resets self.tools = [] after __init__ completes.
         """
         skill_patterns_str = self.node_config.get("skills")
+        if skill_patterns_str is None:
+            # Fall back to the subclass-declared defaults so built-in subagents
+            # work out of the box. An explicit empty string in yml opts out.
+            skill_patterns_str = type(self).DEFAULT_SKILLS
+            if skill_patterns_str:
+                # Persist the resolved pattern so <available_skills> filtering
+                # and any downstream reader sees the same value.
+                self.node_config["skills"] = skill_patterns_str
         if not skill_patterns_str:
             return
 
@@ -640,12 +915,48 @@ class AgenticNode(Node):
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,
                 node_name=self.get_node_name(),
+                node_class=self.get_node_class_name(),
+                authoring_mode=self.SKILL_AUTHORING_MODE,
             )
             logger.info(
                 f"Skill func tools activated for node '{self.get_node_name()}' with pattern '{skill_patterns_str}'"
             )
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")
+
+    @staticmethod
+    def _merge_skill_patterns(existing_skills: Any, injected_skills: List[str]) -> str:
+        """Merge runtime-injected skill patterns into the user's configured list.
+
+        Platform-aware subagents (``scheduler``, ``gen_dashboard``, etc.) need to
+        append a ``{platform}-*`` skill based on config without overriding the
+        user's ``skills:`` yml entry. This helper merges the two sources,
+        deduplicates, and returns the canonical comma-separated string that
+        ``_setup_skill_func_tools`` expects.
+
+        Args:
+            existing_skills: Value of ``node_config["skills"]`` — either a
+                comma-separated string, a list of patterns, or ``None``.
+            injected_skills: Skill names the subclass wants to guarantee.
+
+        Returns:
+            Comma-separated pattern string with injected skills appended after
+            the user's patterns and duplicates removed (first occurrence wins).
+        """
+        merged_patterns: List[str] = []
+
+        if isinstance(existing_skills, str):
+            merged_patterns.extend([pattern.strip() for pattern in existing_skills.split(",") if pattern.strip()])
+        elif isinstance(existing_skills, list):
+            merged_patterns.extend(
+                [pattern.strip() for pattern in existing_skills if isinstance(pattern, str) and pattern.strip()]
+            )
+
+        for skill in injected_skills:
+            if skill not in merged_patterns:
+                merged_patterns.append(skill)
+
+        return ", ".join(merged_patterns)
 
     def _setup_ask_user_tool(self):
         """Setup ask-user tool so the agent can ask clarifying questions.
@@ -665,6 +976,45 @@ class AgenticNode(Node):
         except Exception as e:
             logger.error(f"Failed to setup ask_user tool: {e}")
             self.ask_user_tool = None
+
+    def _setup_sub_agent_task_tool(self):
+        """Setup SubAgentTaskTool based on subagents config or node default.
+
+        Skipped when ``is_subagent`` is True (nodes created by SubAgentTaskTool)
+        to enforce strict 2-level depth — subagent nodes never get their own task tool.
+        """
+        if self._is_subagent:
+            return
+
+        from datus.schemas.agent_models import SubAgentConfig
+
+        subagents_str = self.node_config.get("subagents")
+        if subagents_str is None:
+            subagents_str = self.DEFAULT_SUBAGENTS
+
+        parsed = SubAgentConfig(subagents=subagents_str).subagent_list
+        if not parsed:
+            return  # Empty = no task tool
+
+        if parsed == ["*"]:
+            allowed = None  # None = SubAgentTaskTool discovers all types
+        else:
+            allowed = parsed
+
+        try:
+            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+
+            self.sub_agent_task_tool = SubAgentTaskTool(
+                agent_config=self.agent_config,
+                allowed_subagents=allowed,
+                parent_node_name=self.get_node_name(),
+            )
+            self.sub_agent_task_tool.set_action_bus(self.action_bus)
+            self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
+            self.sub_agent_task_tool.set_parent_node(self)
+        except Exception as e:
+            logger.error(f"Failed to setup SubAgent task tool: {e}")
+            self.sub_agent_task_tool = None
 
     def _ensure_skill_tools_in_tools(self) -> None:
         """
@@ -730,6 +1080,7 @@ class AgenticNode(Node):
         return self.skill_manager.generate_available_skills_xml(
             node_name=self.get_node_name(),
             patterns=skill_patterns,
+            node_class=self.get_node_class_name(),
         )
 
     def _get_tool_category(self, tool_name: str) -> str:
@@ -1086,45 +1437,184 @@ class AgenticNode(Node):
 
     def _resolve_workspace_root(self) -> str:
         """
-        Resolve workspace_root with priority: node-specific > global storage > legacy > cwd.
-        Expands ~ to user home directory if present.
+        Resolve workspace_root with priority: node-specific ``workspace_root`` >
+        ``agent_config.project_root`` (which itself defaults to the launch CWD).
 
-        Returns:
-            Resolved workspace_root path with ~ expanded
+        Expands ``~`` to the user home directory if present.
         """
         import os
 
-        workspace_root = None
-
-        # Priority 1: node-specific workspace_root (explicit per-node config)
         node_workspace_root = self.node_config.get("workspace_root")
         if node_workspace_root:
             workspace_root = node_workspace_root
             logger.debug(f"Using node-specific workspace_root: {workspace_root}")
-        elif (
-            self.agent_config
-            and hasattr(self.agent_config, "storage")
-            and hasattr(self.agent_config.storage, "workspace_root")
-        ):
-            global_workspace_root = self.agent_config.storage.workspace_root
-            if global_workspace_root:
-                workspace_root = global_workspace_root
-                logger.debug(f"Using global workspace_root: {workspace_root}")
-        elif self.agent_config and hasattr(self.agent_config, "workspace_root"):
-            legacy_workspace_root = self.agent_config.workspace_root
-            if legacy_workspace_root is not None:
-                workspace_root = legacy_workspace_root
-                logger.debug(f"Using legacy workspace_root: {workspace_root}")
-
-        # Default to current working directory (project directory)
-        if workspace_root is None:
+        elif self.agent_config and hasattr(self.agent_config, "project_root"):
+            workspace_root = self.agent_config.project_root
+            logger.debug(f"Using project_root as workspace_root: {workspace_root}")
+        else:
             workspace_root = os.getcwd()
             logger.debug(f"Using current directory as workspace_root: {workspace_root}")
 
-        # Expand ~ to user home directory
         expanded_path = os.path.expanduser(workspace_root)
-
         if expanded_path != workspace_root:
             logger.debug(f"Expanded workspace_root from '{workspace_root}' to '{expanded_path}'")
-
         return expanded_path
+
+    def _resolve_filesystem_strict(self) -> bool:
+        """Resolve the ``strict`` flag for this node's filesystem tool.
+
+        Reads ``self.agent_config.filesystem_strict`` (process-wide default set
+        by API / gateway bootstraps, or by ``agent.filesystem.strict`` / the
+        ``--filesystem-strict`` CLI flag). CLI leaves it unset so EXTERNAL
+        access falls back to broker-prompt behavior.
+        """
+        if self.agent_config is None:
+            return False
+        return bool(self.agent_config.filesystem_strict)
+
+    def _make_filesystem_tool(self, **kwargs):
+        """Construct a ``FilesystemFuncTool`` with this node's identity baked in.
+
+        All production call sites go through this helper so ``root_path`` is
+        uniformly ``_resolve_workspace_root()`` and ``current_node`` matches
+        ``get_node_name()`` — the two inputs the path policy module expects to
+        classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
+        for this node only. The ``strict`` flag is resolved from
+        ``agent_config.filesystem_strict`` so API / gateway can opt out of
+        interactive EXTERNAL prompts.
+        """
+        from datus.tools.func_tool import FilesystemFuncTool
+
+        root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
+        datus_home = kwargs.pop("datus_home", None)
+        if datus_home is None and self.agent_config is not None:
+            path_manager = getattr(self.agent_config, "path_manager", None)
+            if path_manager is not None:
+                try:
+                    datus_home = str(path_manager.datus_home)
+                except Exception:
+                    datus_home = None
+        strict = kwargs.pop("strict", None)
+        if strict is None:
+            strict = self._resolve_filesystem_strict()
+        return FilesystemFuncTool(
+            root_path=root_path,
+            current_node=kwargs.pop("current_node", None) or self.get_node_name(),
+            datus_home=datus_home,
+            strict=strict,
+            **kwargs,
+        )
+
+    def _make_filesystem_policy(self):
+        """Build a :class:`FilesystemPolicy` for ``PermissionHooks`` construction.
+
+        Returns ``None`` when this node has no ``agent_config`` or the path
+        manager cannot be resolved, so callers can treat the policy as opt-in
+        and fall back to the pre-refactor category-level behavior.
+        """
+        if not self.agent_config:
+            return None
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        if path_manager is None:
+            return None
+        try:
+            from pathlib import Path as _Path
+
+            from datus.tools.permission.permission_hooks import FilesystemPolicy
+
+            return FilesystemPolicy(
+                root_path=_Path(self._resolve_workspace_root()).resolve(strict=False),
+                current_node=self.get_node_name(),
+                datus_home=_Path(path_manager.datus_home),
+                strict=self._resolve_filesystem_strict(),
+            )
+        except Exception as e:
+            logger.debug(f"Failed to build FilesystemPolicy: {e}")
+            return None
+
+    # ── Permission hook wiring ──────────────────────────────────────────
+    # Subagent nodes historically passed ``hooks=None`` into
+    # ``generate_with_tools_stream`` — meaning profile rules (DENY, ASK)
+    # never fired for anything other than ``chat``. These helpers let
+    # every subclass participate in the permission system with one call.
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Return ``{category: tools}`` for permission registration.
+
+        Subclasses override this to declare which of ``self.tools`` belong
+        to which permission category (``bi_tools``, ``scheduler_tools``,
+        ``db_tools``, etc.). Categories not declared here fall back to the
+        ``tools`` catch-all, which only matches explicit ``tools.*`` rules.
+
+        The base implementation registers ``skill_func_tool`` under
+        ``skills`` so the ``skills.*`` profile rule applies to every
+        subagent that exposes ``load_skill``/``skill_execute_command`` —
+        overrides should ``super().__()`` + extend.
+        """
+        mapping: Dict[str, List[Any]] = {}
+        if self.skill_func_tool:
+            mapping["skills"] = list(self.skill_func_tool.available_tools())
+        return mapping
+
+    def _ensure_permission_hooks(self) -> None:
+        """Build ``self.permission_hooks`` once tools are in place.
+
+        Invoked lazily from :meth:`_compose_hooks` so subclasses don't have
+        to remember the ordering (``setup_tools`` must happen first). Safe
+        to call many times — short-circuits after the first successful
+        build. Silently no-ops when no ``permission_manager`` exists
+        (agent with permissions disabled).
+        """
+        if self.permission_hooks is not None:
+            return
+        if not self.permission_manager:
+            return
+        try:
+            for category, tools in self._tool_category_map().items():
+                if tools:
+                    self.tool_registry.register_tools(category, tools)
+            from datus.tools.permission.permission_hooks import PermissionHooks
+
+            # Never call ``_get_or_create_broker`` here — it resets the queue
+            # and orphans any parent CLI listener when running as a sub-agent.
+            self.permission_hooks = PermissionHooks(
+                broker=self.interaction_broker,
+                permission_manager=self.permission_manager,
+                node_name=self.get_node_name(),
+                tool_registry=self.tool_registry,
+                fs_policy=self._make_filesystem_policy(),
+            )
+            logger.debug(
+                f"PermissionHooks attached to node '{self.get_node_name()}' "
+                f"with {len(self.tool_registry)} tool mappings"
+            )
+        except Exception as e:
+            # Fail closed: leaving ``permission_hooks=None`` with a
+            # ``permission_manager`` present would silently bypass profile
+            # DENY/ASK checks on every tool call. Raise so the node refuses
+            # to run rather than executing with degraded enforcement.
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            logger.exception("Failed to build PermissionHooks for %s", self.get_node_name())
+            self.permission_hooks = None
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
+            ) from e
+
+    def _compose_hooks(self, extra: Any = None) -> Any:
+        """Combine permission hooks with an optional per-node hook.
+
+        ``extra`` is typically ``self.hooks`` for workflow nodes
+        (``feedback``, ``sql_summary``, …) that have their own todo/plan
+        hooks. Returns a :class:`CompositeHooks` when both are present,
+        a single hook when only one is present, or ``None`` when neither
+        exists. Callers pass the result directly into
+        ``generate_with_tools_stream(hooks=...)``.
+        """
+        self._ensure_permission_hooks()
+        if self.permission_hooks and extra:
+            from datus.tools.permission.permission_hooks import CompositeHooks
+
+            return CompositeHooks([extra, self.permission_hooks])
+        return self.permission_hooks or extra

@@ -100,6 +100,7 @@ class TestCompareAgenticNodeInit:
 # ===========================================================================
 
 
+@pytest.mark.nightly
 class TestCompareAgenticNodeExecution:
     """Tests for CompareAgenticNode.execute_stream() with real tools."""
 

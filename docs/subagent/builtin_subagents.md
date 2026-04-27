@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers twelve core subagents:
+This document covers thirteen core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -14,8 +14,8 @@ This document covers twelve core subagents:
 6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
 7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
 8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-9. **[gen_job](gen_job.md)** — Single-database ETL job execution
-10. **[migration](migration.md)** — Cross-database migration with reconciliation
+9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+10. **[gen_skill](#gen_skill)** — Skill creation and optimization
 11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
 12. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
@@ -61,10 +61,13 @@ agent:
     gen_job:
       max_turns: 30     # Optional: defaults to 30
 
+    gen_skill:
+      max_turns: 30     # Optional: defaults to 30
+
     gen_dashboard:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
-      bi_platform: superset  # Optional: explicit platform (auto-detected from dashboard config if omitted)
+      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI platform is configured)
 
     scheduler:
       model: claude     # Optional: defaults to configured model
@@ -78,10 +81,10 @@ agent:
 
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
-- **Hooks**: User confirmation workflow in interactive mode
+- **Hooks**: Workflow-specific validation and Knowledge Base sync
 - **MCP Servers**: MetricFlow validation (for gen_semantic_model and gen_metrics)
-- **System Prompts**: Built-in templates version 1.0
-- **Workspace**: `~/.datus/data/{namespace}/` with subagent-specific subdirectories
+- **System Prompts**: Built-in templates; latest versions are used unless `prompt_version` is set
+- **Workspace**: `~/.datus/data/{datasource}/` with subagent-specific subdirectories
 
 ---
 
@@ -117,8 +120,7 @@ graph LR
     C --> D[Generates unique ID]
     D --> E[Creates YAML]
     E --> F[Saves file]
-    F --> G[User confirms]
-    G --> H[Syncs to Knowledge Base]
+    F --> G[Syncs to Knowledge Base]
 ```
 
 **Detailed Steps:**
@@ -132,27 +134,11 @@ graph LR
 5. **Classify Query**: Assigns domain, layer1, layer2, and tags following existing patterns
 6. **Generate YAML**: Creates structured summary document
 7. **Save File**: Writes YAML to workspace using `write_file()` tool
-8. **User Confirmation**: Shows the generated YAML and prompts for approval
-9. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
+8. **Sync to Knowledge Base**: Stores in LanceDB for semantic search
 
-### Interactive Confirmation
+### Sync Behavior
 
-After generation, you'll see:
-
-```
-==========================================================
-Generated Reference SQL YAML
-File: /path/to/sql_summary.yml
-==========================================================
-[YAML content with syntax highlighting]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
+In interactive mode, after the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically. In workflow/API mode, use the corresponding explicit sync step or tool.
 
 ### Subject Tree Categorization
 
@@ -226,7 +212,7 @@ A semantic model is a YAML configuration that defines:
 
 ### Quick Start
 
-Start Datus CLI with `datus --database <namespace>`, and begin with a subagent command:
+Start Datus CLI with `datus --datasource <datasource>`, and begin with a subagent command:
 
 ```bash
 /gen_semantic_model generate a semantic model for table <table_name>
@@ -242,7 +228,7 @@ When you request a semantic model, the AI assistant:
 2. Checks if a semantic model already exists
 3. Generates a comprehensive YAML file
 4. Validates the configuration using MetricFlow
-5. Prompts you to save it to the Knowledge Base
+5. Syncs it to the Knowledge Base after validation passes
 
 #### Generation Workflow
 
@@ -251,33 +237,12 @@ graph LR
     A[User Request] --> B[DDL Analysis]
     B --> C[YAML Generation]
     C --> D[Validation]
-    D --> E[User Confirmation]
-    E --> F[Storage]
+    D --> E[Knowledge Base Sync]
 ```
 
-### Interactive Confirmation
+### Validation and Sync
 
-After generating the semantic model, you'll see:
-
-```text
-=============================================================
-Generated YAML: table_name.yml
-Path: /path/to/file.yml
-=============================================================
-[YAML content with syntax highlighting]
-
-SYNC TO KNOWLEDGE BASE?
-
-1. Yes - Save to Knowledge Base
-2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-
-- **Option 1**: Saves the semantic model to your Knowledge Base (RAG storage) for AI-powered queries
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. In interactive mode, once validation passes, `end_semantic_model_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit semantic sync step or tool.
 
 ### Semantic Model Structure
 
@@ -328,8 +293,8 @@ The semantic model generation feature provides:
 - ✅ Automated YAML generation from table DDL
 - ✅ Built-in tools, hooks, and MCP server integration
 - ✅ Interactive validation and error fixing
-- ✅ User confirmation before storage
-- ✅ Knowledge Base integration
+- ✅ Validation-gated Knowledge Base sync
+- ✅ Interactive auto-sync and workflow/API explicit sync
 - ✅ Duplicate prevention
 - ✅ MetricFlow compatibility
 
@@ -354,7 +319,7 @@ A **metric** is a reusable business calculation built on top of semantic models.
 
 ### Quick Start
 
-Start Datus CLI with `datus --database <namespace>`, and use the metrics generation subagent:
+Start Datus CLI with `datus --datasource <datasource>`, and use the metrics generation subagent:
 
 ```bash
 /gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
@@ -371,9 +336,9 @@ graph LR
     C --> D[Reads measures]
     D --> E[Checks for duplicates]
     E --> F[Generates metric YAML]
-    F --> G[Appends to file]
+    F --> G[Writes metric to metrics file]
     G --> H[Validates]
-    H --> I[User confirms]
+    H --> I[Dry-run SQL]
     I --> J[Syncs to Knowledge Base]
 ```
 
@@ -396,28 +361,9 @@ FROM orders o
 JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 ```
 
-### Interactive Confirmation
+### Validation and Sync
 
-After generation, you'll see:
-
-```
-==========================================================
-Generated YAML: transactions.yml
-Path: /Users/you/.datus/data/semantic_models/transactions.yml
-==========================================================
-[YAML content with syntax highlighting showing the new metric]
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2]
-```
-
-**Options:**
-- **Option 1**: Syncs the metric to your Knowledge Base for AI-powered semantic search
-- **Option 2**: Keeps the YAML file only without syncing to the Knowledge Base
+Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. In interactive mode, after both checks pass, `end_metric_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit metric sync step or tool.
 
 ### Subject Tree Categorization
 
@@ -529,10 +475,13 @@ metric:
 
 #### File Organization
 
-Metrics are appended to existing semantic model files using the YAML document separator `---`:
+Metrics are stored in dedicated files, separate from their semantic models:
 
+- **Semantic Model**: `{table_name}.yml` — `data_source` definition (measures, dimensions, identifiers)
+- **Metrics**: `metrics/{table_name}_metrics.yml` — one or more metric definitions, separated by the YAML document separator `---`
+
+**Semantic Model File** (`transactions.yml`):
 ```yaml
-# Existing semantic model
 data_source:
   name: transactions
   sql_table: transactions
@@ -543,9 +492,10 @@ data_source:
   dimensions:
     - name: transaction_date
       type: TIME
+```
 
----
-# First metric (appended)
+**Metrics File** (`metrics/transactions_metrics.yml`):
+```yaml
 metric:
   name: total_revenue
   type: measure_proxy
@@ -553,7 +503,6 @@ metric:
     measure: revenue
 
 ---
-# Second metric (appended)
 metric:
   name: avg_transaction_value
   type: ratio
@@ -562,14 +511,16 @@ metric:
     denominator: transaction_count
 ```
 
-**Why append instead of separate files?**
-- Keeps related metrics close to their semantic model
-- Easier maintenance and validation
-- MetricFlow can validate all definitions together
+**Why separate files?**
+- Clear separation between schema definitions and business metrics
+- Metrics can be maintained independently from the underlying semantic model
+- MetricFlow validates all YAML documents under the semantic model directory together
+
+See [gen_metrics](gen_metrics.md) for full details.
 
 #### Knowledge Base Storage
 
-When you choose "1. Yes - Save to Knowledge Base", the metric is stored in a Vector Database with:
+After validation and dry-run SQL succeed, the metric is synced to the Knowledge Base with:
 
 1. **Metadata**: Name, description, type, domain/layer classification
 2. **LLM Text**: Natural language representation for semantic search
@@ -585,9 +536,9 @@ The metrics generation feature provides:
 - ✅ **Duplicate Prevention**: Checks for existing metrics before generation
 - ✅ **Subject Tree Support**: Organize by domain/layer1/layer2 with predefined or learned categories
 - ✅ **Validation**: MetricFlow validation ensures correctness
-- ✅ **Interactive Workflow**: Review and approve before syncing
+- ✅ **Publish Gate**: Syncs only after semantic validation and dry-run SQL succeed
 - ✅ **Knowledge Base Integration**: Semantic search for metric discovery
-- ✅ **File Management**: Appends to existing semantic model files safely
+- ✅ **File Management**: Maintains dedicated per-table metrics files under `metrics/`
 
 ---
 
@@ -641,8 +592,7 @@ graph LR
     D --> E[Check for duplicates]
     E --> F[Generate YAML]
     F --> G[Save file]
-    G --> H[User confirms]
-    H --> I[Sync to Knowledge Base]
+    G --> H[Sync to Knowledge Base]
 ```
 
 **Detailed Steps:**
@@ -654,31 +604,13 @@ graph LR
 5. **Check for Duplicates**: Use `search_knowledge` to verify extracted knowledge doesn't already exist
 6. **Generate YAML**: Create structured knowledge entries with unique IDs via `generate_ext_knowledge_id()`
 7. **Save File**: Write YAML using `write_file(path, content, file_type="ext_knowledge")`
-8. **User Confirmation**: Review generated YAML and approve
-9. **Sync to Knowledge Base**: Store in vector database for semantic search
+8. **Sync to Knowledge Base**: Store in vector database for semantic search
 
 > **Important**: If no knowledge gaps are found (agent's attempt matches reference SQL), no knowledge file is generated.
 
-### Interactive Confirmation
+### Sync Behavior
 
-After generation, you'll see:
-
-```
-============================================================
-Generated External Knowledge YAML
-File: /Users/liuyufei/DatusProject/bird/datus/ext_knowledge/bird_sqlite_with_knowledge/sat_school_administration_knowledge.yaml
-============================================================
-                                                                                                                         
-
-  SYNC TO KNOWLEDGE BASE?
-
-  1. Yes - Save to Knowledge Base
-  2. No - Keep file only
-
-Please enter your choice: [1/2] 1
-✓ Syncing to Knowledge Base...
-✓ Successfully synced external knowledge to Knowledge Base
-```
+In interactive mode, after the YAML file is written successfully, the generation hook syncs it to the Knowledge Base automatically. In workflow/API mode, use the explicit sync step or tool.
 
 ### Subject Path Categorization
 
@@ -934,60 +866,112 @@ Then use it via `/attribution_report Analyze the conversion attribution for camp
 
 ---
 
-## gen_dashboard
+## gen_skill
 
 ### Overview
 
-The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses the BI tools from `BIFuncTool` to drive the full dashboard creation workflow through LLM function calling.
+The `gen_skill` subagent guides users through creating or optimizing Datus skills. It can inspect existing skills, scaffold new skill directories, edit `SKILL.md`, validate the result, and search prior sessions for usage patterns.
 
 ### Key Features
 
-- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` config or auto-detected from `agent.dashboard` config
-- **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
-- **Data materialization**: `write_query` bridges source database results to the BI platform's own database, decoupling source data from visualization
-- **Skill-guided workflows**: The built-in `gen-dashboard` skill provides step-by-step workflow guidance for each platform
+- **Interactive skill authoring**: interview-style workflow with `ask_user`
+- **Scoped filesystem access**: read-only workspace tools plus write access to the configured skills directory
+- **Skill-aware editing**: load existing skills before revising them
+- **Validation support**: built-in `validate_skill` checks before finishing
 
 ### Configuration
 
 ```yaml
 agent:
   agentic_nodes:
+    gen_skill:
+      model: claude
+      max_turns: 30
+```
+
+### Output Format
+
+```json
+{
+  "response": "Created a new validation skill for finance dashboards.",
+  "skill_name": "finance-dashboard-validation",
+  "skill_path": "/path/to/skills/finance-dashboard-validation",
+  "tokens_used": 1980
+}
+```
+
+### Usage
+
+Launch it directly:
+
+```bash
+/gen_skill Create a skill that validates daily revenue dashboards before publishing
+```
+
+Or let the chat agent delegate via `task(type="gen_skill")`.
+
+---
+
+## gen_dashboard
+
+### Overview
+
+The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses BI tools from `BIFuncTool` to build dashboard assets on existing serving tables or SQL datasets.
+
+### Key Features
+
+- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
+- **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
+- **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
+- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs automatically after creation
+
+### Configuration
+
+```yaml
+agent:
+  services:
+    datasources:
+      serving_pg:
+        type: postgresql
+        host: 127.0.0.1
+        port: 5433
+        database: superset_examples
+        schema: bi_public
+        username: "${SERVING_WRITE_USER}"
+        password: "${SERVING_WRITE_PASSWORD}"
+
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: "http://localhost:8088"
+        username: "${SUPERSET_USER}"
+        password: "${SUPERSET_PASSWORD}"
+        dataset_db:
+          datasource_ref: serving_pg
+          bi_database_name: examples
+
+  agentic_nodes:
     gen_dashboard:
       model: claude           # Optional: defaults to configured model
       max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected from dashboard config
-
-  dashboard:
-    superset:
-      api_url: "http://localhost:8088"
-      username: "${SUPERSET_USER}"
-      password: "${SUPERSET_PASSWORD}"
-      dataset_db:
-        uri: "${SUPERSET_DB_URI}"
-        schema: "public"
-    grafana:
-      api_url: "http://localhost:3000"
-      api_key: "${GRAFANA_API_KEY}"
-      dataset_db:
-        uri: "${GRAFANA_DB_URI}"
-        datasource_name: "PostgreSQL"
+      bi_platform: superset   # Optional: auto-detected when only one BI platform is configured
 ```
 
 **Requirements:**
-- `agent.dashboard` section in `agent.yml` with platform credentials
-- `datus-bi-superset` or `datus-bi-grafana` package installed (`pip install datus-agent[bi]`)
+- `agent.services.bi_platforms` section in `agent.yml` with platform credentials
+- `datus-bi-superset` or `datus-bi-grafana` package installed
 
 ### How It Works
 
 ```mermaid
 graph LR
-    A[chat agent] -->|task type=gen_dashboard| B[GenDashboardAgenticNode]
-    B --> C[_setup_bi_tools]
-    C --> D[adapter_registry.get platform]
-    D --> E[BIFuncTool.available_tools]
-    E --> F[LLM Function Calling]
-    F -->|Superset| G[write_query → create_dataset → create_chart → create_dashboard]
-    F -->|Grafana| H[write_query → create_dashboard → create_chart]
+    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
+    C --> D[BIFuncTool.available_tools]
+    D --> E[LLM Function Calling]
+    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
+    E -->|Grafana| G[create_dashboard → create_chart]
+    F --> H[ValidationHook.on_end]
+    G --> H
 ```
 
 ### Available Tools
@@ -999,6 +983,8 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `list_dashboards` | All adapters | List and search dashboards |
 | `get_dashboard` | All adapters | Get dashboard details |
 | `list_charts` | All adapters | List charts in a dashboard |
+| `get_chart` | All adapters | Get details for a specific chart or panel |
+| `get_chart_data` | Supported adapters | Get chart query result rows for numeric validation |
 | `list_datasets` | All adapters | List datasets/datasources |
 | `create_dashboard` | `DashboardWriteMixin` | Create a new dashboard |
 | `update_dashboard` | `DashboardWriteMixin` | Update dashboard title/description |
@@ -1010,7 +996,7 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `create_dataset` | `DatasetWriteMixin` | Register a dataset |
 | `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
 | `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
-| `write_query` | `dataset_db_uri` configured | Materialize query results to BI database |
+| `get_bi_serving_target` | `dataset_db` configured | Return serving DB contract for orchestrator hand-off |
 
 ### Output Format
 
@@ -1056,6 +1042,7 @@ The scheduler subagent submits, monitors, updates, and troubleshoots scheduled j
 
 - **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
 - **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
+- **SQL file management**: Create or update job SQL files with filesystem tools before submission
 - **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
 - **Connection discovery**: List available Airflow connections for job configuration
 
@@ -1063,23 +1050,25 @@ The scheduler subagent submits, monitors, updates, and troubleshoots scheduled j
 
 ```yaml
 agent:
+  services:
+    schedulers:
+      airflow_prod:
+        type: airflow
+        api_base_url: "${AIRFLOW_URL}"
+        username: "${AIRFLOW_USER}"
+        password: "${AIRFLOW_PASSWORD}"
+        dags_folder: "${AIRFLOW_DAGS_DIR}"
+
   agentic_nodes:
     scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-  scheduler:
-    name: airflow_prod
-    type: airflow
-    api_base_url: "${AIRFLOW_URL}"
-    username: "${AIRFLOW_USER}"
-    password: "${AIRFLOW_PASSWORD}"
-    dags_folder: "${AIRFLOW_DAGS_DIR}"
+      model: claude                  # Optional: defaults to configured model
+      max_turns: 30                  # Optional: defaults to 30
+      scheduler_service: airflow_prod
 ```
 
 **Requirements:**
-- `agent.scheduler` section in `agent.yml` with Airflow credentials
-- `datus-scheduler-core` and `datus-scheduler-airflow` packages installed
+- `agent.services.schedulers` section in `agent.yml` with Airflow credentials
+- `datus-scheduler-airflow` package installed (`datus-scheduler-core` is pulled in transitively)
 
 ### How It Works
 
@@ -1087,10 +1076,11 @@ agent:
 graph LR
     A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
     B --> C[LLM Function Calling]
-    C --> D[submit_sql_job / submit_sparksql_job]
-    C --> E[trigger_scheduler_job]
-    C --> F[pause_job / resume_job]
-    C --> G[list_job_runs / get_run_log]
+    C --> D[write_file / edit_file]
+    D --> E[submit_sql_job / submit_sparksql_job]
+    C --> F[trigger_scheduler_job]
+    C --> G[pause_job / resume_job]
+    C --> H[list_job_runs / get_run_log]
 ```
 
 ### Available Tools
@@ -1099,6 +1089,7 @@ graph LR
 |------|-------------|
 | `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
 | `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
+| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
 | `trigger_scheduler_job` | Manually trigger an existing job run |
 | `pause_job` | Pause a scheduled job |
 | `resume_job` | Resume a paused job |
@@ -1146,23 +1137,26 @@ agent:
 
 ## Summary
 
-| Subagent | Purpose | Output | Stored In | Key Features                                        |
-|----------|---------|--------|-----------|-----------------------------------------------------|
+| Subagent | Purpose | Output | Stored In | Key Features |
+|----------|---------|--------|-----------|--------------|
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
-| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL → MetricFlow model, built-in validation         |
-| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL → MetricFlow metric, subject tree support       |
-| `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question&SQL → knowledge, subject tree support      |
-| `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast (15 turns), three-direction exploration |
+| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL to MetricFlow model, built-in validation |
+| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL to MetricFlow metric, subject tree support |
+| `gen_ext_knowledge` | Generate business concepts | YAML (external knowledge) | `/data/ext_knowledge` | Question plus SQL to knowledge extraction |
+| `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |
-| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | N/A | Dynamic tool exposure, data materialization, multi-platform |
-| `scheduler` | Airflow job lifecycle management | Scheduler result | N/A | Submit/monitor/update/delete jobs, SQL and SparkSQL support |
+| `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
+| `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
+| `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
+| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
+| `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
 - Automatic tool setup, hooks, and MCP server integration
-- Built-in system prompts (version 1.0)
-- User confirmation workflow in interactive mode
+- Built-in system prompts, with the latest available version selected by default
+- Workflow-specific validation and Knowledge Base sync
 - Knowledge Base integration for semantic search
 - Automatic workspace management
 

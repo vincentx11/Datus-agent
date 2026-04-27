@@ -67,13 +67,10 @@ def _enrich_dimension_sample_values(params: list, agent_config: AgentConfig) -> 
         params: List of parameter dicts (modified in place)
         agent_config: Agent config to create DB connection
     """
-    from datus.tools.db_tools.db_manager import db_manager_instance
     from datus.tools.func_tool.database import DBFuncTool
 
     try:
-        db_manager = db_manager_instance(agent_config.namespaces)
-        conn = db_manager.get_conn(agent_config.current_namespace, agent_config.current_database)
-        db_tool = DBFuncTool(conn, agent_config=agent_config)
+        db_tool = DBFuncTool(agent_config=agent_config)
     except Exception as e:
         logger.debug(f"Cannot create DB connection for parameter value enrichment: {e}")
         return
@@ -242,7 +239,7 @@ async def process_template_item(
 
         logger.info(f"Generated template summary: {sql_summary_file}")
 
-        file_path = agent_config.path_manager.sql_summary_path(agent_config.current_namespace) / sql_summary_file
+        file_path = agent_config.path_manager.sql_summary_path() / sql_summary_file
         import yaml
 
         try:

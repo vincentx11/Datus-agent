@@ -4,13 +4,20 @@
 
 """Tests for the permission hooks module."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from datus.cli.execution_state import InteractionBroker
+from datus.tools.permission import permission_hooks as permission_hooks_module
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
-from datus.tools.permission.permission_hooks import CompositeHooks, PermissionDeniedException, PermissionHooks
+from datus.tools.permission.permission_hooks import (
+    CompositeHooks,
+    FilesystemPolicy,
+    PermissionDeniedException,
+    PermissionHooks,
+)
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.registry.tool_registry import ToolRegistry
 
@@ -276,6 +283,11 @@ class TestPermissionHooks:
         # Should not raise any exception
         await hooks.on_tool_start(context, agent, tool)
 
+        # ALLOW permission: broker.request must never be invoked to prompt the
+        # user. `mock_broker.assert_not_called()` only checks the mock itself as
+        # a callable — `mock_broker.request(...)` would slip past it silently.
+        mock_broker.request.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_on_tool_start_deny(self, mock_broker):
         """Test on_tool_start raises exception when permission is DENY."""
@@ -308,6 +320,10 @@ class TestPermissionHooks:
 
         assert "execute_sql" in str(exc_info.value)
         assert exc_info.value.tool_category == "db_tools"
+        assert "PERMISSION_DENIED" in str(exc_info.value)
+        assert "STOP retrying this tool" in str(exc_info.value)
+        assert "run /profile to open the profile picker" in str(exc_info.value)
+        assert "arrow keys" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_on_tool_start_ask_with_session_approval(self, mock_broker):
@@ -340,6 +356,11 @@ class TestPermissionHooks:
 
         # Should not raise because of session approval
         await hooks.on_tool_start(context, agent, tool)
+
+        # ASK permission with session approval: broker.request must NOT be
+        # invoked to re-prompt the user. `mock_broker.assert_not_called()` only
+        # checks the mock as a callable and would not catch a child-method call.
+        mock_broker.request.assert_not_called()
 
 
 class TestPermissionHooksIntegration:
@@ -423,3 +444,325 @@ class TestPermissionHooksIntegration:
         assert hooks.tool_registry.get("list_tables") == "db_tools"
         assert hooks.tool_registry.get("load_skill") == "skills"
         assert hooks.tool_registry.get("read_file") == "filesystem_tools"
+
+
+class TestFilesystemZoneBranch:
+    """``fs_policy`` routes filesystem_tools calls through path zones.
+
+    INTERNAL/WHITELIST bypass the normal rule, HIDDEN falls through silently
+    (the tool returns not-found), EXTERNAL forces an ASK keyed by absolute
+    path so approval never leaks across targets.
+    """
+
+    def _build(self, broker, tmp_path, rules=None, *, strict=False):
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=rules or [],
+        )
+        manager = PermissionManager(global_config=config)
+        project = tmp_path / "proj"
+        project.mkdir()
+        hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=strict),
+        )
+        return hooks, manager, project
+
+    @pytest.mark.asyncio
+    async def test_internal_bypasses_ask_rule(self, mock_broker, tmp_path):
+        hooks, _, project = self._build(
+            mock_broker,
+            tmp_path,
+            rules=[PermissionRule(tool="filesystem_tools", pattern="*", permission=PermissionLevel.ASK)],
+        )
+        ctx = MagicMock()
+        ctx.tool_arguments = '{"path": "src/main.py"}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        # Even though the rule says ASK, INTERNAL zone bypasses the prompt.
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_hidden_returns_without_prompt(self, mock_broker, tmp_path):
+        hooks, _, project = self._build(mock_broker, tmp_path)
+        ctx = MagicMock()
+        ctx.tool_arguments = '{"path": ".datus/sessions/foo.db"}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        # HIDDEN short-circuits with no broker interaction; tool layer returns
+        # the uniform "File not found".
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_external_forces_ask_and_caches_by_abs_path(self, mock_broker, tmp_path):
+        hooks, manager, project = self._build(mock_broker, tmp_path)
+        target_dir = tmp_path / "other"
+        target_dir.mkdir()
+        target = target_dir / "secret.md"
+        target.write_text("x")
+
+        # Broker returns "a" (approve for session) on first call, should not be
+        # called again on the second.
+        mock_broker.request = AsyncMock(return_value="a")
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert mock_broker.request.await_count == 1
+
+        # Second call with same abs path must NOT prompt.
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert mock_broker.request.await_count == 1
+        # Cache key is path-keyed, not category-keyed.
+        assert any(f"external::{target.resolve()}" in k for k in manager._session_approvals)
+
+    @pytest.mark.asyncio
+    async def test_external_deny_raises(self, mock_broker, tmp_path):
+        hooks, _, _ = self._build(mock_broker, tmp_path)
+        target = tmp_path / "other.md"
+        target.write_text("x")
+
+        mock_broker.request = AsyncMock(return_value="n")
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+    @pytest.mark.asyncio
+    async def test_strict_external_delegates_to_tool_without_broker(self, mock_broker, tmp_path):
+        """Strict policy → EXTERNAL is delegated to the tool layer (which
+        returns FuncToolResult(success=0)) instead of raising. The broker is
+        still never touched. Regression guard for API/gateway flows: they must
+        fail fast with a readable tool-failure payload, not hang and not
+        raise."""
+        hooks, _, _ = self._build(mock_broker, tmp_path, strict=True)
+        target = tmp_path / "elsewhere.md"
+        target.write_text("x")
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_internal_still_passes(self, mock_broker, tmp_path):
+        """Strict must not affect INTERNAL/WHITELIST paths — those are the
+        whole point of having a workspace at all."""
+        hooks, _, project = self._build(mock_broker, tmp_path, strict=True)
+        (project / "hello.md").write_text("hi")
+        ctx = MagicMock()
+        ctx.tool_arguments = '{"path": "hello.md"}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_strict_external_end_to_end_returns_success_0(self, mock_broker, tmp_path):
+        """End-to-end contract: hook + real tool in strict mode must surface
+        EXTERNAL denials as ``FuncToolResult(success=0)`` with a "strict mode"
+        error message, never as an exception. Cross-component guard for the
+        fix that moved the rejection from the hook (raise) to the tool
+        (success=0)."""
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        external = tmp_path / "outside.md"
+        external.write_text("secret")
+
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+
+        manager = PermissionManager(global_config=PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[]))
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=True),
+        )
+        tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
+
+        # 1. Hook must not raise and must not prompt.
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{external}"}}'
+        hook_tool = MagicMock()
+        hook_tool.name = "read_file"
+        await hooks.on_tool_start(ctx, MagicMock(), hook_tool)
+        mock_broker.request.assert_not_called()
+
+        # 2. Tool layer produces the success=0 payload with the strict-mode message.
+        read_result = tool.read_file(str(external))
+        assert read_result.success == 0
+        assert read_result.error.startswith("Path outside workspace is not allowed in strict mode:")
+        assert str(external) in read_result.error
+
+        write_result = tool.write_file(str(external), "new content")
+        assert write_result.success == 0
+        assert write_result.error.startswith("Path outside workspace is not allowed in strict mode:")
+        assert str(external) in write_result.error
+
+        # Guardrail: the external file was not actually touched.
+        assert external.read_text() == "secret"
+
+    @pytest.mark.asyncio
+    async def test_external_broker_cancel_denies(self, mock_broker, tmp_path):
+        """``InteractionCancelled`` from the broker must surface as a denial
+        (not a silent approval). Guards the catch-block in
+        ``_request_external_confirmation``."""
+        from datus.cli.execution_state import InteractionCancelled
+
+        hooks, _, _ = self._build(mock_broker, tmp_path)
+        target = tmp_path / "cancel.md"
+        target.write_text("x")
+        mock_broker.request = AsyncMock(side_effect=InteractionCancelled())
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+    @pytest.mark.asyncio
+    async def test_external_broker_unexpected_error_denies(self, mock_broker, tmp_path):
+        """A non-``InteractionCancelled`` exception from the broker should
+        also default to denial. Guards the generic ``except Exception`` arm."""
+        hooks, _, _ = self._build(mock_broker, tmp_path)
+        target = tmp_path / "boom.md"
+        target.write_text("x")
+        mock_broker.request = AsyncMock(side_effect=RuntimeError("broker explosion"))
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+    @pytest.mark.asyncio
+    async def test_legacy_null_fs_policy_preserves_rules(self, mock_broker, tmp_path):
+        """Without fs_policy, behavior must match the pre-refactor contract
+        (rules drive everything). Regression guard for existing tests."""
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+        manager = PermissionManager(
+            global_config=PermissionConfig(
+                default_permission=PermissionLevel.ALLOW,
+                rules=[
+                    PermissionRule(tool="filesystem_tools", pattern="read_file", permission=PermissionLevel.DENY),
+                ],
+            )
+        )
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            fs_policy=None,
+        )
+        ctx = MagicMock()
+        # Path is INTERNAL-looking, but without fs_policy we do not short-circuit.
+        ctx.tool_arguments = '{"path": "src/main.py"}'
+        tool = MagicMock()
+        tool.name = "read_file"
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+
+class TestPermissionPromptLockPerLoop:
+    """Regression guard: the prompt lock must not bleed across event loops.
+
+    A module-level ``asyncio.Lock()`` used to bind to whichever loop first
+    awaited it, then raised ``Lock is bound to a different event loop`` on
+    every subsequent ``asyncio.run()`` call (the CLI creates a fresh loop per
+    chat turn). These tests exercise the per-loop lock helper to make sure
+    the bug cannot silently regress.
+    """
+
+    def test_separate_asyncio_run_calls_do_not_reuse_lock(self):
+        async def _acquire_once():
+            lock = permission_hooks_module._get_permission_prompt_lock()
+            async with lock:
+                return lock
+
+        lock_a = asyncio.run(_acquire_once())
+        lock_b = asyncio.run(_acquire_once())
+
+        # Each ``asyncio.run`` has its own loop, so it must receive its own
+        # lock — reusing the first one would raise "bound to a different event
+        # loop" on acquisition.
+        assert lock_a is not lock_b
+
+    def test_same_loop_returns_same_lock(self):
+        async def _collect():
+            first = permission_hooks_module._get_permission_prompt_lock()
+            second = permission_hooks_module._get_permission_prompt_lock()
+            return first, second
+
+        first, second = asyncio.run(_collect())
+        # Within a single loop, concurrent tool calls must share one lock so
+        # the "one prompt at a time" invariant still holds.
+        assert first is second
+
+    def test_external_prompt_succeeds_across_separate_asyncio_runs(self, mock_broker, tmp_path):
+        """End-to-end: two consecutive ``asyncio.run`` turns, each hitting the
+        EXTERNAL-path prompt code path, must both succeed. Before the fix the
+        second turn raised ``Lock is bound to a different event loop``."""
+        registry = ToolRegistry()
+        fs_tool = MagicMock()
+        fs_tool.name = "read_file"
+        registry.register_tools("filesystem_tools", [fs_tool])
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        target = tmp_path / "outside.md"
+        target.write_text("x")
+
+        async def _one_turn():
+            # Fresh manager per turn to mirror the CLI re-initializing state.
+            manager = PermissionManager(
+                global_config=PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[])
+            )
+            hooks = PermissionHooks(
+                broker=mock_broker,
+                permission_manager=manager,
+                node_name="chat",
+                tool_registry=registry,
+                fs_policy=FilesystemPolicy(root_path=project, current_node="chat"),
+            )
+            # Rebind broker inside the coroutine so the AsyncMock is bound to
+            # the currently-running loop.
+            mock_broker.request = AsyncMock(return_value="n")
+            ctx = MagicMock()
+            ctx.tool_arguments = f'{{"path": "{target}"}}'
+            tool = MagicMock()
+            tool.name = "read_file"
+            with pytest.raises(PermissionDeniedException):
+                await hooks.on_tool_start(ctx, MagicMock(), tool)
+
+        asyncio.run(_one_turn())
+        # Second turn: a brand-new loop. Must not raise the loop-binding error.
+        asyncio.run(_one_turn())

@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -11,31 +12,59 @@ from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
 from tests.conftest import load_acceptance_config
 
-pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
-
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
-    agent_config = load_acceptance_config(namespace="bird_school")
+    agent_config = load_acceptance_config(datasource="bird_school")
     agent_config.rag_base_path = str(Path("tests") / "data")
     return agent_config
 
 
 @pytest.fixture
 def db_manager(agent_config: AgentConfig) -> DBManager:
-    return db_manager_instance(agent_config.namespaces)
+    return db_manager_instance(agent_config.datasource_configs)
 
 
+@pytest.fixture
+def catalog_agent_config(agent_config: AgentConfig, tmp_path: Path) -> AgentConfig:
+    db_path = tmp_path / "california_schools.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE schools (
+                CDSCode INTEGER PRIMARY KEY,
+                School TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO schools (CDSCode, School)
+            VALUES (1, 'Alpha High School')
+            """
+        )
+        conn.commit()
+
+    agent_config.services.datasources["bird_school"].uri = str(db_path)
+    return agent_config
+
+
+@pytest.fixture
+def catalog_db_manager(catalog_agent_config: AgentConfig) -> DBManager:
+    return DBManager(catalog_agent_config.datasource_configs)
+
+
+@pytest.mark.acceptance
 @pytest.mark.asyncio
-async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager):
+async def test_catalog_command(catalog_agent_config: AgentConfig, catalog_db_manager: DBManager):
     app = ContextApp(
         screen_type=ScreenType.CATALOGS,
         title="Database Catalogs",
         data={
             "db_type": DBType.SQLITE,
             "database_name": "california_schools",
-            "db_connector": db_manager.get_conn("bird_school", "california_schools"),
-            "agent_config": agent_config,
+            "db_connector": catalog_db_manager.get_conn("bird_school", "california_schools"),
+            "agent_config": catalog_agent_config,
         },
     )
     async with app.run_test() as pilot:
@@ -82,6 +111,7 @@ async def test_catalog_command(agent_config: AgentConfig, db_manager: DBManager)
         app.exit()
 
 
+@pytest.mark.nightly
 @pytest.mark.asyncio
 async def test_subject_command(agent_config: AgentConfig):
     app = ContextApp(
@@ -93,7 +123,9 @@ async def test_subject_command(agent_config: AgentConfig):
         },
     )
     async with app.run_test() as pilot:
-        await exec_domains_textual(pilot, "#subject-tree")
+        entry = await exec_domains_textual(pilot, "#subject-tree")
+        assert entry["type"] == "subject_entry"
+        assert entry["entry_type"] in ("metric", "sql", "ext_knowledge", "reference_template")
         app.exit()
 
 
@@ -137,8 +169,9 @@ async def exec_domains_textual(pilot, tree_id: str):
     table_nodes = tree.cursor_node.children
     first_table_node = table_nodes[0].data
     assert first_table_node.get("type") == "subject_entry"
-    assert first_table_node.get("entry_type") in ("metric", "sql", "ext_knowledge")
+    assert first_table_node.get("entry_type") in ("metric", "sql", "ext_knowledge", "reference_template")
     tree.select_node(table_nodes[0])
     await pilot.pause()
     await pilot.press("enter")
     await pilot.pause(1)
+    return first_table_node

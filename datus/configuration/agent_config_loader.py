@@ -9,6 +9,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.configuration.node_type import NodeType
+from datus.configuration.project_config import ProjectTarget, load_project_override
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -25,8 +26,8 @@ def load_node_config(node_type: str, data: dict) -> NodeConfig:
 
 
 class ConfigurationManager:
-    def __init__(self, config_path: str = ""):
-        self.config_path: Path = parse_config_path(config_path)
+    def __init__(self, config_path: str = "", create_if_missing: bool = False):
+        self.config_path: Path = parse_config_path(config_path, create_if_missing=create_if_missing)
 
         self.data = self._load().get("agent", {})
 
@@ -105,14 +106,51 @@ class ConfigurationManager:
 CONFIGURATION_MANAGER: ConfigurationManager | None = None
 
 
-def configuration_manager(config_path: str = "", reload: bool = False) -> ConfigurationManager:
+def configuration_manager(
+    config_path: str = "", reload: bool = False, create_if_missing: bool = False
+) -> ConfigurationManager:
     global CONFIGURATION_MANAGER
-    if reload or not CONFIGURATION_MANAGER:
-        CONFIGURATION_MANAGER = ConfigurationManager(config_path)
+    should_reload = reload or not CONFIGURATION_MANAGER
+    if not should_reload and config_path:
+        requested_path = parse_config_path(config_path, create_if_missing=create_if_missing)
+        should_reload = CONFIGURATION_MANAGER.config_path.resolve() != requested_path.resolve()
+    if should_reload:
+        CONFIGURATION_MANAGER = ConfigurationManager(config_path, create_if_missing=create_if_missing)
     return CONFIGURATION_MANAGER
 
 
-def parse_config_path(config_file: str = "") -> Path:
+def _bootstrap_agent_config(config_path: Path) -> None:
+    """Create a minimal agent.yml and copy template resources."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    minimal_config = {"agent": {"services": {"datasources": {}}}}
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(minimal_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    logger.info("Created minimal agent config at %s", config_path)
+
+    home_dir = config_path.parent.parent
+    from datus.utils.resource_utils import copy_data_file
+
+    try:
+        template_dir = home_dir / "template"
+        template_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="prompts", target_dir=template_dir, replace=True)
+    except Exception as e:
+        logger.warning("Error copying template files during bootstrap: %s", e)
+    try:
+        sample_dir = home_dir / "sample"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="sample_data", target_dir=sample_dir, replace=False)
+    except Exception as e:
+        logger.warning("Error copying sample files during bootstrap: %s", e)
+    try:
+        skills_dir = home_dir / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        copy_data_file(resource_path="resources/skills", target_dir=skills_dir, replace=False)
+    except Exception as e:
+        logger.warning("Error deploying built-in skills during bootstrap: %s", e)
+
+
+def parse_config_path(config_file: str = "", create_if_missing: bool = False) -> Path:
     """
     Parse and resolve agent configuration file path.
 
@@ -121,23 +159,24 @@ def parse_config_path(config_file: str = "") -> Path:
     2. ./conf/agent.yml in current directory
     3. ~/.datus/conf/agent.yml (fixed path, not from agent.home config)
 
-    Note: The third option uses a fixed ~/.datus path because we need to
-    read the config file first to determine the agent.home location.
+    When ``create_if_missing`` is True and no config file is found, a minimal
+    agent.yml is bootstrapped at ``~/.datus/conf/agent.yml`` instead of raising.
 
     Args:
         config_file: Optional explicit config file path
+        create_if_missing: Bootstrap a minimal config when no file exists
 
     Returns:
         Resolved Path to configuration file
 
     Raises:
-        DatusException: If configuration file not found
+        DatusException: If configuration file not found (and create_if_missing is False)
     """
     # 1. Check explicit config file
     if config_file:
         config_path = Path(config_file).expanduser()
         if config_path.exists():
-            return config_path
+            return config_path.resolve()
         elif config_file != "conf/agent.yml":
             raise DatusException(
                 code=ErrorCode.COMMON_FILE_NOT_FOUND, message=f"Agent configuration file not found: {config_path}"
@@ -146,14 +185,18 @@ def parse_config_path(config_file: str = "") -> Path:
     # 2. Check current directory
     local_config = Path("conf/agent.yml")
     if local_config.exists():
-        return local_config
+        return local_config.resolve()
 
     # 3. Check default home directory (~/.datus/conf/agent.yml)
     # Note: This path is fixed because we need to read the config file
     # to determine agent.home location for other directories
     home_config = Path.home() / ".datus" / "conf" / "agent.yml"
     if home_config.exists():
-        return home_config
+        return home_config.resolve()
+
+    if create_if_missing:
+        _bootstrap_agent_config(home_config)
+        return home_config.resolve()
 
     raise DatusException(
         code=ErrorCode.COMMON_FILE_NOT_FOUND,
@@ -164,7 +207,73 @@ def parse_config_path(config_file: str = "") -> Path:
     )
 
 
-def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
+def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
+    """Merge ``./.datus/config.yml`` overlay into the raw agent config dict.
+
+    Only three keys are honored: ``target``, ``project_name``, and
+    ``default_datasource``. All three are written back into ``agent_raw``
+    so ``AgentConfig.__init__`` picks them up naturally. For
+    ``default_datasource`` this means flipping ``datasources[*].default``
+    flags, since ``AgentConfig.services.default_datasource`` is derived
+    from those flags — this keeps the overlay effective for every
+    entry point that calls ``load_agent_config`` (REPL, print mode,
+    web, ``datus-api``, SDK), not just the CLI layer.
+
+    ``target`` accepts three shapes (see :class:`ProjectTarget`):
+      - legacy string (``agent.models`` key) → validated against ``agent.models``.
+      - ``{custom: name}`` → same validation path as the legacy form.
+      - ``{provider, model}`` → forwarded to ``AgentConfig`` via the
+        ``target_provider``/``target_model`` kwargs so provider-level
+        synthesis kicks in at ``active_model()`` time.
+    """
+    override = load_project_override()
+    if override is None or override.is_empty():
+        return
+    if override.target is not None:
+        if isinstance(override.target, ProjectTarget):
+            if override.target.custom:
+                models = agent_raw.get("models", {}) or {}
+                if override.target.custom not in models:
+                    logger.warning(
+                        "target.custom '%s' from .datus/config.yml not found in agent.models; "
+                        "will be resolved lazily at runtime.",
+                        override.target.custom,
+                    )
+                agent_raw["target"] = override.target.custom
+            elif override.target.provider and override.target.model:
+                agent_raw["target_provider"] = override.target.provider
+                agent_raw["target_model"] = override.target.model
+        else:
+            models = agent_raw.get("models", {}) or {}
+            if override.target not in models:
+                logger.warning(
+                    "target '%s' from .datus/config.yml not found in agent.models; will be resolved lazily at runtime.",
+                    override.target,
+                )
+            agent_raw["target"] = override.target
+    if override.default_datasource is not None:
+        datasources = (agent_raw.get("services", {}) or {}).get("datasources", {}) or {}
+        if override.default_datasource not in datasources:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "default_datasource (from .datus/config.yml)",
+                    "except_values": sorted(datasources.keys()),
+                    "your_value": override.default_datasource,
+                },
+            )
+        for db_name, db_cfg in datasources.items():
+            if isinstance(db_cfg, dict):
+                db_cfg["default"] = db_name == override.default_datasource
+    if override.project_name is not None:
+        agent_raw["project_name"] = override.project_name
+    if override.language is not None:
+        agent_raw["language"] = override.language
+    if override.reasoning_effort is not None:
+        agent_raw["target_reasoning_effort"] = override.reasoning_effort
+
+
+def load_agent_config(reload: bool = False, create_if_missing: bool = False, **kwargs) -> AgentConfig:
     # Check config file in order: kwargs["config"] > conf/agent.yml > ~/.datus/conf/agent.yml
     # Load .env file if it exists
     try:
@@ -174,7 +283,12 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
     except Exception:
         pass
 
-    agent_raw = dict(configuration_manager(config_path=kwargs.get("config", ""), reload=reload).data)
+    agent_raw = dict(
+        configuration_manager(
+            config_path=kwargs.get("config", ""), reload=reload, create_if_missing=create_if_missing
+        ).data
+    )
+    _apply_project_override(agent_raw)
     nodes = {}
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]
@@ -207,20 +321,45 @@ def load_agent_config(reload: bool = False, **kwargs) -> AgentConfig:
         # Filter out the 'config' parameter as it's only used for loading, not for overriding
         override_kwargs = {k: v for k, v in kwargs.items() if k != "config"}
 
-        # Only set namespace if it's valid (exists in agent_config.namespaces)
-        if "namespace" in override_kwargs and override_kwargs["namespace"]:
-            if override_kwargs["namespace"] not in agent_config.namespaces:
-                # Silently skip invalid namespace, keep config's default
-                del override_kwargs["namespace"]
+        # Only set datasource if it's valid (exists in agent_config.datasource_configs)
+        ds_key = "datasource" if "datasource" in override_kwargs else None
+        if ds_key and override_kwargs[ds_key]:
+            if override_kwargs[ds_key] not in agent_config.datasource_configs:
+                del override_kwargs[ds_key]
 
         if override_kwargs:
             agent_config.override_by_args(**override_kwargs)
-    # Auto-select default database for file-based DBs if not already set
-    if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_database:
-        databases = agent_config.service.databases
-        if databases:
-            first_key = next(iter(databases))
-            agent_config.current_database = first_key
+    # Resolve current_datasource when an unambiguous default exists. Priority
+    # already applied upstream:
+    #   1. ``./.datus/config.yml::default_datasource`` (via _apply_project_override)
+    #   2. ``services.datasources[*].default: true`` flag in base agent.yml
+    #   3. single-entry auto-select (ServiceConfig.default_datasource)
+    if not agent_config.current_datasource and agent_config.services.datasources:
+        default_db = agent_config.services.default_datasource
+        if default_db:
+            agent_config.current_datasource = default_db
+        elif kwargs.get("action"):
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": (
+                        "No default datasource could be resolved. Project-level "
+                        "./.datus/config.yml is missing and agent.yml has multiple "
+                        "datasources without any marked as `default: true`. Run "
+                        "`datus` in this project directory first to launch the "
+                        "init wizard (which writes ./.datus/config.yml with your "
+                        "preferred default_datasource and target), or set "
+                        "`default: true` on one entry under "
+                        "`services.datasources` in agent.yml."
+                    )
+                },
+            )
+    # Auto-select default datasource for file-based DBs if not already set
+    if agent_config.db_type in {DBType.SQLITE, DBType.DUCKDB} and not agent_config.current_datasource:
+        datasources = agent_config.services.datasources
+        if datasources:
+            first_key = next(iter(datasources))
+            agent_config.current_datasource = first_key
 
     return agent_config
 

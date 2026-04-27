@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import json
 import os
 import re
 from collections import OrderedDict
@@ -74,7 +75,7 @@ class DBFuncTool:
 
     This class can work in two modes:
     1. Single connector mode (legacy): Pass a single BaseSqlConnector
-    2. Multi-connector mode: Pass a DBManager with namespace for dynamic connector lookup
+    2. Multi-connector mode: Pass a DBManager with datasource for dynamic connector lookup
 
     In multi-connector mode, connectors are cached with LRU eviction to avoid
     repeated lookups while limiting memory usage.
@@ -84,17 +85,8 @@ class DBFuncTool:
 
     @classmethod
     def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "DBFuncTool":
-        """
-        Create DBFuncTool instance for dynamic mode (multi-connector).
-
-        Args:
-            agent_config: Agent configuration
-            sub_agent_name: Optional sub-agent name
-
-        Returns:
-            DBFuncTool instance using DBManager for multi-connector support
-        """
-        return db_function_tool_instance_multi(agent_config, sub_agent_name=sub_agent_name)
+        """Create DBFuncTool instance (required by mcp_tool_class contract)."""
+        return cls(agent_config=agent_config, sub_agent_name=sub_agent_name)
 
     @classmethod
     def create_static(
@@ -103,29 +95,15 @@ class DBFuncTool:
         sub_agent_name: Optional[str] = None,
         database_name: Optional[str] = None,
     ) -> "DBFuncTool":
-        """
-        Create DBFuncTool instance for static mode (single connector).
-
-        Args:
-            agent_config: Agent configuration
-            sub_agent_name: Optional sub-agent name
-            database_name: Optional database name
-
-        Returns:
-            DBFuncTool instance using single connector
-        """
-        return db_function_tool_instance(
-            agent_config,
-            database_name=database_name or "",
-            sub_agent_name=sub_agent_name,
-        )
+        """Create DBFuncTool instance with optional datasource override (required by mcp_tool_class contract)."""
+        return cls(agent_config=agent_config, default_datasource=database_name or None, sub_agent_name=sub_agent_name)
 
     def __init__(
         self,
-        connector_or_manager: Union[BaseSqlConnector, DBManager],
+        connector_or_manager: Union[BaseSqlConnector, DBManager, None] = None,
         agent_config: Optional[AgentConfig] = None,
         *,
-        default_database: Optional[str] = None,
+        default_datasource: Optional[str] = None,
         sub_agent_name: Optional[str] = None,
         scoped_tables: Optional[Iterable[str]] = None,
         connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
@@ -134,31 +112,30 @@ class DBFuncTool:
         Initialize DBFuncTool.
 
         Args:
-            connector_or_manager: Either a single BaseSqlConnector (legacy mode)
-                                  or a DBManager (multi-connector mode)
-            agent_config: Optional agent configuration
-            namespace: Required when using DBManager mode
-            default_database: Default database name for multi-database scenarios
+            connector_or_manager: A single BaseSqlConnector (legacy mode), a DBManager (multi-connector mode),
+                                  or None to auto-create a DBManager from agent_config.
+            agent_config: Agent configuration (required when connector_or_manager is None or DBManager)
+            default_datasource: Default datasource for multi-datasource scenarios
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
         """
+        if connector_or_manager is None:
+            if not agent_config:
+                raise ValueError("agent_config is required when connector_or_manager is not provided")
+            connector_or_manager = db_manager_instance(agent_config.datasource_configs)
+
         # Determine mode based on input type
         if isinstance(connector_or_manager, DBManager):
             if not agent_config:
-                raise ValueError("AgentConfiguration is required when using DBManager mode")
+                raise ValueError("agent_config is required when using DBManager mode")
             self._db_manager = connector_or_manager
-            self._namespace = agent_config.current_database
-            self._default_database = default_database or (agent_config.current_database if agent_config else "")
-            if len(agent_config.current_db_configs()) == 1:
-                self._init_single_db_connector(self._db_manager.first_conn(self._namespace))
-            else:
-                self._databases = list(agent_config.current_db_configs().keys()) if agent_config else []
-                self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
-                self._connector_cache_size = connector_cache_size
-                # Get first connector for dialect detection
-                self._primary_connector = self._db_manager.first_conn(self._namespace)
-                self._is_multi_connector = True
+            self._default_datasource = default_datasource or (agent_config.current_datasource if agent_config else "")
+            self._datasources = list(agent_config.current_db_configs().keys()) if agent_config else []
+            self._connector_cache: OrderedDict[str, BaseSqlConnector] = OrderedDict()
+            self._connector_cache_size = connector_cache_size
+            self._primary_connector = self._db_manager.first_conn(self._default_datasource)
+            self._is_multi_connector = True
         else:
             self._init_single_db_connector(connector_or_manager)
 
@@ -178,8 +155,7 @@ class DBFuncTool:
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
         self._db_manager = None
-        self._namespace = None
-        self._default_database = ""
+        self._default_datasource = ""
         self._connector_cache = OrderedDict()
         self._connector_cache_size = 0
         self._primary_connector = connector
@@ -190,25 +166,25 @@ class DBFuncTool:
         """Get the primary/default connector (for backward compatibility)."""
         return self._primary_connector
 
-    def _get_connector(self, database: Optional[str] = None) -> BaseSqlConnector:
+    def _get_connector(self, datasource: Optional[str] = None) -> BaseSqlConnector:
         """
-        Get connector for the specified database.
+        Get connector for the specified datasource.
 
         In single connector mode, always returns the primary connector.
         In multi-connector mode, returns cached connector or fetches from db_manager.
 
         Args:
-            database: Database name. If None/empty, uses default database.
+            datasource: Datasource name. If None/empty, uses default datasource.
 
         Returns:
-            BaseSqlConnector for the specified database
+            BaseSqlConnector for the specified datasource
         """
         if self._db_manager is None:
             # Single connector mode
             return self._primary_connector
 
         # Multi-connector mode
-        db_name = database or self._default_database
+        db_name = datasource or self._default_datasource
 
         # Check cache
         if db_name in self._connector_cache:
@@ -217,21 +193,16 @@ class DBFuncTool:
             return self._connector_cache[db_name]
 
         # Fetch from db_manager.
-        # Each database in service.databases is its own namespace (see AgentConfig.namespaces).
-        # For cross-database scenarios, use db_name as both namespace and logic_name.
+        # Each datasource in services.datasources is its own group (see AgentConfig.datasource_configs).
+        # For cross-database scenarios, use db_name as both datasource and logic_name.
         try:
             connector = self._db_manager.get_conn(db_name, db_name)
         except (KeyError, ValueError) as e:
-            if database:
-                # Caller explicitly requested a specific database — do NOT fall back silently.
-                raise DatusException(
-                    ErrorCode.COMMON_VALIDATION_FAILED,
-                    message=f"Database '{database}' is not configured. "
-                    f"Available databases: {', '.join(self._databases)}.",
-                ) from e
-            # Fallback to current namespace only for the default database (backward compatibility)
-            logger.debug(f"Falling back to namespace lookup for '{db_name}': {e}")
-            connector = self._db_manager.get_conn(self._namespace, db_name)
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{db_name}' is not configured. "
+                f"Available datasources: {', '.join(self._datasources)}.",
+            ) from e
 
         # Ensure connector is connected
         if hasattr(connector, "connect"):
@@ -246,12 +217,22 @@ class DBFuncTool:
         self._connector_cache[db_name] = connector
         return connector
 
-    def _reset_database_for_rag(self, database_name: str = "") -> str:
-        connector = self._get_connector(database_name)
-        if connector.dialect in (DBType.SQLITE, DBType.DUCKDB):
-            return connector.database_name
-        else:
-            return database_name
+    def _reset_database_for_rag(self, datasource: Optional[str] = "") -> str:
+        connector = self._get_connector(datasource)
+        return connector.database_name
+
+    @staticmethod
+    def _active_database_of(connector: Any) -> str:
+        """Return the connector's active physical database as a plain string.
+
+        Some test fixtures use ``MagicMock`` connectors — attribute access
+        returns a ``Mock`` instance that is truthy, so a naive
+        ``getattr(c, "database_name", "") or ""`` leaks a Mock into the
+        ``TableTarget.database`` slot. Production connectors expose this as
+        a ``str``; this helper enforces that contract.
+        """
+        val = getattr(connector, "database_name", None)
+        return val if isinstance(val, str) else ""
 
     def _determine_field_order(self) -> Sequence[str]:
         dialect = getattr(self._primary_connector, "dialect", "") or ""
@@ -421,25 +402,11 @@ class DBFuncTool:
             return []
 
     def _resolve_workspace_root(self) -> str:
-        """Resolve workspace_root with priority: storage config > legacy config > default."""
-        workspace_root = None
-
-        if self.agent_config:
-            # Priority 1: storage.workspace_root
-            if hasattr(self.agent_config, "storage") and hasattr(self.agent_config.storage, "workspace_root"):
-                ws = self.agent_config.storage.workspace_root
-                if ws:
-                    workspace_root = ws
-
-            # Priority 2: legacy agent_config.workspace_root
-            if workspace_root is None and hasattr(self.agent_config, "workspace_root"):
-                ws = self.agent_config.workspace_root
-                if ws is not None:
-                    workspace_root = ws
-
-        if workspace_root is None:
+        """Resolve workspace_root from ``agent_config.project_root``; fall back to cwd."""
+        if self.agent_config and hasattr(self.agent_config, "project_root"):
+            workspace_root = self.agent_config.project_root
+        else:
             workspace_root = "."
-
         return os.path.expanduser(workspace_root)
 
     def _read_sql_from_file(self, file_path: str) -> str:
@@ -646,6 +613,7 @@ class DBFuncTool:
         catalog: str = "",
         database: str = "",
         schema_name: str = "",
+        datasource: Optional[str] = "",
         top_n: int = 5,
         simple_sample_data: bool = True,
     ) -> FuncToolResult:
@@ -659,7 +627,7 @@ class DBFuncTool:
         - Find tables related to a specific business concept or domain
         - Discover tables containing certain types of data
         - Locate tables for SQL query development
-        - Understand what tables are available in a database
+        - Understand what tables are available in a datasource
 
         **Application Guidance**:
         1. If table matches (via definition/description/dimensions/measures/sample_data), use it directly
@@ -674,13 +642,9 @@ class DBFuncTool:
                 Leave empty for SQLite (uses file path instead).
             schema_name: Schema filter. Use for PostgreSQL, Snowflake, DuckDB (e.g., "public").
                 Leave empty for MySQL (database = schema), StarRocks, SQLite.
+            datasource: Optional datasource to route the search to. Defaults to the current datasource.
             top_n: Maximum number of rows to return after scoping filters.
             simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
-
-        Database-specific parameter usage:
-            PostgreSQL/Snowflake: database + schema_name |
-            MySQL/StarRocks: database (or catalog + database) |
-            SQLite/DuckDB: database or leave empty
 
         Returns:
             FuncToolResult where:
@@ -694,7 +658,7 @@ class DBFuncTool:
             metadata, sample_values = self.schema_rag.search_similar(
                 query_text,
                 catalog_name=catalog,
-                database_name=self._reset_database_for_rag(database),
+                database_name=self._reset_database_for_rag(datasource),
                 schema_name=schema_name,
                 table_type="full",
                 top_n=top_n,
@@ -763,7 +727,9 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     @mcp_tool()
-    def list_databases(self, catalog: Optional[str] = "", include_sys: Optional[bool] = False) -> FuncToolResult:
+    def list_databases(
+        self, catalog: Optional[str] = "", datasource: Optional[str] = "", include_sys: Optional[bool] = False
+    ) -> FuncToolResult:
         """
         Enumerate databases accessible through the current connection.
         Use this when you need to discover what databases are available before querying.
@@ -771,6 +737,7 @@ class DBFuncTool:
 
         Args:
             catalog: Optional catalog to scope the lookup (dialect dependent).
+            datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system databases; defaults to False.
 
         Returns:
@@ -778,28 +745,20 @@ class DBFuncTool:
             an explanatory error message.
         """
         if self._is_multi_connector:
-            # Return database names with type info and connectivity status.
-            # Only databases with installed adapters and working connections are marked available.
-            db_configs = self.agent_config.current_db_configs() if self.agent_config else {}
-            db_list = []
-            for name in self._databases:
-                if not self._database_matches_scope(catalog, name):
-                    continue
-                db_type = db_configs[name].type if name in db_configs else "unknown"
-                available = True
-                error_msg = ""
-                try:
-                    self._get_connector(name)
-                except Exception as e:
-                    available = False
-                    error_msg = str(e)
-                entry = {"name": name, "type": db_type, "available": available}
-                if not available:
-                    entry["error"] = error_msg
-                db_list.append(entry)
-            return FuncToolResult(success=1, result=db_list)
+            if datasource and datasource not in self._datasources:
+                return FuncToolResult(
+                    success=0, error=f"Datasource '{datasource}' not found. Available: {list(self._datasources)}"
+                )
+            source = datasource or self._default_datasource
+            try:
+                connector = self._get_connector(source)
+                databases = connector.get_databases(catalog, include_sys=include_sys)
+                filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+                return FuncToolResult(result=filtered)
+            except Exception as e:
+                return FuncToolResult(success=0, error=str(e))
         try:
-            connector = self._get_connector()
+            connector = self._get_connector(datasource)
             databases = connector.get_databases(catalog, include_sys=include_sys)
             filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
             return FuncToolResult(result=filtered)
@@ -808,7 +767,11 @@ class DBFuncTool:
 
     @mcp_tool()
     def list_schemas(
-        self, catalog: Optional[str] = "", database: Optional[str] = "", include_sys: bool = False
+        self,
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        datasource: Optional[str] = "",
+        include_sys: bool = False,
     ) -> FuncToolResult:
         """
         List schema names under the supplied catalog/database coordinate.
@@ -818,6 +781,7 @@ class DBFuncTool:
         Args:
             catalog: Optional catalog filter. Leave blank to rely on connector defaults.
             database: Optional database filter. Leave blank to rely on connector defaults.
+            datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_sys: Set True to include system schemas; defaults to False.
 
         Returns:
@@ -826,7 +790,7 @@ class DBFuncTool:
         try:
             if database and not self._database_matches_scope(catalog, database):
                 return FuncToolResult(result=[])
-            connector = self._get_connector(database)
+            connector = self._get_connector(datasource)
             schemas = connector.get_schemas(catalog, database, include_sys=include_sys)
             filtered = [schema for schema in schemas if self._schema_matches_scope(catalog, database, schema)]
             return FuncToolResult(result=filtered)
@@ -839,6 +803,7 @@ class DBFuncTool:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
+        datasource: Optional[str] = "",
         include_views: Optional[bool] = True,
     ) -> FuncToolResult:
         """
@@ -847,6 +812,7 @@ class DBFuncTool:
             catalog: Optional catalog filter.
             database: Optional database filter.
             schema_name: Optional schema filter.
+            datasource: Optional datasource to route the query to. Defaults to the current datasource.
             include_views: When True (default) also include views and materialized views.
 
         Returns:
@@ -854,29 +820,31 @@ class DBFuncTool:
             success=0 with an explanatory error message.
         """
         try:
-            connector = self._get_connector(database)
+            connector = self._get_connector(datasource)
             result = []
             for tb in connector.get_tables(catalog, database, schema_name):
                 result.append({"type": "table", "name": tb})
 
             if include_views:
-                # Add views
+                # Add views. We deliberately swallow any exception — some connectors
+                # don't support views (NotImplementedError/AttributeError), and others
+                # raise real SQL errors when the system view the adapter targets is
+                # missing on that DB version. Failing list_tables entirely for a
+                # subordinate listing would hide the tables we already fetched.
                 try:
                     views = connector.get_views(catalog, database, schema_name)
                     for view in views:
                         result.append({"type": "view", "name": view})
-                except (NotImplementedError, AttributeError):
-                    # Some connectors may not support get_views
-                    pass
+                except Exception as e:
+                    logger.debug(f"get_views unavailable on {connector.dialect}: {e}")
 
-                # Add materialized views
+                # Add materialized views (same reasoning as views above).
                 try:
                     materialized_views = connector.get_materialized_views(catalog, database, schema_name)
                     for mv in materialized_views:
                         result.append({"type": "materialized_view", "name": mv})
-                except (NotImplementedError, AttributeError):
-                    # Some connectors may not support get_materialized_views
-                    pass
+                except Exception as e:
+                    logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
             filtered_result = self._filter_table_entries(result, catalog, database, schema_name)
             return FuncToolResult(result=filtered_result)
@@ -890,6 +858,7 @@ class DBFuncTool:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
+        datasource: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Fetch detailed column metadata, enriched with Semantic Model information.
@@ -900,6 +869,7 @@ class DBFuncTool:
             catalog: Optional catalog override.
             database: Optional database override.
             schema_name: Optional schema override.
+            datasource: Optional datasource to route the query to. Defaults to the current datasource.
 
         Returns:
             FuncToolResult with a dictionary containing:
@@ -933,15 +903,10 @@ class DBFuncTool:
             # Use parsed coordinate fields so that dotted names like "raw.stage"
             # are correctly split into schema="raw", table="stage" before passing
             # to the connector (avoids DuckDB treating "raw" as a catalog).
-            # In multi-connector mode, the `database` parameter is a logical routing name
-            # (e.g., "local_duckdb") for connector selection, NOT an engine-internal database name.
-            # After routing, don't pass it to get_schema — the connector knows its own database.
-            routing_db = coordinate.database or database
-            connector = self._get_connector(routing_db)
-            effective_db = "" if (self._is_multi_connector and routing_db in self._databases) else routing_db
+            connector = self._get_connector(datasource)
             column_result = connector.get_schema(
                 catalog_name=coordinate.catalog or catalog,
-                database_name=effective_db,
+                database_name=coordinate.database,
                 schema_name=coordinate.schema or schema_name,
                 table_name=coordinate.table,
             )
@@ -1021,7 +986,7 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=error_msg)
 
     @mcp_tool()
-    def read_query(self, sql: str, database: Optional[str] = "") -> FuncToolResult:
+    def read_query(self, sql: str, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
 
@@ -1031,7 +996,7 @@ class DBFuncTool:
         Args:
             sql: Read-only SQL text (SELECT, SHOW, DESCRIBE, EXPLAIN), or a .sql file path
                  (e.g. "sql/session_1/query.sql") to read and execute from the workspace.
-            database: Optional database name for multi-database scenarios.
+            datasource: Optional datasource name for multi-datasource scenarios.
 
         Returns:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
@@ -1057,7 +1022,7 @@ class DBFuncTool:
                 )
 
             # Enforce read-only: only SELECT, SHOW/DESCRIBE, and EXPLAIN are allowed
-            connector = self._get_connector(database)
+            connector = self._get_connector(datasource)
             sql_type = parse_sql_type(sql, connector.dialect)
             _READONLY_SQL_TYPES = {SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN}
             if sql_type not in _READONLY_SQL_TYPES:
@@ -1084,7 +1049,7 @@ class DBFuncTool:
                     error=f"Query references tables outside scoped context: {', '.join(out_of_scope)}",
                 )
 
-            logger.info("read_query", sql_type=sql_type.value, database=database or "default")
+            logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
                 data = result.sql_return
@@ -1101,6 +1066,7 @@ class DBFuncTool:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
+        datasource: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Return the connector's DDL definition for the requested table.
@@ -1112,6 +1078,7 @@ class DBFuncTool:
             catalog: Optional catalog override.
             database: Optional database override.
             schema_name: Optional schema override.
+            datasource: Optional datasource to route the query to. Defaults to the current datasource.
 
         Returns:
             FuncToolResult with result dict containing keys:
@@ -1131,7 +1098,7 @@ class DBFuncTool:
                     error=f"Table '{table_name}' is outside the scoped context.",
                 )
             # Get tables with DDL
-            connector = self._get_connector(database)
+            connector = self._get_connector(datasource)
             tables_with_ddl = connector.get_tables_with_ddl(
                 catalog_name=catalog, database_name=database, schema_name=schema_name, tables=[table_name]
             )
@@ -1156,7 +1123,7 @@ class DBFuncTool:
         re.IGNORECASE,
     )
 
-    def execute_ddl(self, sql: str, database: Optional[str] = "") -> FuncToolResult:
+    def execute_ddl(self, sql: str, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Execute a DDL SQL statement (CREATE TABLE AS SELECT, ALTER TABLE, etc.).
 
@@ -1166,7 +1133,7 @@ class DBFuncTool:
 
         Args:
             sql: DDL SQL statement to execute
-            database: Optional database name for multi-database scenarios.
+            datasource: Optional datasource name for multi-datasource scenarios.
 
         Returns:
             Execution result with success status
@@ -1199,7 +1166,7 @@ class DBFuncTool:
                 error=f"DDL statement references tables outside scoped context: {', '.join(out_of_scope)}",
             )
 
-        connector = self._get_connector(database)
+        connector = self._get_connector(datasource)
         if not hasattr(connector, "execute_ddl"):
             return FuncToolResult(success=0, error="Current database connector does not support DDL operations")
         try:
@@ -1208,13 +1175,23 @@ class DBFuncTool:
                 # Commit to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
                     connector.connection.commit()
-                return FuncToolResult(
-                    result={
-                        "message": "DDL executed successfully",
-                        "sql": cleaned,
-                        "database": database or self._default_database,
-                    }
+                from datus.validation.target_extractor import extract_ddl_target
+
+                effective_ds = datasource or self._default_datasource
+                target = extract_ddl_target(
+                    cleaned,
+                    effective_ds,
+                    active_database=self._active_database_of(connector),
+                    dialect=getattr(connector, "dialect", ""),
                 )
+                result_payload: Dict[str, Any] = {
+                    "message": "DDL executed successfully",
+                    "sql": cleaned,
+                    "datasource": effective_ds,
+                }
+                if target is not None:
+                    result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
+                return FuncToolResult(result=result_payload)
             else:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
@@ -1223,7 +1200,7 @@ class DBFuncTool:
     def execute_write(
         self,
         sql: str,
-        database: Optional[str] = "",
+        datasource: Optional[str] = "",
         min_rows: Optional[int] = None,
         max_rows: Optional[int] = None,
         dry_run: bool = False,
@@ -1236,7 +1213,7 @@ class DBFuncTool:
 
         Args:
             sql: Write SQL statement to execute, or a .sql file path.
-            database: Optional database name for multi-database scenarios.
+            datasource: Optional datasource name for multi-datasource scenarios.
             min_rows: Optional minimum acceptable affected row count.
                 Checked after the write is committed; violation returns success=0
                 but the write is NOT rolled back.
@@ -1272,7 +1249,7 @@ class DBFuncTool:
                     error="Multi-statement SQL is not allowed. Please submit one write statement at a time.",
                 )
 
-            connector = self._get_connector(database)
+            connector = self._get_connector(datasource)
             sql_type = parse_sql_type(normalized_sql, connector.dialect)
             if sql_type == SQLType.MERGE:
                 return FuncToolResult(
@@ -1337,16 +1314,28 @@ class DBFuncTool:
                     "Note: the write has already been committed.",
                 )
 
-            return FuncToolResult(
-                result={
-                    "message": "Write executed successfully",
-                    "sql": normalized_sql,
-                    "sql_type": sql_type.value,
-                    "row_count": row_count,
-                    "database": database or self._default_database,
-                    "dry_run": dry_run,
-                }
+            from datus.validation.target_extractor import extract_dml_target
+
+            effective_ds = datasource or self._default_datasource
+            target = extract_dml_target(
+                normalized_sql,
+                effective_ds,
+                active_database=self._active_database_of(connector),
+                dialect=getattr(connector, "dialect", ""),
             )
+            result_payload: Dict[str, Any] = {
+                "message": "Write executed successfully",
+                "sql": normalized_sql,
+                "sql_type": sql_type.value,
+                "row_count": row_count,
+                "datasource": effective_ds,
+                "dry_run": dry_run,
+            }
+            if target is not None:
+                if row_count is not None:
+                    target = target.model_copy(update={"rows_affected": row_count})
+                result_payload["deliverable_target"] = target.model_dump(by_alias=True, exclude_none=True)
+            return FuncToolResult(result=result_payload)
         except Exception as e:
             return FuncToolResult(success=0, error=f"Write execution failed: {str(e)}")
 
@@ -1356,23 +1345,23 @@ class DBFuncTool:
     def transfer_query_result(
         self,
         source_sql: str,
-        source_database: str,
-        target_table: str,
-        target_database: str = "",
+        source_datasource: Optional[str] = "",
+        target_table: str = "",
+        target_datasource: Optional[str] = "",
         mode: str = "replace",
         batch_size: int = 5000,
     ) -> FuncToolResult:
         """
-        Transfer query results from a source database to a target table in another database.
+        Transfer query results from a source datasource to a target table in another datasource.
 
-        Executes source_sql on source_database, fetches the result as a DataFrame,
-        and batch-inserts into target_table on target_database.
+        Executes source_sql on source_datasource, fetches the result as a DataFrame,
+        and batch-inserts into target_table on target_datasource.
 
         Args:
-            source_sql: SQL query to execute on the source database.
-            source_database: Source database name.
+            source_sql: SQL query to execute on the source datasource.
+            source_datasource: Source datasource name. Uses default datasource if empty.
             target_table: Fully qualified target table name.
-            target_database: Target database name.
+            target_datasource: Target datasource name. Uses default datasource if empty.
             mode: Transfer mode - 'replace' (TRUNCATE + INSERT) or 'append' (INSERT only).
             batch_size: Number of rows per INSERT batch.
 
@@ -1417,32 +1406,51 @@ class DBFuncTool:
                 "Only read-only queries are allowed as transfer source.",
             )
 
-        # Get connectors — both must be available; do NOT fall back to a different database
+        # Get connectors — both must be available; do NOT fall back to a different datasource
         try:
-            source_conn = self._get_connector(source_database)
+            source_conn = self._get_connector(source_datasource)
         except Exception as e:
             return FuncToolResult(
                 success=0,
-                error=f"Source database '{source_database}' is not available: {str(e)}. "
-                "Check that the database adapter is installed and the connection config is correct. "
-                "Do NOT fall back to a different source database.",
+                error=f"Source datasource '{source_datasource}' is not available: {str(e)}. "
+                "Check that the adapter is installed and the connection config is correct. "
+                "Do NOT fall back to a different source datasource.",
             )
         try:
-            target_conn = self._get_connector(target_database)
+            target_conn = self._get_connector(target_datasource)
         except Exception as e:
             return FuncToolResult(
                 success=0,
-                error=f"Target database '{target_database}' is not available: {str(e)}. "
-                "Check that the database adapter is installed and the connection config is correct. "
-                "Do NOT fall back to a different target database — STOP and report this error to the user.",
+                error=f"Target datasource '{target_datasource}' is not available: {str(e)}. "
+                "Check that the adapter is installed and the connection config is correct. "
+                "Do NOT fall back to a different target datasource — STOP and report this error to the user.",
             )
+
+        # Authoritative source row count — wrap the user's source_sql in a COUNT
+        # subquery so reconciliation does not need to re-run anything later.
+        # One extra query is cheap on OLTP engines and still acceptable on
+        # warehouse engines; see ValidationHook design doc §5.4.
+        source_row_count: Optional[int] = None
+        try:
+            if hasattr(source_conn, "execute_query"):
+                count_sql = f"SELECT COUNT(*) AS __datus_count FROM ({cleaned_sql}) AS __datus_src"
+                count_result = source_conn.execute_query(count_sql)
+                if count_result.success and count_result.sql_return:
+                    # execute_query returns a list of rows; first row, first col is the count
+                    first_row = count_result.sql_return[0]
+                    if isinstance(first_row, dict):
+                        source_row_count = int(next(iter(first_row.values())))
+                    else:
+                        source_row_count = int(first_row[0])
+        except Exception as e:
+            logger.debug("Source row count pre-check failed (non-fatal): %s", e)
 
         # Execute source query
         try:
             if not hasattr(source_conn, "execute_pandas"):
                 return FuncToolResult(
                     success=0,
-                    error="Source database connector does not support pandas execution.",
+                    error="Source datasource connector does not support pandas execution.",
                 )
             source_result = source_conn.execute_pandas(source_sql)
             if not source_result.success:
@@ -1453,6 +1461,13 @@ class DBFuncTool:
 
         # Check row limit
         row_count = len(df)
+        # If the wrapped COUNT(*) pre-check could not run (unsupported
+        # subquery on some engines, connector shape mismatch), the full
+        # source result is still materialized in ``df`` — use its row
+        # count as the authoritative ``source_row_count`` so Layer A's
+        # parity check remains meaningful instead of being skipped.
+        if source_row_count is None:
+            source_row_count = row_count
         if row_count > self._TRANSFER_MAX_ROWS:
             return FuncToolResult(
                 success=0,
@@ -1481,12 +1496,25 @@ class DBFuncTool:
                     if mode == "replace"
                     else "Transfer completed (empty result set)",
                     "source_sql": source_sql,
-                    "source_database": source_database,
+                    "source_datasource": source_datasource,
                     "target_table": target_table,
-                    "target_database": target_database or self._default_database,
+                    "target_datasource": target_datasource or self._default_datasource,
                     "mode": mode,
                     "rows_transferred": 0,
+                    # Leave as None when the pre-count failed; 0 is a legitimate
+                    # verified value (empty source). See _build_transfer_target.
+                    "source_row_count": source_row_count,
+                    "source_row_count_verified": source_row_count is not None,
+                    "transferred_row_count": 0,
                     "batch_size": batch_size,
+                    "deliverable_target": self._build_transfer_target(
+                        source_datasource=source_datasource,
+                        target_datasource=target_datasource or self._default_datasource,
+                        target_table=target_table,
+                        source_row_count=source_row_count,
+                        transferred_row_count=0,
+                        target_active_database=self._active_database_of(target_conn),
+                    ),
                 }
             )
 
@@ -1546,33 +1574,237 @@ class DBFuncTool:
             )
 
         logger.info(f"Transferred {rows_written} rows to {target_table} (mode={mode})")
+        if source_row_count is None:
+            # Pre-count failed silently (logged at debug above). Do NOT
+            # backfill with rows_written — that would make Layer A's
+            # transfer-parity invariant trivially pass and defeat the point
+            # of verifying source vs target row counts. Leave as None so
+            # ``_run_row_count_parity`` skips instead of faking equality.
+            logger.warning(
+                "Transfer parity check will be skipped — source row pre-count was unavailable for transfer to %s",
+                target_table,
+            )
         return FuncToolResult(
             result={
                 "message": "Transfer completed successfully",
                 "source_sql": source_sql,
-                "source_database": source_database,
+                "source_datasource": source_datasource,
                 "target_table": target_table,
-                "target_database": target_database or self._default_database,
+                "target_datasource": target_datasource or self._default_datasource,
                 "mode": mode,
                 "rows_transferred": rows_written,
+                "source_row_count": source_row_count,
+                "source_row_count_verified": source_row_count is not None,
+                "transferred_row_count": rows_written,
                 "batch_size": batch_size,
+                "deliverable_target": self._build_transfer_target(
+                    source_datasource=source_datasource,
+                    target_datasource=target_datasource or self._default_datasource,
+                    target_table=target_table,
+                    source_row_count=source_row_count,
+                    transferred_row_count=rows_written,
+                    target_active_database=self._active_database_of(target_conn),
+                ),
             }
         )
+
+    @staticmethod
+    def _build_transfer_target(
+        source_datasource: str,
+        target_datasource: str,
+        target_table: str,
+        source_row_count: Optional[int],
+        transferred_row_count: int,
+        target_active_database: str = "",
+    ) -> Dict[str, Any]:
+        """Construct the ``deliverable_target`` payload for a transfer call.
+
+        ``source_row_count=None`` signals "could not verify" (pre-count SQL
+        failed). ``model_dump(exclude_none=True)`` drops it from the payload
+        so ``_run_row_count_parity`` treats the check as skipped instead of
+        trivially equal to ``transferred_row_count``.
+
+        ``TableTarget.database`` gets the *physical* database the transfer
+        wrote into — taken from the parsed ``target_table`` identifier when
+        it carries a ``db.schema.table`` qualifier, otherwise from the
+        target connector's active namespace (``target_active_database``),
+        with a final fallback to the datasource key for backward compat.
+        """
+        from datus.utils.sql_utils import parse_table_name_parts
+        from datus.validation.report import DBRef, TableTarget, TransferTarget
+
+        parts = parse_table_name_parts(target_table)
+        parsed_db = parts.get("database_name") or parts.get("catalog_name") or None
+        schema = parts.get("schema_name") or None
+        table = parts.get("table_name") or target_table
+        effective_database = parsed_db or target_active_database or target_datasource
+
+        tgt = TransferTarget(
+            source=DBRef(name=source_datasource),
+            target=TableTarget(
+                datasource=target_datasource,
+                database=effective_database,
+                db_schema=schema,
+                table=table,
+            ),
+            source_row_count=source_row_count,
+            transferred_row_count=transferred_row_count,
+        )
+        return tgt.model_dump(by_alias=True, exclude_none=True)
+
+    # ==================== Migration Target Wrappers ====================
+    #
+    # Thin wrappers over ``MigrationTargetMixin`` methods on the underlying
+    # connector. Uses duck typing so any datus-db-core >= the version that
+    # introduced the Mixin is supported. When the connector does not expose
+    # these methods, we return safe fallback values so the migration agent
+    # can continue in pure-LLM mode.
+
+    def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
+        """
+        Get migration target hints (dialect_family, requires, forbids, type_hints,
+        example_ddl) for the specified target datasource.
+
+        Args:
+            datasource: Target datasource name. Uses the default datasource if empty.
+
+        Returns:
+            When the adapter implements ``MigrationTargetMixin``:
+              success=1, result = the capability dict.
+            Otherwise:
+              success=1, result = {"supported": False, "warning": "..."}.
+        """
+        try:
+            connector = self._get_connector(datasource)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "describe_migration_capabilities"):
+            return FuncToolResult(
+                result={
+                    "supported": False,
+                    "dialect_family": getattr(connector, "dialect", "unknown"),
+                    "warning": (
+                        "Adapter does not expose migration hints (MigrationTargetMixin not implemented); "
+                        "falling back to pure LLM mode. DDL generation will rely on the LLM's own "
+                        "knowledge of this dialect."
+                    ),
+                }
+            )
+
+        try:
+            capabilities = connector.describe_migration_capabilities()
+        except Exception as e:
+            logger.warning(f"describe_migration_capabilities failed on {datasource}: {e}")
+            return FuncToolResult(
+                result={
+                    "supported": False,
+                    "warning": f"Adapter raised while describing capabilities: {e}",
+                }
+            )
+        return FuncToolResult(result=capabilities)
+
+    def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
+        """
+        Suggest dialect-specific table layout (distribution/partition/order) for
+        the target datasource, given the source columns.
+
+        Args:
+            datasource: Target datasource name. Uses the default datasource if empty.
+            columns_json: JSON array of source column defs. Each element must
+                be an object with keys ``name`` (str), ``type`` (str), and
+                ``nullable`` (bool). Example::
+
+                    [{"name": "id", "type": "BIGINT", "nullable": false}]
+
+        Returns:
+            When the adapter implements the Mixin: result = suggestion dict
+            (possibly empty for OLTP). Otherwise: result = {}.
+        """
+        try:
+            columns = json.loads(columns_json) if columns_json else []
+        except json.JSONDecodeError as e:
+            return FuncToolResult(success=0, error=f"Invalid columns_json: {e}")
+        if not isinstance(columns, list):
+            return FuncToolResult(success=0, error="columns_json must be a JSON array")
+
+        try:
+            connector = self._get_connector(datasource)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "suggest_table_layout"):
+            return FuncToolResult(result={})
+
+        try:
+            suggestion = connector.suggest_table_layout(columns)
+        except Exception as e:
+            logger.warning(f"suggest_table_layout failed on {datasource}: {e}")
+            return FuncToolResult(result={})
+        return FuncToolResult(result=suggestion)
+
+    def validate_ddl(
+        self, datasource: Optional[str] = "", ddl: str = "", target_table: Optional[str] = None
+    ) -> FuncToolResult:
+        """
+        Statically validate a CREATE TABLE DDL against the target dialect's rules.
+        Optionally runs ``dry_run_ddl`` (actual CREATE + DROP to a temp table)
+        when ``target_table`` is provided and the adapter supports it.
+
+        Args:
+            datasource: Target datasource name. Uses the default datasource if empty.
+            ddl: The CREATE TABLE DDL to validate.
+            target_table: If provided, attempt dry-run using this table name.
+
+        Returns:
+            result = {"errors": [...], "validated": true|false}. Empty errors
+            with validated=True means static checks passed.
+            When the adapter has no Mixin, returns validated=False with no errors
+            (the LLM is solely responsible for correctness).
+        """
+        if not ddl or not ddl.strip():
+            return FuncToolResult(success=0, error="Empty DDL statement")
+
+        try:
+            connector = self._get_connector(datasource)
+        except DatusException as e:
+            return FuncToolResult(success=0, error=str(e))
+
+        if not hasattr(connector, "validate_ddl"):
+            return FuncToolResult(result={"errors": [], "validated": False})
+
+        errors: List[str] = []
+        try:
+            static_errors = connector.validate_ddl(ddl)
+            if static_errors:
+                errors.extend(static_errors)
+        except Exception as e:
+            logger.warning(f"validate_ddl static check failed on {datasource}: {e}")
+            errors.append(f"Static check raised unexpectedly: {e}")
+
+        # If static errors were found, skip dry_run — DDL is already invalid.
+        if target_table and not errors and hasattr(connector, "dry_run_ddl"):
+            try:
+                dry_errors = connector.dry_run_ddl(ddl, target_table)
+                if dry_errors:
+                    errors.extend(dry_errors)
+            except NotImplementedError:
+                # Adapter chose not to implement dry-run — static check is the ceiling.
+                pass
+            except Exception as e:
+                logger.warning(f"dry_run_ddl failed on {datasource}: {e}")
+                errors.append(f"Dry-run raised unexpectedly: {e}")
+
+        return FuncToolResult(result={"errors": errors, "validated": True})
 
 
 def db_function_tool_instance(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> DBFuncTool:
-    """
-    Create a DBFuncTool instance in single connector mode (legacy).
-
-    For multi-connector mode (e.g., BIRD_DEV with multiple SQLite databases),
-    use db_function_tool_instance_multi instead.
-    """
-    db_manager = db_manager_instance(agent_config.namespaces)
+    """Create a DBFuncTool instance. Auto-creates DBManager from agent_config."""
     return DBFuncTool(
-        db_manager.get_conn(agent_config.current_database, database_name or agent_config.current_database),
         agent_config=agent_config,
+        default_datasource=database_name or None,
         sub_agent_name=sub_agent_name,
     )
 
@@ -1582,26 +1814,9 @@ def db_function_tool_instance_multi(
     sub_agent_name: Optional[str] = None,
     connector_cache_size: int = DBFuncTool.DEFAULT_CONNECTOR_CACHE_SIZE,
 ) -> DBFuncTool:
-    """
-    Create a DBFuncTool instance in multi-connector mode.
-
-    This mode supports dynamic connector switching for namespaces with multiple
-    databases (e.g., BIRD_DEV with multiple SQLite files). Connectors are cached
-    with LRU eviction to limit memory usage.
-
-    Args:
-        agent_config: Agent configuration
-        sub_agent_name: Optional sub-agent name for scoped context
-        connector_cache_size: Max connectors to cache (LRU eviction), default 8
-
-    Returns:
-        DBFuncTool instance in multi-connector mode
-    """
-    db_manager = db_manager_instance(agent_config.namespaces)
+    """Create a DBFuncTool instance (kept for backward compatibility)."""
     return DBFuncTool(
-        db_manager,
         agent_config=agent_config,
-        default_database=agent_config.current_database,
         sub_agent_name=sub_agent_name,
         connector_cache_size=connector_cache_size,
     )
@@ -1611,8 +1826,3 @@ def db_function_tools(
     agent_config: AgentConfig, database_name: str = "", sub_agent_name: Optional[str] = None
 ) -> List[Tool]:
     return db_function_tool_instance(agent_config, database_name, sub_agent_name).available_tools()
-
-
-def db_function_tools_multi(agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> List[Tool]:
-    """Get database function tools in multi-connector mode."""
-    return db_function_tool_instance_multi(agent_config, sub_agent_name).available_tools()

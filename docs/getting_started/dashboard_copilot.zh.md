@@ -121,34 +121,43 @@ kubectl port-forward -n default svc/superset-postgresql 15432:5432 > /dev/null 2
 ### 安装所需扩展
 
 ```bash
-pip install datus-postgresql datus-semantic-metricflow
+pip install datus-bi-superset datus-postgresql datus-semantic-metricflow
 ```
 
 ### 更新 agent.yml
 
-将以下配置添加到您的 `~/.datus/agent.yml`：
+将以下配置添加到您的 `~/.datus/conf/agent.yml`：
 
 ```yaml
 agent:
-  namespace:
-    superset:
-      type: postgresql
-      host: 127.0.0.1
-      port: 15432
-      username: superset
-      password: superset
-      database: examples
-  dashboard:
-    superset:
-      username: admin
-      password: admin
-      extra:
-        provider: db
+  services:
+    datasources:
+      superset:
+        type: postgresql
+        host: 127.0.0.1
+        port: 15432
+        username: superset
+        password: superset
+        database: examples
+    semantic_layer:
+      metricflow: {}
+    bi_platforms:
+      superset:
+        type: superset
+        api_base_url: http://localhost:8088
+        username: admin
+        password: admin
+        extra:
+          provider: db
 ```
 
 !!! note "配置说明"
-    - **namespace**：定义用于 SQL 执行的数据库连接
-    - **dashboard**：定义用于仪表盘访问的 BI 平台凭据
+    - **services.datasources**：定义用于 SQL 执行的数据源连接
+    - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
+    - **services.bi_platforms**：定义用于仪表盘访问的 BI 平台凭据
+
+!!! tip
+    你可以使用 `datus-agent service add` 交互式添加 SQL 数据源；semantic layer 和 BI platform 配置仍需要在 YAML 中编辑。
 
 ## 步骤 3：从仪表盘 Bootstrap
 
@@ -157,7 +166,7 @@ agent:
 ### 运行 Bootstrap 命令
 
 ```bash
-datus-agent bootstrap-bi --namespace superset
+datus-agent bootstrap-bi --datasource superset
 ```
 
 ### 交互流程

@@ -41,8 +41,8 @@ def _make_cli(db_type=DBType.SQLITE):
 
     # agent_config
     db_cfg = _make_db_config(db_type=db_type)
-    cli.agent_config.current_database = "test_ns"
-    cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
+    cli.agent_config.current_datasource = "test_ns"
+    cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
     cli.agent_config.db_type = db_type
 
     # cli_context
@@ -74,7 +74,7 @@ class TestCmdListDatabases:
         cli = _make_cli()
         db_cfg1 = _make_db_config(logic_name="db1")
         db_cfg2 = _make_db_config(logic_name="db2")
-        cli.agent_config.namespaces = {"test_ns": {"db1": db_cfg1, "db2": db_cfg2}}
+        cli.agent_config.datasource_configs = {"test_ns": {"db1": db_cfg1, "db2": db_cfg2}}
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
         cli.console.print.assert_called()
@@ -83,7 +83,7 @@ class TestCmdListDatabases:
         """Non-SQLite single DB with get_databases returning empty triggers 'Empty set' message."""
         cli = _make_cli(db_type="snowflake")
         db_cfg = _make_db_config(db_type="snowflake", logic_name="mydb")
-        cli.agent_config.namespaces = {"test_ns": {"mydb": db_cfg}}
+        cli.agent_config.datasource_configs = {"test_ns": {"mydb": db_cfg}}
         cli.db_connector.get_databases.return_value = []
         meta = MetadataCommands(cli)
         meta.cmd_list_databases()
@@ -91,8 +91,8 @@ class TestCmdListDatabases:
         assert any("Empty set" in c for c in calls)
 
     def test_exception_prints_error(self, meta):
-        meta.cli.agent_config.current_database = None
-        meta.cli.agent_config.namespaces = {}
+        meta.cli.agent_config.current_datasource = None
+        meta.cli.agent_config.datasource_configs = {}
         meta.cmd_list_databases()
         meta.cli.console.print.assert_called()
 
@@ -164,12 +164,14 @@ class TestCmdTables:
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_tables("")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("No database connection" in c for c in calls)
 
     def test_empty_result(self, meta):
         meta.cli.db_connector.get_tables.return_value = []
         meta.cmd_tables("")
-        meta.cli.console.print.assert_called_with("[yellow]Empty set.[/]")
+        calls = [str(c) for c in meta.cli.console.print.call_args_list]
+        assert any("Empty set" in c for c in calls)
 
     def test_with_tables(self, meta):
         meta.cli.db_connector.get_tables.return_value = ["users", "orders"]
@@ -210,7 +212,8 @@ class TestCmdSchemas:
             cli.db_connector.get_schemas.return_value = []
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
-        cli.console.print.assert_called_with("[yellow]Empty set.[/]")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("Empty set" in c for c in calls)
 
     def test_with_schemas(self):
         cli = _make_cli(db_type="snowflake")
@@ -269,7 +272,8 @@ class TestCmdTableSchema:
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_table_schema("users")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        calls = [str(c) for c in cli.console.print.call_args_list]
+        assert any("No database connection" in c for c in calls)
 
     def test_specific_table(self, meta):
         meta.cli.db_connector.get_schema.return_value = [
@@ -298,14 +302,15 @@ class TestCmdTableSchema:
 class TestCmdIndexes:
     def test_no_table_name(self, meta):
         meta.cmd_indexes("")
-        meta.cli.console.print.assert_called_with("[bold red]Error:[/] Table name required")
+        calls = [str(c) for c in meta.cli.console.print.call_args_list]
+        assert any("Table name required" in c for c in calls)
 
     def test_no_connector(self):
         cli = _make_cli()
         cli.db_connector = None
         meta = MetadataCommands(cli)
         meta.cmd_indexes("users")
-        cli.console.print.assert_called_with("[bold red]Error:[/] No database connection.")
+        cli.console.print.assert_called_with("[red]Error:[/] No database connection.")
 
     def test_non_sqlite_not_supported(self, meta):
         meta.cli.db_connector.get_type.return_value = "snowflake"

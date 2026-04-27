@@ -29,7 +29,7 @@ class DummyAgentConfig:
 
     def __init__(self):
         self.db_type = "sqlite"
-        self.current_database = "test_namespace"
+        self.current_datasource = "test_datasource"
         self._db_config = SimpleNamespace(catalog="catalog", database="database", schema="schema")
 
     def current_db_config(self):
@@ -133,7 +133,7 @@ class TestBenchmarkTutorialInit:
     def test_init_with_config_path(self):
         tutorial = BenchmarkTutorial(config_path="/path/to/config.yml")
         assert tutorial.config_path == "/path/to/config.yml"
-        assert tutorial.namespace_name == "california_schools"
+        assert tutorial.datasource_name == "california_schools"
         assert isinstance(tutorial.console, Console)
 
     def test_init_with_none_config_path(self):
@@ -155,15 +155,15 @@ class TestBenchmarkTutorialEnsureConfig:
         output = buffer.getvalue()
         assert "not found" in output
 
-    def test_returns_true_when_config_exists_and_namespace_configured(self, tmp_path, monkeypatch):
+    def test_returns_true_when_config_exists_and_datasource_configured(self, tmp_path, monkeypatch):
         config_file = tmp_path / "agent.yml"
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {"california_schools": {}}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.datasources = {"california_schools": {}}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -176,15 +176,15 @@ class TestBenchmarkTutorialEnsureConfig:
         assert result is True
         assert tutorial.benchmark_path == tmp_path / "benchmark"
 
-    def test_adds_namespace_and_benchmark_config_when_missing(self, tmp_path, monkeypatch):
+    def test_adds_datasource_and_benchmark_config_when_missing(self, tmp_path, monkeypatch):
         config_file = tmp_path / "agent.yml"
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.datasources = {}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -206,9 +206,9 @@ class TestBenchmarkTutorialEnsureConfig:
 
         assert result is True
         assert mock_config_manager.update_item.call_count == 2
-        # First call for service config (databases)
+        # First call for services config (datasources)
         first_call = mock_config_manager.update_item.call_args_list[0]
-        assert first_call[0][0] == "service"
+        assert first_call[0][0] == "services"
         # Second call for benchmark config
         second_call = mock_config_manager.update_item.call_args_list[1]
         assert second_call[0][0] == "benchmark"
@@ -222,8 +222,8 @@ class TestBenchmarkTutorialEnsureConfig:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.datasources = {}
         mock_agent_config.path_manager = MagicMock()
         mock_agent_config.path_manager.benchmark_dir = tmp_path / "benchmark"
 
@@ -242,11 +242,11 @@ class TestBenchmarkTutorialEnsureConfig:
         seed_agent = (yaml.safe_load(seed_config.read_text(encoding="utf-8")) or {}).get("agent", {})
         target_agent = (yaml.safe_load(target_config.read_text(encoding="utf-8")) or {}).get("agent", {})
 
-        assert "service" not in seed_agent
+        assert "services" not in seed_agent
         assert "benchmark" not in seed_agent
-        assert "service" in target_agent
+        assert "services" in target_agent
         assert "benchmark" in target_agent
-        assert "california_schools" in target_agent["service"]["databases"]
+        assert "california_schools" in target_agent["services"]["datasources"]
         assert "california_schools" in target_agent["benchmark"]
 
 
@@ -404,8 +404,8 @@ class TestBenchmarkTutorialRun:
         mock_agent_config = MagicMock()
         mock_agent_config.home = str(tmp_path)
         mock_agent_config.benchmark_configs = {"california_schools": {}}
-        mock_agent_config.service = MagicMock()
-        mock_agent_config.service.databases = {"california_schools": {}}
+        mock_agent_config.services = MagicMock()
+        mock_agent_config.services.datasources = {"california_schools": {}}
         benchmark_path = tmp_path / "benchmark"
         benchmark_path.mkdir()
         mock_agent_config.path_manager = MagicMock()
@@ -449,7 +449,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
         mock_agent_config.rag_storage_path.return_value = str(tmp_path / "storage")
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
@@ -485,7 +485,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
         mock_agent_config.rag_storage_path.return_value = str(tmp_path / "storage")
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
@@ -542,7 +542,7 @@ class TestBenchmarkTutorialInitMetrics:
         config_file.write_text("agent: {}")
 
         mock_agent_config = MagicMock()
-        mock_agent_config.current_database = "california_schools"
+        mock_agent_config.current_datasource = "california_schools"
 
         monkeypatch.setattr(tutorial_module, "load_agent_config", lambda reload, config: mock_agent_config)
 
@@ -626,6 +626,7 @@ def test_init_success_story_metrics_success(monkeypatch):
         def execute_stream(self, action_history_manager):
             action = SimpleNamespace(
                 status=ActionStatus.SUCCESS,
+                action_type="metrics_response",
                 output={"metrics": []},
                 messages="Metrics extracted",
             )

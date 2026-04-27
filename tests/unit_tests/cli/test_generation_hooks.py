@@ -22,15 +22,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from datus.cli.execution_state import InteractionCancelled
 from datus.cli.generation_hooks import (
     GenerationCancelledException,
     GenerationHooks,
-    make_kb_path_normalizer,
     normalize_kb_relative_path,
     resolve_kb_sandbox_path,
 )
-from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool  # noqa: F401
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,19 +46,23 @@ def broker():
 
 @pytest.fixture
 def agent_config(tmp_path):
-    kb_home = tmp_path / "kb"
-    (kb_home / "semantic_models" / "test_ns").mkdir(parents=True, exist_ok=True)
-    (kb_home / "sql_summaries" / "test_ns").mkdir(parents=True, exist_ok=True)
-    (kb_home / "ext_knowledge" / "test_ns").mkdir(parents=True, exist_ok=True)
+    # After the storage refactor, KB content lives under {project_root}/subject/
+    # without per-datasource subdirectories.
+    subject_dir = tmp_path / "subject"
+    (subject_dir / "semantic_models").mkdir(parents=True, exist_ok=True)
+    (subject_dir / "sql_summaries").mkdir(parents=True, exist_ok=True)
+    (subject_dir / "ext_knowledge").mkdir(parents=True, exist_ok=True)
     cfg = MagicMock()
     cfg.home = str(tmp_path)
-    cfg.current_database = "test_ns"
-    cfg.current_namespace = "test_ns"
+    cfg.current_datasource = "test_ns"
+    cfg.current_datasource = "test_ns"
     cfg.db_type = "sqlite"
     cfg.path_manager = MagicMock()
-    cfg.path_manager.semantic_model_path.return_value = kb_home / "semantic_models" / "test_ns"
+    cfg.path_manager.semantic_model_path.return_value = subject_dir / "semantic_models"
+    cfg.path_manager.sql_summary_path.return_value = subject_dir / "sql_summaries"
+    cfg.path_manager.ext_knowledge_path.return_value = subject_dir / "ext_knowledge"
     # Real value so _resolve_path's realpath/commonpath containment check works.
-    cfg.path_manager.knowledge_base_home = kb_home
+    cfg.path_manager.subject_dir = subject_dir
     return cfg
 
 
@@ -136,6 +140,38 @@ class TestOnToolEnd:
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
         hooks._handle_end_semantic_model_generation.assert_awaited_once()
 
+    async def test_records_validate_semantic_success(self, broker, agent_config):
+        evidence = GenerationEvidence()
+        hooks = GenerationHooks(broker=broker, agent_config=agent_config, generation_evidence=evidence)
+        tool = MagicMock()
+        tool.name = "validate_semantic"
+        result = FuncToolResult(success=1, result={"valid": True, "issues": []})
+
+        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, result)
+
+        assert evidence.validation_passed is True
+
+    async def test_records_query_metrics_dry_run_success(self, broker, agent_config):
+        evidence = GenerationEvidence()
+        hooks = GenerationHooks(broker=broker, agent_config=agent_config, generation_evidence=evidence)
+        tool = MagicMock()
+        tool.name = "query_metrics"
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"metrics": ["revenue"], "dry_run": True})
+        result = FuncToolResult(
+            success=1,
+            result={
+                "columns": [],
+                "data": [],
+                "metadata": {"sql": "SELECT SUM(revenue) AS revenue FROM orders"},
+            },
+        )
+
+        await hooks.on_tool_end(ctx, MagicMock(), tool, result)
+
+        assert evidence.metric_dry_run_passed is True
+        assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
+
 
 # ---------------------------------------------------------------------------
 # Tests: on_start / on_tool_start / on_handoff / on_end
@@ -145,16 +181,20 @@ class TestOnToolEnd:
 @pytest.mark.asyncio
 class TestStubHooks:
     async def test_on_start(self, hooks):
-        await hooks.on_start(MagicMock(), MagicMock())  # no exception
+        result = await hooks.on_start(MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_tool_start(self, hooks):
-        await hooks.on_tool_start(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_tool_start(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_handoff(self, hooks):
-        await hooks.on_handoff(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_handoff(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
     async def test_on_end(self, hooks):
-        await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
+        result = await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +204,16 @@ class TestStubHooks:
 
 class TestExtractFilepaths:
     def test_from_dict_with_files(self, hooks, agent_config):
-        # Absolute paths inside the configured knowledge_base_home pass the
-        # containment check and are returned normpath'd.
-        sem_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "semantic_models" / "test_ns"
+        # Absolute paths inside the subject directory pass the containment
+        # check and are returned normpath'd.
+        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
         paths_in = [str(sem_dir / "a.yaml"), str(sem_dir / "b.yaml")]
         result = {"result": {"semantic_model_files": paths_in}}
         paths = hooks._extract_filepaths_from_result(result)
         assert paths == paths_in
 
-    def test_from_dict_drops_paths_outside_kb_home(self, hooks):
-        """Absolute paths outside knowledge_base_home must be filtered out."""
+    def test_from_dict_drops_paths_outside_subject(self, hooks):
+        """Absolute paths outside the subject directory must be filtered out."""
         result = {"result": {"semantic_model_files": ["/etc/passwd", "/a/b.yaml"]}}
         paths = hooks._extract_filepaths_from_result(result)
         assert paths == []
@@ -184,7 +224,7 @@ class TestExtractFilepaths:
         assert paths == []
 
     def test_from_object_with_result(self, hooks, agent_config):
-        sem_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "semantic_models" / "test_ns"
+        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
         inside = str(sem_dir / "x.yaml")
         r = MagicMock()
         r.result = {"semantic_model_files": [inside]}
@@ -206,76 +246,65 @@ class TestResolvePath:
     """
     Tests for ``GenerationHooks._resolve_path``.
 
-    The resolver joins relative paths against ``knowledge_base_home`` after
-    routing them through ``normalize_kb_relative_path`` — so a naked filename
-    written by the LLM (e.g. ``orders.yml``) lands at
-    ``{kb_home}/{type_subdir}/{namespace}/orders.yml``, matching where the
+    The resolver joins relative paths against the project ``subject/`` directory
+    after routing them through ``normalize_kb_relative_path`` — so a naked
+    filename written by the LLM (e.g. ``orders.yml``) lands at
+    ``{subject_dir}/{type_subdir}/orders.yml``, matching where the
     FilesystemFuncTool actually wrote the file.
     """
 
-    def _make_hooks(self, broker, kb="/ws", namespace="ns_a"):
+    def _make_hooks(self, broker, subject="/ws"):
         cfg = MagicMock()
-        cfg.current_namespace = namespace
         cfg.path_manager = MagicMock()
-        cfg.path_manager.knowledge_base_home = Path(kb)
+        cfg.path_manager.subject_dir = Path(subject)
         return GenerationHooks(broker=broker, agent_config=cfg), cfg
 
-    def test_absolute_path_outside_kb_rejected(self, broker):
-        """Absolute paths that escape knowledge_base_home must be returned as an
-        empty string so downstream ``os.path.exists`` / ``open`` never sees
-        them — fail closed, no arbitrary file disclosure."""
+    def test_absolute_path_outside_subject_rejected(self, broker):
+        """Absolute paths outside subject_dir are rejected (fail closed)."""
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("/etc/passwd", "semantic") == ""
         assert h._resolve_path("/abs/path/to/file.yml", "semantic") == ""
 
-    def test_absolute_path_inside_kb_home_is_normpathed(self, broker, tmp_path):
-        """Absolute paths that resolve inside knowledge_base_home are accepted."""
-        kb = tmp_path / "kb"
-        (kb / "semantic_models" / "ns_a").mkdir(parents=True)
-        inside = kb / "semantic_models" / "ns_a" / "orders.yml"
+    def test_absolute_path_inside_subject_is_normpathed(self, broker, tmp_path):
+        """Absolute paths that resolve inside subject_dir are accepted."""
+        subject = tmp_path / "subject"
+        (subject / "semantic_models").mkdir(parents=True)
+        inside = subject / "semantic_models" / "orders.yml"
         inside.write_text("x")
-        h, _ = self._make_hooks(broker, kb=str(kb))
+        h, _ = self._make_hooks(broker, subject=str(subject))
         resolved = h._resolve_path(str(inside), "semantic")
         assert os.path.realpath(resolved) == os.path.realpath(str(inside))
 
     def test_relative_joined_for_semantic(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
+        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/orders.yml"
 
     def test_relative_joined_for_sql_summary(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql_summaries/ns_a/q_001.yaml"
+        assert h._resolve_path("q_001.yaml", "sql_summary") == "/ws/sql_summaries/q_001.yaml"
 
     def test_relative_joined_for_ext_knowledge(self, broker):
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext_knowledge/ns_a/gmv.yaml"
+        assert h._resolve_path("gmv.yaml", "ext_knowledge") == "/ws/ext_knowledge/gmv.yaml"
 
     def test_nested_relative_joined(self, broker):
         h, _ = self._make_hooks(broker)
         assert (
             h._resolve_path("metrics/orders_metrics.yml", "semantic")
-            == "/ws/semantic_models/ns_a/metrics/orders_metrics.yml"
+            == "/ws/semantic_models/metrics/orders_metrics.yml"
         )
 
     def test_already_prefixed_path_passes_through(self, broker):
-        """LLM that includes the {subdir}/{namespace}/ prefix must not be double-prefixed."""
+        """LLM that includes the ``{subdir}/`` prefix must not be double-prefixed."""
         h, _ = self._make_hooks(broker)
-        assert h._resolve_path("semantic_models/ns_a/orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
-
-    def test_other_namespace_subdir_passes_through(self, broker):
-        """Explicit cross-namespace authoring is preserved."""
-        h, _ = self._make_hooks(broker)
-        assert (
-            h._resolve_path("semantic_models/other_db/orders.yml", "semantic")
-            == "/ws/semantic_models/other_db/orders.yml"
-        )
+        assert h._resolve_path("semantic_models/orders.yml", "semantic") == "/ws/semantic_models/orders.yml"
 
     def test_empty_path_returns_unchanged(self, broker):
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("", "semantic") == ""
 
-    def test_unknown_kind_resolves_against_kb_home_root(self, broker):
-        """Unknown kind: normalizer adds no prefix, but path still rooted at kb_home."""
+    def test_unknown_kind_resolves_against_subject_root(self, broker):
+        """Unknown kind: normalizer adds no prefix, but path still rooted at subject_dir."""
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("orders.yml", "unknown") == "/ws/orders.yml"
 
@@ -284,47 +313,37 @@ class TestResolvePath:
         assert h._resolve_path("orders.yml", "semantic") == "orders.yml"
 
     def test_rejects_traversal_escape(self, broker):
-        """`../../etc/passwd` resolves outside knowledge_base_home and must be rejected."""
+        """``../../etc/passwd`` resolves outside subject_dir and must be rejected."""
         h, _ = self._make_hooks(broker)
         assert h._resolve_path("../../etc/passwd", "semantic") == ""
 
-    def test_allows_traversal_that_stays_inside_kb_home(self, broker):
-        """A path whose normpath stays under knowledge_base_home is allowed."""
+    def test_allows_traversal_that_stays_inside_subject(self, broker):
+        """A path whose normpath stays under subject_dir is allowed."""
         h, _ = self._make_hooks(broker)
-        # `metrics/../orders.yml` → prepend → `semantic_models/ns_a/metrics/../orders.yml`
-        # → normpath under /ws → `/ws/semantic_models/ns_a/orders.yml`
-        assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
+        # ``metrics/../orders.yml`` → prepend → ``semantic_models/metrics/../orders.yml``
+        # → normpath under /ws → ``/ws/semantic_models/orders.yml``
+        assert h._resolve_path("metrics/../orders.yml", "semantic") == "/ws/semantic_models/orders.yml"
 
-    def test_rejects_symlink_that_escapes_kb_home(self, broker, tmp_path):
+    def test_rejects_symlink_that_escapes_subject(self, broker, tmp_path):
         """A symlink inside the KB whose target is outside must be rejected."""
-        kb_home = tmp_path / "kb"
-        sub = kb_home / "semantic_models" / "ns_a"
+        subject = tmp_path / "subject"
+        sub = subject / "semantic_models"
         sub.mkdir(parents=True)
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "secret.yml").write_text("x")
         (sub / "leak.yml").symlink_to(outside / "secret.yml")
 
-        h, _ = self._make_hooks(broker, kb=str(kb_home))
-        # Textually the path looks inside kb_home, but realpath dereferences the
-        # symlink to /…/outside/secret.yml which escapes the workspace root.
+        h, _ = self._make_hooks(broker, subject=str(subject))
         assert h._resolve_path("leak.yml", "semantic") == ""
-
-    def test_uses_current_namespace_at_call_time(self, broker):
-        """Sub-agent switches change current_namespace; resolution must follow."""
-        h, cfg = self._make_hooks(broker, namespace="ns_a")
-        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_a/orders.yml"
-
-        cfg.current_namespace = "ns_b"
-        assert h._resolve_path("orders.yml", "semantic") == "/ws/semantic_models/ns_b/orders.yml"
 
     def test_extract_filepaths_resolves_relative_entries(self, broker):
         h, _ = self._make_hooks(broker)
-        # The relative entry resolves inside kb_home; the escaping absolute entry
+        # The relative entry resolves inside subject_dir; the escaping absolute entry
         # is dropped so downstream processing never sees it.
         result = {"result": {"semantic_model_files": ["orders.yml", "/abs/customers.yml"]}}
         paths = h._extract_filepaths_from_result(result)
-        assert paths == ["/ws/semantic_models/ns_a/orders.yml"]
+        assert paths == ["/ws/semantic_models/orders.yml"]
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +354,12 @@ class TestResolvePath:
 @pytest.mark.asyncio
 class TestProcessSingleFile:
     async def test_file_not_found(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         await hooks._process_single_file("/nonexistent/file.yaml")
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_empty_file_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")  # empty
             path = f.name
@@ -348,10 +367,10 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -360,10 +379,10 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+    async def test_happy_path_auto_syncs(self, hooks):
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -371,8 +390,24 @@ class TestProcessSingleFile:
             await hooks._process_single_file(path)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
+
+    async def test_yaml_type_is_forwarded(self, hooks):
+        hooks._sync_generated_file = AsyncMock()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("key: value\n")
+            path = f.name
+        try:
+            await hooks._process_single_file(path, metric_sqls={"m": "SQL"}, yaml_type="metric")
+        finally:
+            os.unlink(path)
+        hooks._sync_generated_file.assert_awaited_once_with(
+            "key: value\n",
+            path,
+            "metric",
+            metric_sqls={"m": "SQL"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -383,16 +418,16 @@ class TestProcessSingleFile:
 @pytest.mark.asyncio
 class TestHandleSqlSummaryResult:
     async def test_no_file_path_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "some unrelated message"}
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_file_not_exists_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "File written successfully: /nonexistent/path.sql"}
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +437,19 @@ class TestHandleSqlSummaryResult:
 
 @pytest.mark.asyncio
 class TestHandleEndSemanticModelGeneration:
+    async def test_failed_tool_result_skips_sync(self, hooks, agent_config):
+        hooks._process_single_file = AsyncMock()
+        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
+        result = FuncToolResult(
+            success=0,
+            error="validate_semantic must pass",
+            result={"semantic_model_files": [str(sem_dir / "a.yaml")]},
+        )
+
+        await hooks._handle_end_semantic_model_generation(result)
+
+        hooks._process_single_file.assert_not_called()
+
     async def test_no_file_paths_logs_warning(self, hooks):
         hooks._process_single_file = AsyncMock()
         result = {"result": {}}  # no semantic_model_files
@@ -410,7 +458,7 @@ class TestHandleEndSemanticModelGeneration:
 
     async def test_with_file_paths_processes_each(self, hooks, agent_config):
         hooks._process_single_file = AsyncMock()
-        sem_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "semantic_models" / "test_ns"
+        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
         result = {"result": {"semantic_model_files": [str(sem_dir / "a.yaml"), str(sem_dir / "b.yaml")]}}
         await hooks._handle_end_semantic_model_generation(result)
         assert hooks._process_single_file.await_count == 2
@@ -418,7 +466,9 @@ class TestHandleEndSemanticModelGeneration:
     async def test_cancelled_exception_absorbed(self, hooks):
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException)
         result = {"result": {"semantic_model_files": ["/a.yaml"]}}
-        await hooks._handle_end_semantic_model_generation(result)  # should not raise
+        await hooks._handle_end_semantic_model_generation(result)
+        # Path rejected by sandbox validation — _process_single_file never reached
+        assert hooks._process_single_file.await_count == 0
 
 
 @pytest.fixture
@@ -504,23 +554,23 @@ class TestIsExtKnowledgeToolCall:
 class TestHandleSqlSummaryResultExtended:
     async def test_result_object_with_no_match(self, hooks):
         """result.result doesn't match expected pattern -> early return."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = MagicMock()
         result.result = "Some unrelated message"
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_result_object_file_written_but_not_exists(self, hooks):
         """result.result matches pattern but file doesn't exist -> early return."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = MagicMock()
         result.result = "File written successfully: /nonexistent/path.yaml"
         await hooks._handle_sql_summary_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_already_processed_skipped(self, hooks):
         """File already in processed_files -> skipped."""
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("name: test_sql\nsql: SELECT 1\n")
             path = f.name
@@ -530,12 +580,12 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks, agent_config):
-        """File exists with content -> confirmation called."""
-        hooks._get_sync_confirmation = AsyncMock()
-        sql_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "sql_summaries" / "test_ns"
+    async def test_happy_path_auto_syncs(self, hooks, agent_config):
+        """File exists with content -> sync called."""
+        hooks._sync_generated_file = AsyncMock()
+        sql_dir = Path(str(agent_config.path_manager.subject_dir)) / "sql_summaries"
         path_obj = sql_dir / "q_happy.yaml"
         path_obj.write_text("name: test_sql\nsql: SELECT 1\n")
         path = str(path_obj)
@@ -544,13 +594,13 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
     async def test_reference_sql_file_written_pattern(self, hooks, agent_config):
         """'Reference SQL file written successfully:' pattern is also matched."""
-        hooks._get_sync_confirmation = AsyncMock()
-        sql_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "sql_summaries" / "test_ns"
+        hooks._sync_generated_file = AsyncMock()
+        sql_dir = Path(str(agent_config.path_manager.subject_dir)) / "sql_summaries"
         path_obj = sql_dir / "q_ref.yaml"
         path_obj.write_text("name: test_sql\nsql: SELECT 1\n")
         path = str(path_obj)
@@ -559,7 +609,7 @@ class TestHandleSqlSummaryResultExtended:
             await hooks._handle_sql_summary_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -570,20 +620,20 @@ class TestHandleSqlSummaryResultExtended:
 @pytest.mark.asyncio
 class TestHandleExtKnowledgeResult:
     async def test_no_match_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "unrelated message"}
         await hooks._handle_ext_knowledge_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_file_not_exists_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         result = {"result": "File written successfully: /nonexistent/ext.yaml"}
         await hooks._handle_ext_knowledge_result(result)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
-    async def test_happy_path_calls_confirmation(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "ext_knowledge" / "test_ns"
+    async def test_happy_path_auto_syncs(self, hooks, agent_config):
+        hooks._sync_generated_file = AsyncMock()
+        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_happy.yaml"
         path_obj.write_text("key: value\n")
         path = str(path_obj)
@@ -592,12 +642,12 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
         assert path in hooks.processed_files
 
     async def test_ext_knowledge_file_written_pattern(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "ext_knowledge" / "test_ns"
+        hooks._sync_generated_file = AsyncMock()
+        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_pattern.yaml"
         path_obj.write_text("key: value\n")
         path = str(path_obj)
@@ -606,10 +656,10 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
     async def test_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("key: value\n")
             path = f.name
@@ -619,10 +669,10 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_empty_file_returns_early(self, hooks):
-        hooks._get_sync_confirmation = AsyncMock()
+        hooks._sync_generated_file = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")
             path = f.name
@@ -631,11 +681,11 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_not_called()
+        hooks._sync_generated_file.assert_not_called()
 
     async def test_result_object_with_match(self, hooks, agent_config):
-        hooks._get_sync_confirmation = AsyncMock()
-        ext_dir = Path(str(agent_config.path_manager.knowledge_base_home)) / "ext_knowledge" / "test_ns"
+        hooks._sync_generated_file = AsyncMock()
+        ext_dir = Path(str(agent_config.path_manager.subject_dir)) / "ext_knowledge"
         path_obj = ext_dir / "ext_match.yaml"
         path_obj.write_text("key: value\n")
         path = str(path_obj)
@@ -645,68 +695,52 @@ class TestHandleExtKnowledgeResult:
             await hooks._handle_ext_knowledge_result(result)
         finally:
             os.unlink(path)
-        hooks._get_sync_confirmation.assert_awaited_once()
+        hooks._sync_generated_file.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
-# Tests: _get_sync_confirmation
+# Tests: _sync_generated_file
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestGetSyncConfirmation:
-    async def test_choice_yes_calls_sync_and_callback(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("y", callback))
+class TestSyncGeneratedFile:
+    async def test_auto_sync_calls_sync(self, hooks):
+        hooks.broker.request = AsyncMock()
         hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
-        await hooks._get_sync_confirmation(
+        await hooks._sync_generated_file(
             yaml_content="key: val",
             file_path="/tmp/test.yaml",
             yaml_type="semantic",
         )
 
         hooks._sync_to_storage.assert_awaited_once()
-        callback.assert_awaited_once()
-        args = callback.call_args[0][0]
-        assert "Synced!" in args
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_choice_no_calls_callback_with_file_only_message(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
+    async def test_auto_sync_ignores_deprecated_display_content(self, hooks):
+        hooks.broker.request = AsyncMock()
+        hooks._sync_to_storage = AsyncMock(return_value="Synced!")
 
-        await hooks._get_sync_confirmation(
-            yaml_content="key: val",
-            file_path="/tmp/test.yaml",
-            yaml_type="semantic",
-        )
-
-        callback.assert_awaited_once()
-        args = callback.call_args[0][0]
-        assert "/tmp/test.yaml" in args
-
-    async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
-        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
-
-        with pytest.raises(GenerationCancelledException):
-            await hooks._get_sync_confirmation(
-                yaml_content="key: val",
-                file_path="/tmp/test.yaml",
-                yaml_type="semantic",
-            )
-
-    async def test_with_prebuilt_display_content(self, hooks):
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
-
-        await hooks._get_sync_confirmation(
+        await hooks._sync_generated_file(
             yaml_content="key: val",
             file_path="/tmp/test.yaml",
             yaml_type="sql_summary",
             display_content="## Pre-built header\n```yaml\nkey: val\n```\n",
         )
-        # Should not raise
-        callback.assert_awaited_once()
+
+        hooks._sync_to_storage.assert_awaited_once_with("/tmp/test.yaml", "sql_summary", metric_sqls=None)
+        hooks.broker.request.assert_not_awaited()
+
+    async def test_sync_error_propagates(self, hooks):
+        hooks._sync_to_storage = AsyncMock(side_effect=RuntimeError("sync failed"))
+
+        with pytest.raises(RuntimeError, match="sync failed"):
+            await hooks._sync_generated_file(
+                yaml_content="key: val",
+                file_path="/tmp/test.yaml",
+                yaml_type="semantic",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +765,23 @@ class TestSyncToStorage:
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", return_value=mock_result):
             result = await hooks._sync_to_storage("/tmp/file.yaml", "semantic")
         assert "Successfully synced" in result
+        assert hooks.generation_evidence.semantic_kb_sync_passed is True
+
+    async def test_metric_type_calls_sync_metric(self, hooks):
+        mock_result = {"success": True, "message": "1 metric synced"}
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", return_value=mock_result) as sync:
+            result = await hooks._sync_to_storage("/tmp/metric.yaml", "metric", metric_sqls={"m": "SQL"})
+        assert "Successfully synced" in result
+        assert hooks.generation_evidence.metric_kb_sync_passed is True
+        assert hooks.generation_evidence.semantic_kb_sync_passed is False
+        sync.assert_called_once_with(
+            "/tmp/metric.yaml",
+            hooks.agent_config,
+            include_semantic_objects=False,
+            include_metrics=True,
+            metric_sqls={"m": "SQL"},
+            original_yaml_path="/tmp/metric.yaml",
+        )
 
     async def test_semantic_type_sync_failure(self, hooks):
         mock_result = {"success": False, "error": "YAML parse error"}
@@ -744,6 +795,7 @@ class TestSyncToStorage:
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db", return_value=mock_result):
             result = await hooks._sync_to_storage("/tmp/file.yaml", "sql_summary")
         assert "Successfully synced" in result
+        assert hooks.generation_evidence.generic_kb_sync_passed is True
 
     async def test_ext_knowledge_type_calls_sync(self, hooks):
         mock_result = {"success": True, "message": "Ext knowledge synced"}
@@ -1004,7 +1056,7 @@ class TestProcessMetricWithSemanticModel:
             )
         finally:
             os.unlink(metric_path)
-        hooks._process_single_file.assert_awaited_once_with(metric_path, metric_sqls=None)
+        hooks._process_single_file.assert_awaited_once_with(metric_path, metric_sqls=None, yaml_type="metric")
 
     async def test_metric_missing_tries_semantic_alone(self, hooks):
         hooks._process_single_file = AsyncMock()
@@ -1029,7 +1081,7 @@ class TestProcessMetricWithSemanticModel:
         hooks._process_single_file.assert_not_called()
 
     async def test_both_already_processed_skipped(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1043,10 +1095,10 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_not_called()
+        hooks._sync_generated_pair.assert_not_called()
 
-    async def test_happy_path_calls_confirmation_for_pair(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+    async def test_happy_path_auto_syncs_pair(self, hooks):
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1058,12 +1110,12 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_awaited_once()
+        hooks._sync_generated_pair.assert_awaited_once()
         assert sem_path in hooks.processed_files
         assert metric_path in hooks.processed_files
 
     async def test_empty_content_returns_early(self, hooks):
-        hooks._get_sync_confirmation_for_pair = AsyncMock()
+        hooks._sync_generated_pair = AsyncMock()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("")
             sem_path = sf.name
@@ -1075,11 +1127,11 @@ class TestProcessMetricWithSemanticModel:
         finally:
             os.unlink(sem_path)
             os.unlink(metric_path)
-        hooks._get_sync_confirmation_for_pair.assert_not_called()
+        hooks._sync_generated_pair.assert_not_called()
 
-    async def test_confirmation_error_propagates(self, hooks):
-        """Exception in _get_sync_confirmation_for_pair propagates to caller."""
-        hooks._get_sync_confirmation_for_pair = AsyncMock(side_effect=RuntimeError("broker down"))
+    async def test_sync_error_propagates(self, hooks):
+        """Exception in _sync_generated_pair propagates to caller."""
+        hooks._sync_generated_pair = AsyncMock(side_effect=RuntimeError("broker down"))
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as sf:
             sf.write("data_source:\n  name: orders\n")
             sem_path = sf.name
@@ -1109,75 +1161,46 @@ class TestProcessMetricWithSemanticModel:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _get_sync_confirmation_for_pair
+# Tests: _sync_generated_pair
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestGetSyncConfirmationForPair:
-    async def test_accept_syncs_both_files(self, hooks):
-        """Choosing 'y' calls _sync_semantic_and_metric once."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("y", callback))
+class TestSyncGeneratedPair:
+    async def test_auto_syncs_both_files(self, hooks):
+        """Pair sync goes directly to storage."""
+        hooks.broker.request = AsyncMock()
         hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
-        await hooks._get_sync_confirmation_for_pair(
+        await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
             metric_file="/tmp/met.yaml",
         )
 
         hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
-        callback.assert_awaited_once()
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_reject_skips_sync(self, hooks):
-        """Choosing 'n' does not call _sync_semantic_and_metric."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
-        hooks._sync_semantic_and_metric = AsyncMock()
+    async def test_display_content_is_ignored(self, hooks):
+        hooks.broker.request = AsyncMock()
+        hooks._sync_semantic_and_metric = AsyncMock(return_value="Synced OK")
 
-        await hooks._get_sync_confirmation_for_pair(
+        await hooks._sync_generated_pair(
             semantic_model_file="/tmp/sem.yaml",
             metric_file="/tmp/met.yaml",
+            display_content="ignored",
         )
 
-        hooks._sync_semantic_and_metric.assert_not_called()
-        callback.assert_awaited_once()
+        hooks._sync_semantic_and_metric.assert_awaited_once_with("/tmp/sem.yaml", "/tmp/met.yaml", None)
+        hooks.broker.request.assert_not_awaited()
 
-    async def test_interaction_cancelled_raises_generation_cancelled(self, hooks):
-        """InteractionCancelled is wrapped in GenerationCancelledException."""
-        hooks.broker.request = AsyncMock(side_effect=InteractionCancelled())
+    async def test_sync_error_propagates(self, hooks):
+        hooks._sync_semantic_and_metric = AsyncMock(side_effect=RuntimeError("sync failed"))
 
-        with pytest.raises(GenerationCancelledException, match="User interrupted"):
-            await hooks._get_sync_confirmation_for_pair(
+        with pytest.raises(RuntimeError, match="sync failed"):
+            await hooks._sync_generated_pair(
                 semantic_model_file="/tmp/sem.yaml",
                 metric_file="/tmp/met.yaml",
             )
-
-    async def test_display_content_includes_both_files(self, hooks):
-        """Request content includes both file names when display_content is pre-built."""
-        callback = AsyncMock()
-        hooks.broker.request = AsyncMock(return_value=("n", callback))
-
-        display = (
-            "## Generated Semantic Model: sem.yaml\n\n"
-            "*Path: /tmp/sem.yaml*\n\n"
-            "```yaml\ndata_source:\n  name: orders\n```\n\n"
-            "---\n\n"
-            "## Generated Metric: met.yaml\n\n"
-            "*Path: /tmp/met.yaml*\n\n"
-            "```yaml\nmetric: revenue\n```\n"
-        )
-
-        await hooks._get_sync_confirmation_for_pair(
-            semantic_model_file="/tmp/sem.yaml",
-            metric_file="/tmp/met.yaml",
-            display_content=display,
-        )
-
-        request_content = hooks.broker.request.call_args[1].get("contents") or hooks.broker.request.call_args[0][0]
-        content_str = str(request_content)
-        assert "sem.yaml" in content_str
-        assert "met.yaml" in content_str
 
 
 # ---------------------------------------------------------------------------
@@ -1294,7 +1317,7 @@ class TestSyncSemanticToDbBooleanCoercion:
         db_config.schema = "public"
         db_config.db_type = "postgresql"
         agent_config.current_db_config.return_value = db_config
-        agent_config.namespaces = ["test_ns"]
+        agent_config.datasource_configs = ["test_ns"]
 
         captured_semantic = []
         captured_metric = []
@@ -1341,6 +1364,68 @@ class TestSyncSemanticToDbBooleanCoercion:
         assert len(table_rows) >= 1
         assert type(table_rows[0]["create_metric"]) is bool
         assert type(table_rows[0]["is_partition"]) is bool
+
+
+# ---------------------------------------------------------------------------
+# Tests: _sync_semantic_to_db — metric reference normalization
+# ---------------------------------------------------------------------------
+
+
+class TestSyncSemanticToDbMetricReferenceNormalization:
+    def test_measure_proxy_nested_measure_is_stored_as_string(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "metrics.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: public.orders
+  measures:
+    - name: order_count
+      agg: COUNT
+      expr: "1"
+  dimensions:
+    - name: status
+      type: CATEGORICAL
+      expr: status
+---
+metric:
+  name: completed_order_count
+  description: "Completed orders"
+  type: measure_proxy
+  type_params:
+    measure:
+      name: order_count
+      constraint: "status = 'completed'"
+""",
+            encoding="utf-8",
+        )
+
+        captured_metric = []
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.upsert_batch = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = lambda objects: captured_metric.extend(objects)
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = ""
+        agent_config.current_db_config.return_value = db_config
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        assert len(captured_metric) == 1
+        assert captured_metric[0]["base_measures"] == ["order_count"]
+        assert captured_metric[0]["measure_expr"] == "order_count WHERE status = 'completed'"
 
 
 # ---------------------------------------------------------------------------
@@ -1406,7 +1491,7 @@ class TestGetBaseDirEdgeCases:
     def test_returns_none_when_resolver_attr_is_none(self, broker):
         """path_manager exists but the named resolver attribute is None."""
         cfg = MagicMock()
-        cfg.current_namespace = "ns"
+        cfg.current_datasource = "ns"
         cfg.path_manager = MagicMock(spec=[])  # no attrs → getattr returns None
         h = GenerationHooks(broker=broker, agent_config=cfg)
         assert h._get_base_dir("semantic") is None
@@ -1414,7 +1499,7 @@ class TestGetBaseDirEdgeCases:
     def test_returns_none_when_resolver_raises(self, broker):
         """Exceptions raised by the resolver are caught and return None."""
         cfg = MagicMock()
-        cfg.current_namespace = "ns"
+        cfg.current_datasource = "ns"
         cfg.path_manager = MagicMock()
         cfg.path_manager.semantic_model_path = MagicMock(side_effect=RuntimeError("boom"))
         h = GenerationHooks(broker=broker, agent_config=cfg)
@@ -1427,9 +1512,8 @@ class TestResolvePathCommonpathValueError:
         can't verify containment, so the resolver must fail closed by
         returning an empty string (not the original path)."""
         cfg = MagicMock()
-        cfg.current_namespace = "ns"
         cfg.path_manager = MagicMock()
-        cfg.path_manager.knowledge_base_home = Path("/ws")
+        cfg.path_manager.subject_dir = Path("/ws")
         h = GenerationHooks(broker=broker, agent_config=cfg)
         with patch("datus.cli.generation_hooks.os.path.commonpath", side_effect=ValueError("mixed drives")):
             assert h._resolve_path("orders.yml", "semantic") == ""
@@ -1442,6 +1526,22 @@ class TestResolvePathCommonpathValueError:
 
 @pytest.mark.asyncio
 class TestHandleEndMetricGeneration:
+    async def test_failed_tool_result_skips_sync(self, hooks):
+        hooks._extract_metric_generation_result = MagicMock()
+        hooks._process_single_file = AsyncMock()
+        hooks._process_metric_with_semantic_model = AsyncMock()
+        result = FuncToolResult(
+            success=0,
+            error="query_metrics dry-run must pass",
+            result={"metric_file": "metrics/orders.yml"},
+        )
+
+        await hooks._handle_end_metric_generation(result)
+
+        hooks._extract_metric_generation_result.assert_not_called()
+        hooks._process_single_file.assert_not_called()
+        hooks._process_metric_with_semantic_model.assert_not_called()
+
     async def test_missing_metric_file_warns_and_returns(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(return_value=(None, None, {}))
         hooks._process_single_file = AsyncMock()
@@ -1473,17 +1573,23 @@ class TestHandleEndMetricGeneration:
 
         await hooks._handle_end_metric_generation({"result": {}})
 
-        hooks._process_single_file.assert_awaited_once_with("/ws/sm/metrics/orders.yml", metric_sqls={"m": "SQL"})
+        hooks._process_single_file.assert_awaited_once_with(
+            "/ws/sm/metrics/orders.yml",
+            metric_sqls={"m": "SQL"},
+            yaml_type="metric",
+        )
 
     async def test_cancelled_exception_absorbed(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))
         hooks._resolve_path = MagicMock(side_effect=lambda p, k: p)
         hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException("user-cancel"))
-        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+        await hooks._handle_end_metric_generation({"result": {}})
+        hooks._process_single_file.assert_awaited_once()
 
     async def test_unexpected_exception_absorbed(self, hooks):
         hooks._extract_metric_generation_result = MagicMock(side_effect=RuntimeError("boom"))
-        await hooks._handle_end_metric_generation({"result": {}})  # must not raise
+        await hooks._handle_end_metric_generation({"result": {}})
+        hooks._extract_metric_generation_result.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1493,165 +1599,80 @@ class TestHandleEndMetricGeneration:
 
 class TestNormalizeKbRelativePath:
     def test_prepends_when_prefix_missing(self):
-        assert (
-            normalize_kb_relative_path("orders.yaml", "semantic", "school_db")
-            == "semantic_models/school_db/orders.yaml"
-        )
+        assert normalize_kb_relative_path("orders.yaml", "semantic") == "semantic_models/orders.yaml"
 
     def test_prepends_for_sql_summary(self):
-        assert (
-            normalize_kb_relative_path("q_001.yaml", "sql_summary", "school_db") == "sql_summaries/school_db/q_001.yaml"
-        )
+        assert normalize_kb_relative_path("q_001.yaml", "sql_summary") == "sql_summaries/q_001.yaml"
 
     def test_prepends_for_ext_knowledge(self):
-        assert (
-            normalize_kb_relative_path("notes.yaml", "ext_knowledge", "school_db")
-            == "ext_knowledge/school_db/notes.yaml"
-        )
+        assert normalize_kb_relative_path("notes.yaml", "ext_knowledge") == "ext_knowledge/notes.yaml"
 
     def test_metric_kind_co_locates_with_semantic_models(self):
-        """metrics live under semantic_models/{db}/metrics/ — same root as semantic."""
+        """metrics live under semantic_models/metrics/ — same root as semantic."""
         assert (
-            normalize_kb_relative_path("metrics/orders_metrics.yaml", "metric", "school_db")
-            == "semantic_models/school_db/metrics/orders_metrics.yaml"
+            normalize_kb_relative_path("metrics/orders_metrics.yaml", "metric")
+            == "semantic_models/metrics/orders_metrics.yaml"
         )
 
     def test_idempotent_when_prefix_already_correct(self):
-        already = "semantic_models/school_db/orders.yaml"
-        assert normalize_kb_relative_path(already, "semantic", "school_db") == already
-
-    def test_passes_through_paths_in_other_namespaces(self):
-        path = "semantic_models/other_db/orders.yaml"
-        assert normalize_kb_relative_path(path, "semantic", "school_db") == path
+        already = "semantic_models/orders.yaml"
+        assert normalize_kb_relative_path(already, "semantic") == already
 
     def test_passes_through_paths_in_other_kinds(self):
-        path = "sql_summaries/school_db/q_001.yaml"
-        assert normalize_kb_relative_path(path, "semantic", "school_db") == path
+        path = "sql_summaries/q_001.yaml"
+        assert normalize_kb_relative_path(path, "semantic") == path
 
     def test_absolute_paths_unchanged(self):
-        assert normalize_kb_relative_path("/abs/path/orders.yaml", "semantic", "school_db") == "/abs/path/orders.yaml"
+        assert normalize_kb_relative_path("/abs/path/orders.yaml", "semantic") == "/abs/path/orders.yaml"
 
     def test_empty_path_unchanged(self):
-        assert normalize_kb_relative_path("", "semantic", "school_db") == ""
+        assert normalize_kb_relative_path("", "semantic") == ""
 
     def test_dot_path_unchanged(self):
-        assert normalize_kb_relative_path(".", "semantic", "school_db") == "."
+        assert normalize_kb_relative_path(".", "semantic") == "."
 
     def test_parent_traversal_unchanged(self):
-        assert normalize_kb_relative_path("../../etc/passwd", "semantic", "school_db") == "../../etc/passwd"
+        assert normalize_kb_relative_path("../../etc/passwd", "semantic") == "../../etc/passwd"
 
     def test_unknown_kind_unchanged(self):
-        assert normalize_kb_relative_path("orders.yaml", "unknown", "school_db") == "orders.yaml"
-
-    def test_missing_namespace_unchanged(self):
-        assert normalize_kb_relative_path("orders.yaml", "semantic", None) == "orders.yaml"
+        assert normalize_kb_relative_path("orders.yaml", "unknown") == "orders.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Tests: make_kb_path_normalizer factory
-# ---------------------------------------------------------------------------
-
-
-class _StubCfg:
-    """Minimal agent_config stand-in for normalizer factory tests."""
-
-    def __init__(self, ns: str):
-        self.current_namespace = ns
-
-
-class TestMakeKbPathNormalizer:
-    def test_uses_default_kind_when_file_type_missing(self):
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        assert normalizer("orders.yaml", None) == "semantic_models/db/orders.yaml"
-
-    def test_file_type_overrides_default_kind(self):
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        assert normalizer("q_001.yaml", "sql_summary") == "sql_summaries/db/q_001.yaml"
-
-    def test_file_type_aliases_recognized(self):
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind=None)
-        assert normalizer("orders.yaml", "semantic_model") == "semantic_models/db/orders.yaml"
-        assert normalizer("metrics/x.yaml", "metric") == "semantic_models/db/metrics/x.yaml"
-        assert normalizer("notes.yaml", "ext_knowledge") == "ext_knowledge/db/notes.yaml"
-
-    def test_namespace_resolved_at_call_time(self):
-        """Sub-agent switches mid-session must be honored — closure rebinds each call."""
-        cfg = _StubCfg("ns_x")
-        normalizer = make_kb_path_normalizer(cfg, default_kind="semantic")
-        assert normalizer("orders.yaml", None) == "semantic_models/ns_x/orders.yaml"
-        cfg.current_namespace = "ns_y"
-        assert normalizer("orders.yaml", None) == "semantic_models/ns_y/orders.yaml"
-
-    def test_strict_kind_rejects_cross_kind_write(self):
-        """Mutating ops (strict_kind=True) must reject writes to peer kinds' subdirs."""
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        # Read-lax: cross-kind reads still allowed.
-        assert normalizer("sql_summaries/db/q.yaml", None) == "sql_summaries/db/q.yaml"
-        # Write-strict: the same cross-kind path is refused.
-        with pytest.raises(ValueError, match="Write to 'sql_summaries/' is not allowed"):
-            normalizer("sql_summaries/db/q.yaml", None, strict_kind=True)
-
-    def test_strict_kind_ignores_file_type_override(self):
-        """In strict mode, file_type cannot be used to switch kinds."""
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        # Without strict: file_type override is honored.
-        assert normalizer("q.yaml", "sql_summary") == "sql_summaries/db/q.yaml"
-        # With strict: override is ignored; default_kind wins.
-        assert normalizer("q.yaml", "sql_summary", strict_kind=True) == "semantic_models/db/q.yaml"
-
-    def test_strict_kind_rejects_cross_namespace_prefixed_write(self):
-        """Even within the same kind, an explicit prefix pointing at another
-        namespace must be rejected by a mutating op — otherwise a node whose
-        ``current_namespace`` is ``db`` could overwrite ``other_db``'s KB by
-        emitting ``semantic_models/other_db/orders.yml`` verbatim.
-
-        Rationale: with ``FilesystemFuncTool``'s ``root_path`` widened to
-        ``knowledge_base_home`` (so reads can browse peer namespaces), the
-        strict normalizer is the last line of defence for write/edit ops.
-        """
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        # Read-lax: explicit cross-namespace prefix is honored so the LLM can
-        # browse peer namespaces.
-        assert normalizer("semantic_models/other_db/orders.yml", None) == "semantic_models/other_db/orders.yml"
-        # Write-strict: the same path must be refused.
-        with pytest.raises(ValueError, match="other_db"):
-            normalizer("semantic_models/other_db/orders.yml", None, strict_kind=True)
-
-    def test_strict_kind_allows_correct_namespace_prefix(self):
-        """Own-namespace prefix is still accepted in strict mode."""
-        normalizer = make_kb_path_normalizer(_StubCfg("db"), default_kind="semantic")
-        assert normalizer("semantic_models/db/orders.yml", None, strict_kind=True) == "semantic_models/db/orders.yml"
-
-
-# ---------------------------------------------------------------------------
-# Tests: hook + tool agreement — _resolve_path finds files written via the
-# same normalizer regardless of whether the LLM emitted a naked filename.
+# Tests: hook + tool agreement — _resolve_path finds files written by the
+# tool (naked filename path was a normalizer concern; with normalizer gone
+# the LLM writes the full prefix, so the hook resolver must keep returning
+# the same absolute path regardless of which form the caller uses).
 # ---------------------------------------------------------------------------
 
 
 class TestHookAndToolPathAgreement:
-    def test_resolve_path_finds_naked_file_after_normalized_write(self, tmp_path, real_agent_config):
-        """FilesystemFuncTool writes orders.yml → hook resolves 'orders.yml' to the same on-disk path."""
-        kb_root = Path(str(real_agent_config.path_manager.knowledge_base_home))
+    def test_resolve_path_finds_file_written_with_full_prefix(self, tmp_path, real_agent_config):
+        """FilesystemFuncTool writes subject/semantic_models/orders.yml → hook resolves the same on-disk path."""
+        subject_root = Path(str(real_agent_config.path_manager.subject_dir))
+        project_root = subject_root.parent
 
         tool = FilesystemFuncTool(
-            root_path=str(kb_root),
-            path_normalizer=make_kb_path_normalizer(real_agent_config, default_kind="semantic"),
+            root_path=str(project_root),
+            current_node="gen_semantic_model",
         )
-        write_result = tool.write_file("orders.yml", "id: orders\n", file_type="semantic_model")
+        write_result = tool.write_file("subject/semantic_models/orders.yml", "id: orders\n")
         assert write_result.success == 1
 
         hooks = GenerationHooks(broker=None, agent_config=real_agent_config)
+        # Hook's legacy resolver still accepts naked filenames via
+        # normalize_kb_relative_path; the resolver path is decoupled from
+        # the fs tool.
         resolved = hooks._resolve_path("orders.yml", "semantic")
 
-        on_disk = kb_root / "semantic_models" / real_agent_config.current_namespace / "orders.yml"
+        on_disk = subject_root / "semantic_models" / "orders.yml"
         assert os.path.realpath(resolved) == os.path.realpath(str(on_disk))
         assert Path(resolved).is_file()
 
-    def test_extract_filepaths_resolves_relative_entries_against_kb_home(self, real_agent_config):
+    def test_extract_filepaths_resolves_relative_entries_against_subject(self, real_agent_config):
         """end_semantic_model_generation payloads with bare filenames resolve correctly."""
-        kb_root = Path(str(real_agent_config.path_manager.knowledge_base_home))
-        target = kb_root / "semantic_models" / real_agent_config.current_namespace / "orders.yml"
+        subject_root = Path(str(real_agent_config.path_manager.subject_dir))
+        target = subject_root / "semantic_models" / "orders.yml"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("data\n")
 
@@ -1666,75 +1687,51 @@ class TestHookAndToolPathAgreement:
 # ---------------------------------------------------------------------------
 
 
-class _SandboxCfg:
-    """Minimal agent_config stand-in for resolve_kb_sandbox_path tests."""
-
-    def __init__(self, ns: str):
-        self.current_namespace = ns
-
-
 class TestResolveKbSandboxPath:
     def test_empty_path_returns_none(self, tmp_path):
-        assert resolve_kb_sandbox_path("", "sql_summary", _SandboxCfg("db"), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("", "sql_summary", str(tmp_path)) is None
 
     def test_bare_filename_is_prefixed_under_sandbox(self, tmp_path):
         kb = tmp_path
-        resolved = resolve_kb_sandbox_path("q_001.yaml", "sql_summary", _SandboxCfg("db"), str(kb))
-        assert resolved == os.path.normpath(str(kb / "sql_summaries" / "db" / "q_001.yaml"))
+        resolved = resolve_kb_sandbox_path("q_001.yaml", "sql_summary", str(kb))
+        assert resolved == os.path.normpath(str(kb / "sql_summaries" / "q_001.yaml"))
 
     def test_fully_prefixed_relative_path_passes_through(self, tmp_path):
         kb = tmp_path
-        resolved = resolve_kb_sandbox_path("sql_summaries/db/q.yaml", "sql_summary", _SandboxCfg("db"), str(kb))
-        assert resolved == os.path.normpath(str(kb / "sql_summaries" / "db" / "q.yaml"))
+        resolved = resolve_kb_sandbox_path("sql_summaries/q.yaml", "sql_summary", str(kb))
+        assert resolved == os.path.normpath(str(kb / "sql_summaries" / "q.yaml"))
 
     def test_absolute_path_inside_sandbox_accepted(self, tmp_path):
         kb = tmp_path
-        (kb / "sql_summaries" / "db").mkdir(parents=True)
-        inside = kb / "sql_summaries" / "db" / "q.yaml"
+        (kb / "sql_summaries").mkdir(parents=True)
+        inside = kb / "sql_summaries" / "q.yaml"
         inside.write_text("x")
-        resolved = resolve_kb_sandbox_path(str(inside), "sql_summary", _SandboxCfg("db"), str(kb))
+        resolved = resolve_kb_sandbox_path(str(inside), "sql_summary", str(kb))
         assert os.path.realpath(resolved) == os.path.realpath(str(inside))
 
     def test_absolute_path_outside_sandbox_rejected(self, tmp_path):
         """A fabricated absolute path outside the sandbox must be refused so
         _save_to_db never syncs an arbitrary on-disk file."""
-        assert resolve_kb_sandbox_path("/etc/passwd", "sql_summary", _SandboxCfg("db"), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("/etc/passwd", "sql_summary", str(tmp_path)) is None
 
     def test_cross_kind_prefix_rejected(self, tmp_path):
-        """Workflow returning ``ext_knowledge/db/foo.yaml`` from a
+        """Workflow returning ``ext_knowledge/foo.yaml`` from a
         sql_summary node must be refused — the prompt-compliant output here
         is restricted to ``sql_summaries/``."""
-        assert (
-            resolve_kb_sandbox_path("ext_knowledge/db/foo.yaml", "sql_summary", _SandboxCfg("db"), str(tmp_path))
-            is None
-        )
-
-    def test_cross_namespace_prefix_rejected(self, tmp_path):
-        """sql_summaries/other_db/q.yaml is inside the kind but outside the
-        current namespace's sandbox → rejected (no cross-namespace writes)."""
-        assert (
-            resolve_kb_sandbox_path("sql_summaries/other_db/q.yaml", "sql_summary", _SandboxCfg("db"), str(tmp_path))
-            is None
-        )
+        assert resolve_kb_sandbox_path("ext_knowledge/foo.yaml", "sql_summary", str(tmp_path)) is None
 
     def test_traversal_escape_rejected(self, tmp_path):
         """``../../etc/passwd`` resolves outside the sandbox → rejected."""
-        assert resolve_kb_sandbox_path("../../etc/passwd", "sql_summary", _SandboxCfg("db"), str(tmp_path)) is None
+        assert resolve_kb_sandbox_path("../../etc/passwd", "sql_summary", str(tmp_path)) is None
 
     def test_unknown_kind_no_containment_check(self, tmp_path):
         """For an unknown kind we cannot compute a sandbox — fall back to
         just normalizing against knowledge_base_dir."""
-        resolved = resolve_kb_sandbox_path("foo.yaml", "unknown", _SandboxCfg("db"), str(tmp_path))
-        assert resolved == os.path.normpath(str(tmp_path / "foo.yaml"))
-
-    def test_missing_namespace_no_containment_check(self, tmp_path):
-        """Without a namespace we cannot compute the {kind}/{ns}/ sandbox so
-        containment is skipped, matching normalize_kb_relative_path semantics."""
-        resolved = resolve_kb_sandbox_path("foo.yaml", "sql_summary", _SandboxCfg(None), str(tmp_path))
+        resolved = resolve_kb_sandbox_path("foo.yaml", "unknown", str(tmp_path))
         assert resolved == os.path.normpath(str(tmp_path / "foo.yaml"))
 
     def test_commonpath_value_error_fails_closed(self, tmp_path):
         """Simulate os.path.commonpath raising (e.g. mixed drives on
         Windows) — the resolver must fail closed with None."""
         with patch("datus.cli.generation_hooks.os.path.commonpath", side_effect=ValueError("mixed drives")):
-            assert resolve_kb_sandbox_path("q.yaml", "sql_summary", _SandboxCfg("db"), str(tmp_path)) is None
+            assert resolve_kb_sandbox_path("q.yaml", "sql_summary", str(tmp_path)) is None

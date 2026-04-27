@@ -49,13 +49,13 @@ class CLIService:
         """
         self.agent_config = agent_config
         self.chat_service = chat_service
-        # Initialize database manager and namespace only if agent_config is provided
+        # Initialize database manager and datasource only if agent_config is provided
         if self.agent_config:
-            self.db_manager = DBManager(self.agent_config.namespaces)
-            self.current_namespace = self.agent_config.current_namespace
+            self.db_manager = DBManager(self.agent_config.datasource_configs)
+            self.current_datasource = self.agent_config.current_datasource
         else:
             self.db_manager = None
-            self.current_namespace = None
+            self.current_datasource = None
 
         # Initialize CLI context first (before _initialize_connection)
         from datus.cli.cli_context import CliContext
@@ -78,9 +78,9 @@ class CLIService:
 
     def _initialize_connection(self):
         """Initialize the current database connection."""
-        if self.db_manager and self.current_namespace:
+        if self.db_manager and self.current_datasource:
             try:
-                db_name, connector = self.db_manager.first_conn_with_name(self.current_namespace)
+                db_name, connector = self.db_manager.first_conn_with_name(self.current_datasource)
                 self.current_db_connector = connector
                 self.current_db_name = db_name
 
@@ -236,10 +236,11 @@ class CLIService:
     async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
         """Execute SQL query asynchronously with cancellation support.
 
-        Returns a Result containing an execute_task_id that can be used
-        to stop the execution via stop_execute_sql().
+        If ``request.execute_task_id`` is provided, it is used as-is and returned
+        unchanged in ``ExecuteSQLData`` so the caller can cancel the execution
+        via ``stop_execute_sql()``. Otherwise a server-generated UUID is used.
         """
-        task_id = str(uuid.uuid4())
+        task_id = request.execute_task_id or str(uuid.uuid4())
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
@@ -254,8 +255,14 @@ class CLIService:
             finally:
                 self._cleanup_sql_task(task_id)
 
-        task = asyncio.create_task(_run())
         with self._sql_tasks_lock:
+            if task_id in self._sql_tasks:
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                    errorMessage=f"execute_task_id '{task_id}' is already in use",
+                )
+            task = asyncio.create_task(_run())
             self._sql_tasks[task_id] = task
 
         return await task
@@ -393,7 +400,7 @@ class CLIService:
                     db_info = {"connection_status": "disconnected"}
 
                 result_data.context_info = {
-                    "current_namespace": self.current_namespace,
+                    "current_datasource": self.current_datasource,
                     "current_database": self.current_db_name,
                     "current_catalog": getattr(self.cli_context, "current_catalog", None) if self.cli_context else None,
                     "current_schema": getattr(self.cli_context, "current_schema", None) if self.cli_context else None,
@@ -446,9 +453,9 @@ class CLIService:
                         }
                     else:
                         # Use real metrics RAG similar to ContextCommands.cmd_subject
-                        from datus.storage.metric.store import rag_by_configuration
+                        from datus.storage.metric.store import MetricRAG
 
-                        metrics_rag = rag_by_configuration(self.agent_config)
+                        metrics_rag = MetricRAG(self.agent_config)
                         metrics_count = metrics_rag.get_metrics_size()
                         rag_path = self.agent_config.rag_storage_path()
 
@@ -480,13 +487,11 @@ class CLIService:
                             "message": "SQL history context not available - agent config required",
                         }
                     else:
-                        # Use real SQL history RAG similar to ContextCommands.cmd_historical_sql
-                        from datus.storage.sql_history import (
-                            sql_history_rag_by_configuration,
-                        )
+                        # Use real reference SQL RAG
+                        from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-                        sql_rag = sql_history_rag_by_configuration(self.agent_config)
-                        sql_count = sql_rag.get_sql_history_size()
+                        sql_rag = ReferenceSqlRAG(self.agent_config)
+                        sql_count = sql_rag.get_reference_sql_size()
                         rag_path = self.agent_config.rag_storage_path()
 
                         result_data.context_info = {
@@ -549,7 +554,7 @@ class CLIService:
 
             elif command in ["databases", "database"]:
                 if self.db_manager:
-                    connections = self.db_manager.get_connections(self.current_namespace)
+                    connections = self.db_manager.get_connections(self.current_datasource)
                     # Handle both single connector and dict of connectors
                     if isinstance(connections, dict):
                         db_list = list(connections.keys())

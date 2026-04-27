@@ -33,6 +33,7 @@ from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
+from datus.utils.path_manager import set_current_path_manager
 
 logger = get_logger(__name__)
 
@@ -145,28 +146,13 @@ def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
 
 
 def _fill_database_context(
-    agent_config: AgentConfig,
+    agent_config: AgentConfig,  # noqa: ARG001
     catalog: Optional[str] = None,  # noqa: ARG001 — reserved for future use
-    database: Optional[str] = None,
+    database: Optional[str] = None,  # noqa: ARG001 — reserved for future use
     schema: Optional[str] = None,  # noqa: ARG001 — reserved for future use
 ) -> None:
-    """Set agent_config's current_namespace and current_database based on request context.
-
-    If database is provided, searches for it in agent_config.namespaces and updates both
-    current_namespace and current_database. Otherwise, falls back to treating database
-    as a namespace name if it exists in agent_config.namespaces.
-    """
-    if not database:
-        return
-    for ns_name, ns_dbs in agent_config.namespaces.items():
-        if database in ns_dbs:
-            if agent_config.current_namespace != ns_name:
-                agent_config.current_namespace = ns_name
-            agent_config.current_database = database
-            return
-    # Fallback: database itself is a namespace name
-    if database in agent_config.namespaces:
-        agent_config.current_namespace = database
+    """No-op: current_datasource is resolved at bootstrap; per-request database
+    selection is a logical-DB concern handled downstream, not a datasource override."""
 
 
 class ChatTask:
@@ -222,6 +208,22 @@ class ChatTaskManager:
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
+        # API surface has no interactive broker to confirm EXTERNAL file
+        # access, so force filesystem strict mode — every node constructed
+        # below reads this flag via AgenticNode._resolve_filesystem_strict().
+        agent_config.filesystem_strict = True
+        # Per-request response language override. Empty / None keeps the
+        # yaml-level ``agent.language`` default intact.
+        if request.language:
+            agent_config.language = request.language
+        if request.model:
+            provider, _, model_id = request.model.partition("/")
+            if not model_id:
+                raise ValueError(f"Invalid model format '{request.model}': expected 'provider/model_id'")
+            if provider == "custom":
+                agent_config.set_active_custom(model_id, persist=False)
+            else:
+                agent_config.set_active_provider_model(provider, model_id, persist=False)
         _fill_database_context(
             agent_config,
             catalog=request.catalog,
@@ -349,6 +351,13 @@ class ChatTaskManager:
         session_id = task.session_id
         event_id = 0
 
+        # Pin the path manager into this task's context. Required when the caller
+        # dispatched us from a thread that never inherited AgentConfig's ContextVar
+        # (e.g. gateway bridge dispatching from an IM SDK worker thread via
+        # ``asyncio.run_coroutine_threadsafe``); otherwise downstream stores fall
+        # back to ``get_path_manager()`` and get an empty project_name.
+        set_current_path_manager(agent_config.path_manager)
+
         try:
             start_time = datetime.now()
 
@@ -366,7 +375,13 @@ class ChatTaskManager:
                     user_id=user_id,
                     interactive=interactive_enabled,
                 )
-                n.session_id = session_id
+                # Feedback runs triggered with a source_session_id must start with
+                # no session_id so FeedbackAgenticNode.execute_stream copies the
+                # source session into a fresh feedback_session_ id.
+                if sub_agent_id == "feedback" and request.source_session_id:
+                    n.session_id = None
+                else:
+                    n.session_id = session_id
                 return n
 
             node = await asyncio.to_thread(_init_node)
@@ -402,6 +417,7 @@ class ChatTaskManager:
                 database=request.database,
                 db_schema=request.db_schema,
                 plan_mode=request.plan_mode or False,
+                source_session_id=request.source_session_id,
             )
             node.input = node_input
 
@@ -593,6 +609,14 @@ class ChatTaskManager:
                     execution_mode=execution_mode,
                     scope=user_id,
                 )
+            elif subagent_id == "feedback":
+                from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+                return FeedbackAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode=execution_mode,
+                    scope=user_id,
+                )
             else:
                 # Custom sub_agent: agentic_nodes is keyed by sanitized node_name
                 # (not the UUID subagent_id). Each entry carries its original
@@ -642,13 +666,24 @@ class ChatTaskManager:
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
         plan_mode: bool = False,
+        source_session_id: Optional[str] = None,
     ):
         """Create node input based on node type."""
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
         from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+
+        if isinstance(current_node, FeedbackAgenticNode):
+            from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+
+            return FeedbackNodeInput(
+                user_message=user_message,
+                database=database,
+                source_session_id=source_session_id,
+            )
 
         if isinstance(current_node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput

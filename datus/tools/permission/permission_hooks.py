@@ -18,11 +18,16 @@ when prompting users for permission confirmation.
 import asyncio
 import json
 import logging
+import weakref
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.schemas.interaction_event import InteractionEvent
+from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.registry.tool_registry import ToolRegistry
 
@@ -31,8 +36,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Global lock to prevent multiple permission prompts at once
-_permission_prompt_lock = asyncio.Lock()
+# Per-event-loop locks to serialize permission prompts within a single loop.
+# A module-level ``asyncio.Lock()`` binds to the loop running on first ``await``
+# and then raises ``Lock is bound to a different event loop`` on every
+# subsequent ``asyncio.run()`` (the CLI creates a fresh loop per turn via
+# ``chat_commands.py``). Key the lock by the running loop so each turn gets its
+# own, while still serializing prompts from parallel tool calls inside one loop.
+_permission_prompt_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _get_permission_prompt_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _permission_prompt_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _permission_prompt_locks[loop] = lock
+    return lock
 
 
 class PermissionDeniedException(Exception):
@@ -42,6 +63,33 @@ class PermissionDeniedException(Exception):
         super().__init__(message)
         self.tool_category = tool_category
         self.tool_name = tool_name
+
+
+@dataclass(frozen=True)
+class FilesystemPolicy:
+    """Per-node filesystem policy passed to :class:`PermissionHooks`.
+
+    Carries the information the hook needs to run
+    :func:`datus.tools.func_tool.fs_path_policy.classify_path` on every
+    filesystem tool call. Leaving this ``None`` on construction keeps the
+    old category/tool-level permission behavior (no zone-based overrides).
+
+    ``strict`` mirrors :attr:`FilesystemFuncTool.strict` so the hook and the
+    tool agree on what to do with ``EXTERNAL`` paths. When ``True``, the
+    hook skips the broker prompt and delegates the denial to the
+    filesystem tool, which returns ``FuncToolResult(success=0)`` with a
+    "strict mode" error message. This matters for API / gateway surfaces with
+    no interactive broker attached — prompting would hang the request,
+    while raising would surface as an uncaught exception. The tool-level
+    ``strict`` is still the source of truth; having the same flag in the
+    policy lets the hook avoid prompting while preserving the normal
+    tool-failure payload the caller already knows how to handle.
+    """
+
+    root_path: Path
+    current_node: Optional[str]
+    datus_home: Optional[Path] = None
+    strict: bool = False
 
 
 class CompositeHooks(AgentHooks):
@@ -118,6 +166,8 @@ class PermissionHooks(AgentHooks):
         permission_manager: "PermissionManager",
         node_name: str,
         tool_registry: ToolRegistry,
+        *,
+        fs_policy: Optional[FilesystemPolicy] = None,
     ):
         """Initialize the permission hooks.
 
@@ -126,11 +176,19 @@ class PermissionHooks(AgentHooks):
             permission_manager: PermissionManager for checking permissions
             node_name: Name of the current agentic node (e.g., "chat")
             tool_registry: Shared ToolRegistry instance (from AgenticNode)
+            fs_policy: Optional per-node filesystem policy. When provided,
+                ``filesystem_tools`` calls are routed through
+                :func:`classify_path` first so ``EXTERNAL`` paths force a user
+                prompt regardless of category rules, and ``HIDDEN`` paths fall
+                through silently (the tool itself returns ``File not found``).
+                Leaving this ``None`` preserves the old tool/category-level
+                behavior for tests and legacy callers.
         """
         self.broker = broker
         self.permission_manager = permission_manager
         self.node_name = node_name
         self.tool_registry = tool_registry
+        self.fs_policy = fs_policy
 
     async def on_tool_start(self, context, agent, tool) -> None:
         """Intercept ALL tool calls for permission checking.
@@ -157,13 +215,31 @@ class PermissionHooks(AgentHooks):
 
         logger.debug(f"Permission check for tool '{tool_name}': category='{category}', pattern='{pattern_name}'")
 
+        # Filesystem tools: zone-based policy overrides rules.
+        #   INTERNAL/WHITELIST → bypass, HIDDEN → bypass (tool returns not-found),
+        #   EXTERNAL → force ASK with a path-keyed session cache so approving
+        #   /Users/foo/secret does not cascade to /Users/foo/other.
+        if self.fs_policy is not None and category == "filesystem_tools":
+            handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
+            if handled:
+                return
+
         # Check permission
         permission = self.permission_manager.check_permission(category, pattern_name, self.node_name)
 
         if permission == PermissionLevel.DENY:
             logger.warning(f"Tool '{tool_name}' denied by permission rules")
+            profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
             raise PermissionDeniedException(
-                f"Tool '{tool_name}' is not permitted in node '{self.node_name}'",
+                (
+                    f"PERMISSION_DENIED: Tool '{tool_name}' ({category}) is blocked by the "
+                    f"'{profile}' permission profile. STOP retrying this tool — different "
+                    "parameters will not change the outcome. Return the failure to your "
+                    "caller and stop. The user can run /profile to open the "
+                    "profile picker and choose an appropriate mode with the "
+                    "arrow keys, or add a permission rule under "
+                    "`permissions.rules` in agent.yml."
+                ),
                 tool_category=category,
                 tool_name=pattern_name,
             )
@@ -182,7 +258,7 @@ class PermissionHooks(AgentHooks):
                     return
 
             # Use lock to prevent multiple prompts at once (for parallel tool calls)
-            async with _permission_prompt_lock:
+            async with _get_permission_prompt_lock():
                 # Re-check cache after acquiring lock (another prompt may have approved it)
                 for cache_key in cache_keys:
                     if self.permission_manager._session_approvals.get(cache_key):
@@ -201,6 +277,133 @@ class PermissionHooks(AgentHooks):
                     )
 
                 logger.info(f"User approved tool '{tool_name}'")
+
+    async def _handle_filesystem_zone(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+        """Zone-based gating for ``filesystem_tools.*`` calls.
+
+        Returns ``True`` when the call has been fully handled (either allowed
+        through or rejected) and ``False`` to let the normal category-level
+        permission check run. ``EXTERNAL`` zones always land in the ``ASK``
+        branch here regardless of what the category rule says — that is the
+        whole point of zones, otherwise a session-level ``allow`` on
+        ``filesystem_tools`` would silently grant ``/etc/passwd`` access.
+        """
+        policy = self.fs_policy
+        assert policy is not None  # guarded by caller
+        args = self._parse_tool_args(context)
+        # ``_parse_tool_args`` deliberately returns whatever the JSON decoder
+        # produced, so malformed tool_arguments (list, string, number) would
+        # otherwise blow up on ``.get()``. Treat non-object payloads as
+        # "no path provided" and fall back to the category-level rule check.
+        if not isinstance(args, dict):
+            logger.debug(
+                "Filesystem permission check received non-object tool arguments for %s: %r",
+                tool_name,
+                args,
+            )
+            return False
+        path_arg = args.get("path", "")
+        try:
+            resolved = classify_path(
+                path_arg,
+                root_path=policy.root_path,
+                current_node=policy.current_node,
+                datus_home=policy.datus_home,
+            )
+        except Exception as e:
+            logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")
+            return False
+
+        if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+            logger.debug(
+                "Filesystem zone %s: allowing %s on %s without prompt",
+                resolved.zone.value,
+                tool_name,
+                resolved.display,
+            )
+            return True
+
+        if resolved.zone == PathZone.HIDDEN:
+            # Let the tool itself return the uniform ``File not found`` so the
+            # LLM cannot distinguish "hidden by policy" from "does not exist".
+            logger.debug("Filesystem zone HIDDEN: letting tool return not-found for %s", resolved.display)
+            return True
+
+        # EXTERNAL in strict mode → delegate to the tool, which returns
+        # FuncToolResult(success=0). We return True here (no broker prompt,
+        # no exception) so callers without an interactive broker (API / gateway)
+        # still fail fast but surface the denial as a normal tool-failure
+        # payload the agent can read, rather than an uncaught exception.
+        if policy.strict:
+            logger.info(
+                "Filesystem strict mode: delegating EXTERNAL access to tool for %s (tool=%s)",
+                resolved.resolved,
+                tool_name,
+            )
+            return True
+
+        # EXTERNAL: force ASK, keyed by absolute path to prevent broad auto-approval.
+        cache_key = f"filesystem_tools.external::{resolved.resolved}"
+        if self.permission_manager._session_approvals.get(cache_key):
+            logger.debug("External path %s already approved for session", resolved.resolved)
+            return True
+
+        async with _get_permission_prompt_lock():
+            if self.permission_manager._session_approvals.get(cache_key):
+                return True
+
+            approved = await self._request_external_confirmation(tool_name, pattern_name, resolved.resolved)
+            if not approved:
+                logger.info("User rejected external filesystem access to %s", resolved.resolved)
+                raise PermissionDeniedException(
+                    f"User rejected external filesystem access to {resolved.resolved}",
+                    tool_category="filesystem_tools",
+                    tool_name=pattern_name,
+                )
+            logger.info("User approved external filesystem access to %s", resolved.resolved)
+            return True
+
+    async def _request_external_confirmation(
+        self,
+        tool_name: str,
+        pattern_name: str,
+        abs_path: Path,
+    ) -> bool:
+        """Prompt the user for an EXTERNAL filesystem access.
+
+        Approval is narrow: the ``a`` (always-allow) choice caches this exact
+        absolute path, not the whole tool or category.
+        """
+        content = (
+            "### External Filesystem Access\n\n"
+            f"**Tool:** `filesystem_tools.{pattern_name}`\n"
+            f"**Path:** `{abs_path}`  _(outside project root)_\n"
+        )
+        try:
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Permission",
+                        content=content,
+                        choices={"y": "Allow (once)", "a": "Always allow (this path, session)", "n": "Deny"},
+                        default_choice="n",
+                    )
+                ]
+            )
+            choice = answers[0][0] if answers and answers[0] else ""
+
+            if choice == "a":
+                cache_key = f"external::{abs_path}"
+                self.permission_manager.approve_for_session("filesystem_tools", cache_key)
+                return True
+            if choice == "y":
+                return True
+            return False
+        except InteractionCancelled:
+            return False
+        except Exception as e:
+            logger.error(f"Error in external filesystem confirmation for {tool_name}: {e}")
+            return False
 
     def _get_category_and_pattern(self, tool_name: str, context: Any) -> Tuple[str, str]:
         """Get tool category and pattern name for permission checking.
@@ -293,34 +496,26 @@ class PermissionHooks(AgentHooks):
             content += f"\n**Args:** `{args_str}`\n"
 
         try:
-            choice, callback = await self.broker.request(
-                contents=[content],
-                choices=[
-                    {
-                        "y": "Allow (once)",
-                        "a": "Always allow (session)",
-                        "n": "Deny",
-                    }
-                ],
-                default_choices=["n"],
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="Permission",
+                        content=content,
+                        choices={"y": "Allow (once)", "a": "Always allow (session)", "n": "Deny"},
+                        default_choice="n",
+                    )
+                ]
             )
+            choice = answers[0][0] if answers and answers[0] else ""
 
             if choice == "a":
-                # Approve for session - all future calls to this tool are auto-approved
                 self.permission_manager.approve_for_session(category, pattern_name)
-                # Also cache tool-level key so all future calls of the same tool type are auto-approved
-                # e.g., load_skill("report-generator") also caches "skills.load_skill"
-                # so load_skill("sql-analysis") is auto-approved without a second prompt
                 if tool_name and tool_name != pattern_name:
                     self.permission_manager.approve_for_session(category, tool_name)
-                await callback(f"**{category}.{pattern_name}** approved for session")
                 return True
             elif choice == "y":
-                # One-time approval - do NOT cache, will prompt again next time
-                await callback("**Approved**")
                 return True
             else:
-                await callback("**Denied**")
                 return False
 
         except InteractionCancelled:

@@ -21,6 +21,7 @@ from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools import connector_registry
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -31,7 +32,8 @@ class GenerationCancelledException(Exception):
     """Exception raised when user cancels generation flow."""
 
 
-# Maps generation kind → top-level KB subdir name beneath knowledge_base_home.
+# Maps generation kind → top-level KB subdir name beneath the project's subject/
+# directory (e.g. ``{project_root}/subject/semantic_models``).
 _KIND_TO_SUBDIR = {
     "semantic": "semantic_models",
     "metric": "semantic_models",
@@ -39,36 +41,22 @@ _KIND_TO_SUBDIR = {
     "ext_knowledge": "ext_knowledge",
 }
 
-# write_file `file_type` argument values used by the LLM mapped to internal kinds.
-_FILE_TYPE_ALIASES = {
-    "semantic": "semantic",
-    "semantic_model": "semantic",
-    "metric": "metric",
-    "metrics": "metric",
-    "sql_summary": "sql_summary",
-    "ext_knowledge": "ext_knowledge",
-}
 
-
-def normalize_kb_relative_path(
-    path: str,
-    kind: Optional[str],
-    namespace: Optional[str],
-) -> str:
+def normalize_kb_relative_path(path: str, kind: Optional[str]) -> str:
     """
     Silently normalize a relative path so that it lands under the typed
-    sub-directory of ``knowledge_base_home``, even when the caller forgets
-    the ``{subdir}/{namespace}/`` prefix.
+    sub-directory of the project's ``subject/`` tree, even when the caller
+    forgets the ``{subdir}/`` prefix.
 
     Rules:
       * Empty / absolute paths → unchanged.
       * "." / "./" → unchanged (workspace-root directory operations).
       * Path starts with a parent-traversal segment (``..``) → unchanged so
         the downstream sandbox check decides whether to reject.
-      * Unknown ``kind`` or missing ``namespace`` → unchanged.
+      * Unknown ``kind`` → unchanged.
       * Path already starts with any known KB subdir (semantic_models /
         sql_summaries / ext_knowledge) → unchanged (caller is being explicit).
-      * Otherwise → prepend ``{subdir}/{namespace}/``.
+      * Otherwise → prepend ``{subdir}/``.
     """
     if not path or os.path.isabs(path):
         return path
@@ -79,47 +67,50 @@ def normalize_kb_relative_path(
         return path
     if parts[0] == "..":
         return path
-    if not namespace:
-        return path
+    # After the ``subject/`` relocation, prompts emit fully-qualified paths
+    # like ``subject/semantic_models/orders.yml``. ``_resolve_path`` joins the
+    # result with ``kb_home`` (``{project_root}/subject``), so strip a leading
+    # ``subject/`` segment first to avoid ``subject/subject/...`` drift.
+    if parts[0] == "subject":
+        parts = parts[1:]
+        if not parts:
+            return path
     subdir = _KIND_TO_SUBDIR.get(kind or "")
     if not subdir:
-        return path
+        return "/".join(parts)
     head = parts[0]
     if head in set(_KIND_TO_SUBDIR.values()):
-        return path
-    return f"{subdir}/{namespace}/{'/'.join(parts)}"
+        return "/".join(parts)
+    return f"{subdir}/{'/'.join(parts)}"
 
 
 def resolve_kb_sandbox_path(
     raw_path: str,
     kind: str,
-    agent_config: "AgentConfig",
     knowledge_base_dir: str,
 ) -> Optional[str]:
     """
     Resolve an LLM-reported file path to an absolute path under the sandbox
-    ``{knowledge_base_dir}/{kind_subdir}/<namespace>/`` for the given ``kind``.
+    ``{knowledge_base_dir}/{kind_subdir}/`` for the given ``kind``.
 
     Used by workflow-mode ``_save_to_db()`` helpers where the path comes from
     the model's final JSON (not from a ``write_file`` tool result), so it must
-    be validated against the per-kind, per-namespace sandbox before syncing —
-    otherwise a fabricated response could cause an arbitrary file on disk to
-    be imported. Returns ``None`` when the path escapes the sandbox so callers
-    can skip it.
+    be validated against the per-kind sandbox before syncing — otherwise a
+    fabricated response could cause an arbitrary file on disk to be imported.
+    Returns ``None`` when the path escapes the sandbox so callers can skip it.
     """
     if not raw_path:
         return None
-    namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
     if os.path.isabs(raw_path):
         candidate = os.path.normpath(raw_path)
     else:
-        normalized = normalize_kb_relative_path(raw_path, kind, namespace)
+        normalized = normalize_kb_relative_path(raw_path, kind)
         candidate = os.path.normpath(os.path.join(knowledge_base_dir, normalized))
     subdir = _KIND_TO_SUBDIR.get(kind or "")
-    if not subdir or not namespace:
+    if not subdir:
         return candidate
     try:
-        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir, namespace))
+        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir))
         candidate_real = os.path.realpath(candidate)
         if os.path.commonpath([sandbox, candidate_real]) != sandbox:
             logger.warning(
@@ -132,59 +123,24 @@ def resolve_kb_sandbox_path(
     return candidate
 
 
-def make_kb_path_normalizer(agent_config: "AgentConfig", default_kind: Optional[str] = None):
-    """
-    Build a `FilesystemFuncTool.path_normalizer` closure that resolves the
-    namespace lazily so sub-agent switches mid-session are honored.
-
-    The closure accepts an optional ``strict_kind`` kwarg. When set (used for
-    mutating tool ops — ``write_file`` / ``edit_file``), cross-kind writes are
-    rejected: a node whose ``default_kind`` is ``semantic`` cannot write to a
-    path already prefixed with ``sql_summaries/`` or ``ext_knowledge/``. Reads
-    stay lax so the LLM can still browse peer KB artifacts.
-    """
-    expected_subdir = _KIND_TO_SUBDIR.get(default_kind or "")
-    known_subdirs = set(_KIND_TO_SUBDIR.values())
-
-    def _normalize(path: str, file_type: Optional[str], *, strict_kind: bool = False) -> str:
-        namespace = getattr(agent_config, "current_namespace", None) if agent_config else None
-        if strict_kind and expected_subdir and path and not os.path.isabs(path):
-            parts = [p for p in path.replace("\\", "/").split("/") if p]
-            head = parts[0] if parts else ""
-            if head in known_subdirs and head != expected_subdir:
-                raise ValueError(
-                    f"Write to '{head}/' is not allowed from a {default_kind!r} node; "
-                    f"this node may only write under '{expected_subdir}/'."
-                )
-            # Even within the correct kind, reject prefixes that would write
-            # into a peer namespace (e.g. semantic_models/other_db/foo.yml
-            # from a node whose current_namespace is 'db').
-            if head == expected_subdir and namespace and len(parts) >= 2 and parts[1] != namespace:
-                raise ValueError(
-                    f"Write to '{head}/{parts[1]}/' is not allowed from namespace "
-                    f"{namespace!r}; this node may only write under "
-                    f"'{expected_subdir}/{namespace}/'."
-                )
-            kind = default_kind
-        else:
-            kind = _FILE_TYPE_ALIASES.get(file_type or "", default_kind)
-        return normalize_kb_relative_path(path, kind, namespace)
-
-    return _normalize
-
-
 class GenerationHooks(AgentHooks):
     """Hooks for handling generation tool results and user interaction."""
 
     # Mapping: generation kind → path_manager method name.
-    # Looked up lazily per call so sub-agent namespace switches are honored.
+    # Looked up lazily per call so sub-agent datasource switches are honored.
     _BASE_DIR_RESOLVERS = {
         "semantic": "semantic_model_path",
+        "metric": "semantic_model_path",
         "sql_summary": "sql_summary_path",
         "ext_knowledge": "ext_knowledge_path",
     }
 
-    def __init__(self, broker: InteractionBroker, agent_config: AgentConfig = None):
+    def __init__(
+        self,
+        broker: InteractionBroker,
+        agent_config: AgentConfig = None,
+        generation_evidence: Optional[GenerationEvidence] = None,
+    ):
         """
         Initialize generation hooks.
 
@@ -192,11 +148,12 @@ class GenerationHooks(AgentHooks):
             broker: InteractionBroker for async user interactions
             agent_config: Agent configuration for storage access. Base directories
                 for relative path resolution are looked up on this config at call
-                time so sub-agent namespace switches take effect without rebuilding
+                time so sub-agent datasource switches take effect without rebuilding
                 the hook.
         """
         self.broker = broker
         self.agent_config = agent_config
+        self.generation_evidence = generation_evidence or GenerationEvidence()
         self.processed_files = set()  # Track files that have been processed to avoid duplicates
         logger.debug(f"GenerationHooks initialized with config: {agent_config is not None}")
 
@@ -217,37 +174,38 @@ class GenerationHooks(AgentHooks):
             resolver = getattr(path_manager, resolver_name, None)
             if resolver is None:
                 return None
-            namespace = getattr(self.agent_config, "current_namespace", None)
-            return str(resolver(namespace))
+            if kind == "semantic":
+                return str(resolver(datasource=self.agent_config.current_datasource))
+            return str(resolver())
         except Exception as e:
             logger.warning(f"Failed to resolve base_dir for kind={kind}: {e}")
             return None
 
     def _get_kb_home(self) -> Optional[str]:
-        """Return ``str(knowledge_base_home)`` from the live agent_config, or None."""
+        """Return the project-scoped ``subject/`` directory as a string, or None."""
         if not self.agent_config:
             return None
         path_manager = getattr(self.agent_config, "path_manager", None)
         if path_manager is None:
             return None
         try:
-            return str(path_manager.knowledge_base_home)
+            return str(path_manager.subject_dir)
         except Exception as e:
-            logger.warning(f"Failed to resolve knowledge_base_home from agent_config: {e}")
+            logger.warning(f"Failed to resolve subject_dir from agent_config: {e}")
             return None
 
     def _resolve_path(self, path: str, kind: str) -> str:
         """
         Resolve a file path reported by a generation tool to an absolute path
-        under ``knowledge_base_home``, or return an empty string when the path
-        escapes the workspace so callers skip it (fail closed — never open
-        arbitrary files outside the KB).
+        under the project ``subject/`` directory, or return an empty string
+        when the path escapes the workspace so callers skip it (fail closed —
+        never open arbitrary files outside the KB).
 
         Relative paths are first normalized via :func:`normalize_kb_relative_path`
-        (so naked filenames like ``orders.yaml`` get the ``{subdir}/{namespace}/``
-        prefix matching the LLM's actual write location) and then joined with
-        ``knowledge_base_home``. Absolute paths are accepted only when they
-        resolve inside ``knowledge_base_home``.
+        (so naked filenames like ``orders.yaml`` get the ``{subdir}/`` prefix
+        matching the LLM's actual write location) and then joined with the
+        subject directory. Absolute paths are accepted only when they resolve
+        inside the subject directory.
         """
         if not path:
             return path
@@ -257,8 +215,7 @@ class GenerationHooks(AgentHooks):
         if os.path.isabs(path):
             candidate = os.path.normpath(path)
         else:
-            namespace = getattr(self.agent_config, "current_namespace", None) if self.agent_config else None
-            normalized = normalize_kb_relative_path(path, kind, namespace)
+            normalized = normalize_kb_relative_path(path, kind)
             candidate = os.path.normpath(os.path.join(kb_home, normalized))
         try:
             base_abs = os.path.realpath(kb_home)
@@ -266,7 +223,7 @@ class GenerationHooks(AgentHooks):
             if os.path.commonpath([base_abs, candidate_abs]) != base_abs:
                 logger.warning(
                     f"Rejected path {path!r} for kind={kind}: resolved {candidate_abs!r} "
-                    f"escapes knowledge_base_home {base_abs!r}."
+                    f"escapes subject_dir {base_abs!r}."
                 )
                 return ""
         except ValueError:
@@ -283,10 +240,12 @@ class GenerationHooks(AgentHooks):
 
         logger.debug(f"Tool end: {tool_name}, result type: {type(result)}")
 
-        # Intercept semantic model generation completion
-        if tool_name == "end_semantic_model_generation":
+        if tool_name == "validate_semantic":
+            self.generation_evidence.record_validation_result(result)
+        elif tool_name == "query_metrics":
+            self._record_query_metrics_result(context, result)
+        elif tool_name == "end_semantic_model_generation":
             await self._handle_end_semantic_model_generation(result)
-        # Intercept metric generation completion
         elif tool_name == "end_metric_generation":
             await self._handle_end_metric_generation(result)
         # Intercept write_file tool and check if it's SQL summary
@@ -307,6 +266,25 @@ class GenerationHooks(AgentHooks):
     async def on_end(self, context, agent, output) -> None:
         pass
 
+    def _result_success(self, result) -> bool:
+        if isinstance(result, dict):
+            return result.get("success", 1) in (1, True)
+        if hasattr(result, "success"):
+            return result.success in (1, True)
+        return False
+
+    def _record_query_metrics_result(self, context, result) -> None:
+        try:
+            if not hasattr(context, "tool_arguments") or not context.tool_arguments:
+                return
+            tool_args = json.loads(context.tool_arguments)
+            if not isinstance(tool_args, dict) or tool_args.get("dry_run") is not True:
+                return
+            metrics = tool_args.get("metrics") or []
+            self.generation_evidence.record_metric_dry_run(metrics, result)
+        except Exception as e:
+            logger.debug(f"Error recording query_metrics evidence: {e}")
+
     async def _handle_end_semantic_model_generation(self, result):
         """
         Handle end_semantic_model_generation tool result.
@@ -315,6 +293,10 @@ class GenerationHooks(AgentHooks):
             result: Tool result containing semantic_model_files list
         """
         try:
+            if not self._result_success(result):
+                logger.info(f"Skipping semantic model sync because generation tool failed: {result}")
+                return
+
             file_paths = self._extract_filepaths_from_result(result)
 
             if not file_paths:
@@ -340,6 +322,10 @@ class GenerationHooks(AgentHooks):
             result: Tool result containing metric_file, optional semantic_model_file, and metric_sqls
         """
         try:
+            if not self._result_success(result):
+                logger.info(f"Skipping metric sync because generation tool failed: {result}")
+                return
+
             metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)
 
             if not metric_file:
@@ -362,7 +348,7 @@ class GenerationHooks(AgentHooks):
                 await self._process_metric_with_semantic_model(semantic_model_file, metric_file, metric_sqls)
             else:
                 # Process metric file alone (semantic model already exists in KB)
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
 
         except GenerationCancelledException:
             logger.info("Generation workflow cancelled")
@@ -422,13 +408,14 @@ class GenerationHooks(AgentHooks):
         logger.warning(f"Could not extract metric_generation_result from: {result}")
         return "", "", {}
 
-    async def _process_single_file(self, file_path: str, metric_sqls: dict = None):
+    async def _process_single_file(self, file_path: str, metric_sqls: dict = None, yaml_type: str = "semantic"):
         """
-        Process a single YAML file: display and get user confirmation.
+        Process a single YAML file and sync it to Knowledge Base.
 
         Args:
             file_path: Path to the YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
+            yaml_type: YAML type to sync, e.g. "semantic", "metric", "sql_summary", or "ext_knowledge"
         """
         # Check if file exists
         if not os.path.exists(file_path):
@@ -451,15 +438,7 @@ class GenerationHooks(AgentHooks):
         # Mark file as processed
         self.processed_files.add(file_path)
 
-        # Build display content (markdown format)
-        display_content = f"## Generated YAML: {os.path.basename(file_path)}\n\n"
-        display_content += f"*Path: {file_path}*\n\n"
-        display_content += f"```yaml\n{yaml_content}\n```\n"
-
-        # Get user confirmation to sync (content will be shown in request)
-        await self._get_sync_confirmation(
-            yaml_content, file_path, "semantic", metric_sqls=metric_sqls, display_content=display_content
-        )
+        await self._sync_generated_file(yaml_content, file_path, yaml_type, metric_sqls=metric_sqls)
 
     async def _process_metric_with_semantic_model(
         self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
@@ -478,7 +457,7 @@ class GenerationHooks(AgentHooks):
             logger.warning(f"Semantic model file {semantic_model_file} does not exist")
             # Still try to process metric file alone
             if os.path.exists(metric_file):
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls)
+                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
             return
 
         if not os.path.exists(metric_file):
@@ -506,19 +485,7 @@ class GenerationHooks(AgentHooks):
             logger.warning("Empty content in semantic model or metric file")
             return
 
-        # Build display content (markdown format) with both files
-        display_content = f"## Generated Semantic Model: {os.path.basename(semantic_model_file)}\n\n"
-        display_content += f"*Path: {semantic_model_file}*\n\n"
-        display_content += f"```yaml\n{semantic_content}\n```\n\n"
-        display_content += "---\n\n"
-        display_content += f"## Generated Metric: {os.path.basename(metric_file)}\n\n"
-        display_content += f"*Path: {metric_file}*\n\n"
-        display_content += f"```yaml\n{metric_content}\n```\n"
-
-        # Get user confirmation to sync both files together
-        await self._get_sync_confirmation_for_pair(
-            semantic_model_file, metric_file, metric_sqls, display_content=display_content
-        )
+        await self._sync_generated_pair(semantic_model_file, metric_file, metric_sqls)
 
     async def _handle_sql_summary_result(self, result):
         """
@@ -574,13 +541,7 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty content in {file_path}")
                 return
 
-            # Build display content (markdown format)
-            display_content = "## Generated Reference SQL YAML\n\n"
-            display_content += f"*File: {file_path}*\n\n"
-            display_content += f"```yaml\n{yaml_content}\n```\n"
-
-            # Get user confirmation to sync (this is for SQL summary)
-            await self._get_sync_confirmation(yaml_content, file_path, "sql_summary", display_content=display_content)
+            await self._sync_generated_file(yaml_content, file_path, "sql_summary")
 
         except GenerationCancelledException:
             raise
@@ -641,20 +602,14 @@ class GenerationHooks(AgentHooks):
                 logger.warning(f"Empty content in {file_path}")
                 return
 
-            # Build display content (markdown format)
-            display_content = "## Generated External Knowledge YAML\n\n"
-            display_content += f"*File: {file_path}*\n\n"
-            display_content += f"```yaml\n{yaml_content}\n```\n"
-
-            # Get user confirmation to sync (this is for external knowledge)
-            await self._get_sync_confirmation(yaml_content, file_path, "ext_knowledge", display_content=display_content)
+            await self._sync_generated_file(yaml_content, file_path, "ext_knowledge")
 
         except GenerationCancelledException:
             raise
         except Exception as e:
             logger.error(f"Error handling write_file_ext_knowledge result: {e}", exc_info=True)
 
-    async def _get_sync_confirmation_for_pair(
+    async def _sync_generated_pair(
         self,
         semantic_model_file: str,
         metric_file: str,
@@ -662,46 +617,26 @@ class GenerationHooks(AgentHooks):
         display_content: str = "",
     ):
         """
-        Get user confirmation to sync semantic model and metric files together to Knowledge Base.
+        Sync semantic model and metric files together to Knowledge Base.
 
         Args:
             semantic_model_file: Path to semantic model YAML file
             metric_file: Path to metric YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            display_content: Pre-built markdown content to display (headers + YAML contents)
+            display_content: Deprecated. Kept for caller compatibility; ignored.
         """
         try:
-            request_content = f"{display_content}\n### Sync to Knowledge Base?"
-
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
-            )
-
-            if choice == "y":
-                # Sync both files to Knowledge Base
-                sync_result = await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
-                callback_content = "---\n\n"
-                callback_content += sync_result
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-            else:
-                # Keep files only
-                callback_content = "---\n\n"
-                callback_content += f"YAMLs saved to files only:\n- `{semantic_model_file}`\n- `{metric_file}`"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
+            await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
         except GenerationCancelledException:
             raise
         except Exception as e:
-            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            logger.error(f"Error during Knowledge Base sync: {e}", exc_info=True)
             raise
 
-    async def _get_sync_confirmation(
+    async def _sync_generated_file(
         self,
         yaml_content: str,
         file_path: str,
@@ -710,51 +645,24 @@ class GenerationHooks(AgentHooks):
         display_content: str = "",
     ):
         """
-        Get user confirmation to sync to Knowledge Base.
+        Sync a generated YAML file to Knowledge Base.
 
         Args:
             yaml_content: Generated YAML content
             file_path: Path where YAML was saved
-            yaml_type: YAML type - "semantic" or "sql_summary"
+            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            display_content: Pre-built markdown content to display (header + YAML)
+            display_content: Deprecated. Kept for caller compatibility; ignored.
         """
         try:
-            # Build request content with YAML display
-            if not display_content:
-                display_content = f"## Generated YAML: {os.path.basename(file_path)}\n\n"
-                display_content += f"*Path: {file_path}*\n\n"
-                display_content += f"```yaml\n{yaml_content}\n```\n\n"
-
-            request_content = f"{display_content}\n### Sync to Knowledge Base?"
-
-            choice, callback = await self.broker.request(
-                contents=[request_content],
-                choices=[{"y": "Yes - Save to Knowledge Base", "n": "No - Keep file only"}],
-                default_choices=["y"],
-            )
-
-            if choice == "y":
-                # Sync to Knowledge Base
-                sync_result = await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
-                # Build callback content with result
-                callback_content = "---\n\n"
-                callback_content += sync_result
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
-            else:
-                # Keep file only
-                callback_content = "---\n\n"
-                callback_content += f"YAML saved to file only: `{file_path}`"
-                callback_content += "\n\n---\n**Generation workflow completed, generating report...**"
-                await callback(callback_content)
+            await self._sync_to_storage(file_path, yaml_type, metric_sqls=metric_sqls)
 
         except InteractionCancelled:
             raise GenerationCancelledException("User interrupted")
         except GenerationCancelledException:
             raise
         except Exception as e:
-            logger.error(f"Error in sync confirmation: {e}", exc_info=True)
+            logger.error(f"Error during Knowledge Base sync: {e}", exc_info=True)
             raise
 
     async def _sync_to_storage(self, file_path: str, yaml_type: str, metric_sqls: dict = None) -> str:
@@ -763,7 +671,7 @@ class GenerationHooks(AgentHooks):
 
         Args:
             file_path: File path to sync
-            yaml_type: YAML type - "semantic" or "sql_summary"
+            yaml_type: YAML type - "semantic", "metric", "sql_summary", or "ext_knowledge"
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
 
         Returns:
@@ -784,6 +692,19 @@ class GenerationHooks(AgentHooks):
                     lambda: GenerationHooks._sync_semantic_to_db(file_path, self.agent_config, metric_sqls=metric_sqls),
                 )
                 item_type = "semantic model"
+            elif yaml_type == "metric":
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: GenerationHooks._sync_semantic_to_db(
+                        file_path,
+                        self.agent_config,
+                        include_semantic_objects=False,
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                        original_yaml_path=file_path,
+                    ),
+                )
+                item_type = "metric"
             elif yaml_type == "sql_summary":
                 result = await loop.run_in_executor(
                     None, GenerationHooks._sync_reference_sql_to_db, file_path, self.agent_config
@@ -798,6 +719,12 @@ class GenerationHooks(AgentHooks):
                 return f"**Error:** Invalid yaml_type: {yaml_type}\n\nYAML saved to file: `{file_path}`"
 
             if result.get("success"):
+                if yaml_type == "semantic":
+                    self.generation_evidence.mark_kb_sync("semantic")
+                elif yaml_type == "metric":
+                    self.generation_evidence.mark_kb_sync("metric")
+                else:
+                    self.generation_evidence.mark_kb_sync(yaml_type)
                 result_content = f"**Successfully synced {item_type} to Knowledge Base**\n\n"
                 message = result.get("message", "")
                 if message:
@@ -867,6 +794,7 @@ class GenerationHooks(AgentHooks):
                 )
 
                 if result.get("success"):
+                    self.generation_evidence.mark_kb_sync("metric")
                     result_content = "**Successfully synced semantic model and metrics to Knowledge Base**\n\n"
                     message = result.get("message", "")
                     if message:
@@ -1220,9 +1148,17 @@ class GenerationHooks(AgentHooks):
                     if m_type == "measure_proxy":
                         # Single measure reference
                         measure = type_params.get("measure")
-                        if measure:
+                        if isinstance(measure, str):
                             measure_expr = measure
                             base_measures = [measure]
+                        elif isinstance(measure, dict):
+                            measure_name = measure.get("name", "")
+                            if measure_name:
+                                measure_expr = str(measure_name)
+                                base_measures = [str(measure_name)]
+                                constraint = measure.get("constraint")
+                                if constraint:
+                                    measure_expr = f"{measure_expr} WHERE {constraint}"
                         # Or multiple measures
                         measures_list = type_params.get("measures", [])
                         for m in measures_list:

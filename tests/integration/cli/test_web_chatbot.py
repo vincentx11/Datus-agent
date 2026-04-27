@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from datus.cli.web.chat_executor import ChatExecutor
-from datus.cli.web.config_manager import ConfigManager, create_cli_args, get_available_namespaces
+from datus.cli.web.config_manager import ConfigManager, create_cli_args, get_available_datasources
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
@@ -32,25 +32,25 @@ TESTS_CONF = "tests/conf/agent.yml"
 class TestConfigManagerIntegration:
     """Integration tests for ConfigManager functions with real config."""
 
-    def test_get_available_namespaces(self):
-        """W1-01: get_available_namespaces returns namespaces from real config."""
-        namespaces = get_available_namespaces(TESTS_CONF)
+    def test_get_available_datasources(self):
+        """W1-01: get_available_datasources returns datasource keys from real config."""
+        datasources = get_available_datasources(TESTS_CONF)
 
-        assert isinstance(namespaces, list)
-        assert len(namespaces) > 0, "Should find at least one namespace in agent.yml"
-        assert "bird_school" in namespaces, f"bird_school should be in namespaces, got: {namespaces}"
+        assert isinstance(datasources, list)
+        assert len(datasources) > 0, "Should find at least one datasource in agent.yml"
+        assert "bird_school" in datasources, f"bird_school should be in datasources, got: {datasources}"
 
-        logger.info(f"Found {len(namespaces)} namespaces: {namespaces}")
+        logger.info(f"Found {len(datasources)} datasources: {datasources}")
 
-    def test_get_available_namespaces_invalid_path(self):
-        """W1-02: get_available_namespaces handles invalid config path gracefully."""
-        namespaces = get_available_namespaces("/nonexistent/path.yml")
-        assert namespaces == []
+    def test_get_available_datasources_invalid_path(self):
+        """W1-02: get_available_datasources handles invalid config path gracefully."""
+        datasources = get_available_datasources("/nonexistent/path.yml")
+        assert datasources == []
 
     def test_create_cli_args(self):
-        """W1-03: create_cli_args generates correct argument namespace."""
-        args = create_cli_args(config_path=TESTS_CONF, namespace="ssb_sqlite")
-        assert args.namespace == "ssb_sqlite"
+        """W1-03: create_cli_args generates correct argument datasource."""
+        args = create_cli_args(config_path=TESTS_CONF, datasource="ssb_sqlite")
+        assert args.datasource == "ssb_sqlite"
         assert args.non_interactive is True
         assert hasattr(args, "config")
         assert hasattr(args, "storage_path")
@@ -58,7 +58,7 @@ class TestConfigManagerIntegration:
     def test_setup_config_and_models(self):
         """W1-04: ConfigManager.setup_config returns DatusCLI with models available."""
         cm = ConfigManager()
-        cli = cm.setup_config(config_path=TESTS_CONF, namespace="ssb_sqlite")
+        cli = cm.setup_config(config_path=TESTS_CONF, datasource="ssb_sqlite")
 
         assert cli is not None, "setup_config should return a DatusCLI instance"
         assert cm.cli is cli

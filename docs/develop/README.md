@@ -77,19 +77,20 @@ agent:
     spider2:
       benchmark_path: benchmark/spider2/spider2-snow
 
-  namespace: # namespace is a set of database connections
-    local_duckdb:
-      type: duckdb
-      uri: ./tests/duckdb-demo.duckdb
-    spider-snow:
-      type: snowflake
-      warehouse: ${SNOWFLAKE_WAREHOUSE}
-      account: ${SNOWFLAKE_ACCOUNT}
-      username: ${SNWOFLAKE_USER}
-      password: ${SNOWFLAKE_PASSWORD}
-    bird_sqlite:
-      type: sqlite
-      path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+  services:
+    databases:
+      local_duckdb:
+        type: duckdb
+        uri: ./tests/duckdb-demo.duckdb
+      spider-snow:
+        type: snowflake
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        password: ${SNOWFLAKE_PASSWORD}
+      bird_sqlite:
+        type: sqlite
+        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
 
   storage:
     base_path: data
@@ -145,7 +146,7 @@ Final Result: {"status": "success", "message": "LLM model test successful", "res
 ```
 
 ```bash
-python -m datus.main check-db --database local_duckdb
+python -m datus.main check-db --datasource local_duckdb
 ```
 
 ---
@@ -153,7 +154,7 @@ python -m datus.main check-db --database local_duckdb
 ## Run SQL
 
 ```bash
-python -m datus.cli.main --database local_duckdb --config conf/agent.yml
+python -m datus.cli.main --datasource local_duckdb --config conf/agent.yml
 
 Datus> select * from tree;
 ┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
@@ -177,7 +178,7 @@ Datus> select * from tree;
 └───────────┴─────────────┴────────────┴────────┘
 Returned 15 rows in 0.03 seconds
 
-Datus> .help
+Datus> /help
 ```
 
 ---
@@ -193,19 +194,21 @@ benchmark:
   spider2:
     benchmark_path: benchmark/spider2/spider2-snow
 
-namespace:
-  spidersnow:
-    type: snowflake
-    username: ${SNOWFLAKE_USER}
-    account: ${SNOWFLAKE_ACCOUNT}
-    warehouse: ${SNOWFLAKE_WAREHOUSE}
-    password: ${SNOWFLAKE_PASSWORD}
+agent:
+  services:
+    databases:
+      spider-snow:
+        type: snowflake
+        username: ${SNOWFLAKE_USER}
+        account: ${SNOWFLAKE_ACCOUNT}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        password: ${SNOWFLAKE_PASSWORD}
 ```
 
 ### Bootstrap Knowledge Base
 
 ```bash
-python -m datus.main bootstrap-kb --database spidersnow --benchmark spider2 --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --datasource spider-snow --benchmark spider2 --kb_update_strategy overwrite
 ```
 
 > ⚠️ May take hours (approx. 14,000 tables).
@@ -213,11 +216,11 @@ python -m datus.main bootstrap-kb --database spidersnow --benchmark spider2 --kb
 ### Run Test by IDs
 
 ```bash
-python -m datus.main benchmark --database spidersnow --benchmark spider2 --benchmark_task_ids sf_bq104
+python -m datus.main benchmark --datasource spider-snow --benchmark spider2 --benchmark_task_ids sf_bq104
 ```
 
 ```bash
-python -m datus.cli.main --database spidersnow  --config conf/agent.yml
+python -m datus.cli.main --datasource spider-snow  --config conf/agent.yml
 
 Datus> !darun_screen
 Creating a new SQL task
@@ -243,10 +246,12 @@ benchmark:
   bird_dev:
     benchmark_path: benchmark/bird/dev_20240627
 
-namespace:
-  bird_sqlite:
-    type: sqlite
-    path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
+agent:
+  services:
+    databases:
+      bird_sqlite:
+        type: sqlite
+        path_pattern: benchmark/bird/dev_20240627/dev_databases/**/*.sqlite
 ```
 
 ### Download and Extract Bird Dev
@@ -264,27 +269,27 @@ cd ../../..
 ### Bootstrap Knowledge Base
 
 ```bash
-python -m datus.main bootstrap-kb --database bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --datasource bird_sqlite --benchmark bird_dev --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium --benchmark_task_ids 14 15
+python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium --benchmark_task_ids 14 15
 ```
 
 ```bash
-python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --schema_linking_rate fast --benchmark_task_ids 32
+python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --schema_linking_rate fast --benchmark_task_ids 32
 ```
 
 ```bash
-python -m datus.main benchmark --database bird_sqlite --benchmark bird_dev --plan fixed --schema_linking_rate medium
+python -m datus.main benchmark --datasource bird_sqlite --benchmark bird_dev --workflow fixed --schema_linking_rate medium
 ```
 
 ### Using cli to develop
 
 ```bash
-python -m datus.cli.main --database bird_sqlite  --config conf/agent.yml
+python -m datus.cli.main --datasource bird_sqlite  --config conf/agent.yml
 ```
 
 # Semantic Layer Benchmark
@@ -317,15 +322,16 @@ dwh_database: <home dir>/.metricflow/duck.db
 Update Configuration conf/agent.yml:
 
 ```yaml
-namespace:
-  duckdb:
-    type: duckdb
-    name: duck
-    uri: ~/.metricflow/duck.db
+agent:
+  services:
+    databases:
+      duckdb:
+        type: duckdb
+        uri: ~/.metricflow/duck.db
 
-benchmark:
-  semantic_layer:
-    benchmark_path: benchmark/semantic_layer
+  benchmark:
+    semantic_layer:
+      benchmark_path: benchmark/semantic_layer
 ```
 
 Export Environment Variables:
@@ -338,11 +344,11 @@ export MF_MODEL_PATH=</path/to/semantic-models-dir>
 ### Bootstrap Metrics Generation
 
 ```bash
-python -m datus.main bootstrap-kb --database duckdb --components metrics --kb_update_strategy overwrite
+python -m datus.main bootstrap-kb --datasource duckdb --components metrics --kb_update_strategy overwrite
 ```
 
 ### Run Tests
 
 ```bash
-python -m datus.main benchmark --database duckdb --benchmark semantic_layer --plan metric_to_sql
+python -m datus.main benchmark --datasource duckdb --benchmark semantic_layer --workflow metric_to_sql
 ```

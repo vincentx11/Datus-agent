@@ -25,7 +25,7 @@ class SemanticNodeInput(BaseInput):
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
-    max_turns: int = Field(default=30, description="Maximum conversation turns per interaction")
+    max_turns: Optional[int] = Field(default=None, description="Maximum conversation turns; None uses node config")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
     prompt_language: Optional[str] = Field(default="en", description="Language for prompt template")
@@ -51,4 +51,3 @@ class SemanticNodeResult(BaseResult):
         default_factory=list, description="List of generated semantic model file paths (single table or multi-table)"
     )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
-    error: Optional[str] = Field(default=None, description="Error message if interaction failed")

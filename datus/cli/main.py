@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Datus-CLI: An AI-powered SQL command-line interface for data engineers.
+Datus-CLI: Data engineering agent builds evolvable context for your data system.
 Main entry point for the CLI application.
 """
 
@@ -14,6 +14,7 @@ from datus import __version__
 from datus.cli.repl import DatusCLI
 from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -21,7 +22,9 @@ logger = get_logger(__name__)
 
 class ArgumentParser:
     def __init__(self):
-        self.parser = argparse.ArgumentParser(description="Datus: AI-powered SQL command-line interface")
+        self.parser = argparse.ArgumentParser(
+            description="Datus: Data engineering agent builds evolvable context for your data system"
+        )
         self._setup_arguments()
 
     def _setup_arguments(self):
@@ -59,10 +62,9 @@ class ArgumentParser:
         # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
         self.parser.add_argument(
-            "--database",
-            "--namespace",
+            "--datasource",
             type=str,
-            help="Database name to connect (use --database, --namespace is deprecated)",
+            help="Datasource name to connect",
             default="",
         )
 
@@ -71,6 +73,26 @@ class ArgumentParser:
             "--save_llm_trace",
             action="store_true",
             help="Enable saving LLM input/output traces to YAML files",
+        )
+
+        # Filesystem strict mode: fail-closed for paths outside the project
+        # root instead of prompting the broker. ``default=None`` preserves
+        # ``agent.filesystem.strict`` in YAML when neither flag is passed.
+        filesystem_strict_group = self.parser.add_mutually_exclusive_group()
+        filesystem_strict_group.add_argument(
+            "--filesystem-strict",
+            dest="filesystem_strict",
+            action="store_true",
+            default=None,
+            help="Reject filesystem reads/writes outside the project root at the "
+            "tool layer (fail-closed; no interactive prompt). Overrides "
+            "agent.filesystem.strict from YAML.",
+        )
+        filesystem_strict_group.add_argument(
+            "--no-filesystem-strict",
+            dest="filesystem_strict",
+            action="store_false",
+            help="Force-disable filesystem strict mode even if agent.filesystem.strict is true in YAML.",
         )
 
         # Execution mode: --web and --print are mutually exclusive
@@ -163,10 +185,17 @@ class Application:
 
         configure_logging(args.debug, console_output=False)
 
-        if not args.database:
-            # Try to auto-select: default database or single database
-            args.database = self._resolve_default_database(args)
-            if not args.database:
+        # REPL-only: ensure ./.datus/config.yml exists before anything touches
+        # agent config. Must run before _resolve_default_datasource so the
+        # project-level default_datasource can win over the base agent.yml's.
+        if args.print_mode is None and not args.web:
+            self._ensure_project_config(args)
+
+        is_repl = args.print_mode is None and not args.web
+        if not args.datasource:
+            # Try to auto-select: default datasource or single datasource
+            args.datasource = self._resolve_default_datasource(args, allow_empty=is_repl)
+            if not args.datasource and not is_repl:
                 return
 
         if args.resume and args.print_mode is None:
@@ -185,8 +214,8 @@ class Application:
             cli = DatusCLI(args)
             cli.run()
 
-    def _resolve_default_database(self, args) -> str:
-        """Auto-select database when --database is not specified."""
+    def _resolve_default_datasource(self, args, allow_empty: bool = False) -> str:
+        """Auto-select datasource when --datasource is not specified."""
         from rich.console import Console
         from rich.table import Table
 
@@ -194,30 +223,243 @@ class Application:
 
         console = Console()
         try:
-            config = load_agent_config(config=args.config or "", action="service", reload=True)
+            config = load_agent_config(config=args.config or "", action="service", reload=True, create_if_missing=True)
         except Exception:
-            self.arg_parser.parser.print_help()
+            if not allow_empty:
+                self.arg_parser.parser.print_help()
             return ""
 
-        databases = config.service.databases
-        if not databases:
-            console.print("[yellow]No databases configured. Run 'datus configure' first.[/yellow]")
+        datasources = config.services.datasources
+        if not datasources:
             return ""
 
-        default_db = config.service.default_database
+        # default_datasource reflects the project-level overlay when present — it
+        # is applied inside load_agent_config via _apply_project_override which
+        # flips datasources[*].default before AgentConfig is built.
+        default_db = config.services.default_datasource
         if default_db:
-            console.print(f"[dim]Using default database: {default_db}[/dim]")
             return default_db
 
-        # Multiple databases, no default — show list and ask user to specify
-        console.print("[yellow]Multiple databases configured. Please specify --database <name>[/yellow]\n")
+        if allow_empty:
+            return ""
+
+        # Multiple datasources, no default — show list and ask user to specify
+        console.print("[yellow]Multiple datasources configured. Please specify --datasource <name>[/yellow]\n")
         table = Table(show_header=True, header_style="bold")
         table.add_column("Name", style="cyan")
         table.add_column("Type")
-        for name, cfg in databases.items():
+        for name, cfg in datasources.items():
             table.add_row(name, cfg.type)
         console.print(table)
         return ""
+
+    def _ensure_project_config(self, args) -> None:
+        """Ensure ``./.datus/config.yml`` exists; create a minimal one when absent.
+
+        Unlike the previous first-run wizard, this no longer prompts the user
+        to pick a model — the CLI starts with no active model and the user
+        can configure one later via ``/model``.  Only ``default_datasource``
+        is auto-selected (first DB from agent.yml) so that the REPL can
+        function immediately for database browsing.
+
+        When the file exists but references stale values, repair silently
+        (clear the model target instead of prompting).
+        """
+        from datus.configuration.agent_config_loader import load_agent_config
+        from datus.configuration.project_config import (
+            ProjectOverride,
+            project_config_path,
+            save_project_override,
+        )
+
+        if not project_config_path().exists():
+            try:
+                base_config = load_agent_config(config=args.config or "", reload=True, create_if_missing=True)
+            except Exception as e:
+                logger.error(f"Cannot create project config: base agent.yml failed to load: {e}")
+                raise
+            default_datasource = base_config.services.default_datasource
+            if not default_datasource and base_config.services.datasources:
+                default_datasource = next(iter(base_config.services.datasources))
+            override = ProjectOverride(default_datasource=default_datasource)
+            written = save_project_override(override)
+            from rich.console import Console
+
+            console = Console()
+            console.print(f"[green]Created project config:[/] {written}")
+            console.print("[dim]No model configured yet — use /model inside the CLI to set one.[/]")
+            return
+
+        self._repair_project_overrides(args)
+
+    def _repair_project_overrides(self, args) -> None:
+        """Clear stale model target silently; re-prompt only for datasource.
+
+        Model target validation is deferred to runtime — if it is stale we
+        simply clear it so the CLI starts with no active model. The user
+        can pick one later via ``/model``.
+
+        For ``default_datasource`` we still prompt interactively because the
+        REPL needs a valid DB connection to be useful.
+        """
+        import sys
+
+        from rich.console import Console
+
+        from datus.cli._cli_utils import select_choice
+        from datus.configuration.agent_config_loader import configuration_manager
+        from datus.configuration.project_config import (
+            load_project_override,
+            project_config_path,
+            save_project_override,
+        )
+
+        override = load_project_override()
+        if override is None or override.is_empty():
+            return
+
+        try:
+            raw = dict(configuration_manager(config_path=args.config or "", reload=True).data)
+        except Exception as e:
+            logger.error(f"Cannot validate project overrides: base agent.yml failed to load: {e}")
+            raise
+
+        model_names = list((raw.get("models") or {}).keys())
+        db_names = list(((raw.get("services") or {}).get("datasources") or {}).keys())
+
+        target_invalid, stale_desc = self._classify_target(override.target, raw, model_names)
+        db_invalid = override.default_datasource is not None and override.default_datasource not in db_names
+        if not (target_invalid or db_invalid):
+            return
+
+        console = Console()
+        changed = False
+
+        if target_invalid:
+            override.target = None
+            console.print(
+                f"[yellow]Cleared stale model target ({stale_desc}) from {project_config_path()}. "
+                f"Use /model to configure a new one.[/]"
+            )
+            changed = True
+
+        if db_invalid:
+            if not db_names:
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            "Base agent.yml has no 'agent.services.datasources' defined; cannot repair "
+                            f"default_datasource={override.default_datasource!r} in .datus/config.yml."
+                        )
+                    },
+                )
+            if not sys.stdin.isatty():
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            f"Project config {project_config_path()} has stale "
+                            f"default_datasource={override.default_datasource!r} and stdin is not a TTY. "
+                            f"Edit .datus/config.yml manually or rerun in an interactive terminal."
+                        )
+                    },
+                )
+            console.print(
+                f"[yellow]default_datasource[/] = {override.default_datasource!r} not found in agent.yml "
+                f"services.datasources ({sorted(db_names)}). Please pick a replacement:"
+            )
+            db_types = (raw.get("services") or {}).get("datasources") or {}
+            choices = {name: f"{name}  ({(db_types.get(name) or {}).get('type', 'unknown')})" for name in db_names}
+            picked = select_choice(console, choices, default=db_names[0])
+            override.default_datasource = picked or db_names[0]
+            changed = True
+
+        if changed:
+            save_project_override(override)
+
+    @staticmethod
+    def _classify_target(target, raw, model_names):
+        """Return ``(invalid, description)`` for a project-level target.
+
+        Each target shape is validated against the right source:
+          - legacy string / ``ProjectTarget(custom=...)`` → ``agent.models``.
+          - ``ProjectTarget(provider=..., model=...)`` → credentials must be
+            resolvable for that provider via ``agent.providers`` or the
+            catalog's ``api_key_env``; otherwise we flag it stale so the
+            caller can fall back to a custom model.
+
+        ``description`` is a human-friendly string embedded in the prompt
+        and the non-TTY error message.
+        """
+        from datus.configuration.project_config import ProjectTarget
+
+        if target is None:
+            return False, ""
+        if isinstance(target, ProjectTarget):
+            if target.custom:
+                return target.custom not in model_names, f"custom={target.custom!r}"
+            if target.provider and target.model:
+                provider = target.provider
+                desc = f"provider={provider!r} model={target.model!r}"
+                if not Application._provider_has_credentials(provider, raw):
+                    return True, desc
+                return False, desc
+            return True, repr(target)
+        return target not in model_names, f"target={target!r}"
+
+    @staticmethod
+    def _provider_has_credentials(provider: str, raw: dict) -> bool:
+        """Lightweight credential check that mirrors
+        :meth:`AgentConfig.provider_available` without instantiating the
+        full config (which would re-run override validation and defeat the
+        whole repair flow).
+        """
+        import os
+
+        from datus.configuration.agent_config import _load_provider_catalog, resolve_env
+
+        providers_raw = raw.get("providers") or {}
+        user_entry = providers_raw.get(provider) if isinstance(providers_raw, dict) else None
+        if not isinstance(user_entry, dict):
+            user_entry = {}
+
+        try:
+            catalog = _load_provider_catalog()
+        except Exception:
+            catalog = {}
+        meta = {}
+        if isinstance(catalog, dict):
+            providers_meta = catalog.get("providers") or {}
+            if isinstance(providers_meta, dict):
+                meta = providers_meta.get(provider) or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+
+        auth_type = meta.get("auth_type") or user_entry.get("auth_type") or "api_key"
+        if auth_type == "subscription":
+            try:
+                from datus.auth.claude_credential import get_claude_subscription_token
+
+                token, _ = get_claude_subscription_token(api_key_from_config=user_entry.get("api_key") or "")
+                return bool(token)
+            except Exception:
+                return False
+        if auth_type == "oauth":
+            try:
+                from datus.auth.oauth_manager import OAuthManager
+
+                return OAuthManager().is_authenticated()
+            except Exception:
+                return False
+
+        api_key = user_entry.get("api_key")
+        if api_key and resolve_env(str(api_key)).strip() and not resolve_env(str(api_key)).startswith("<MISSING:"):
+            return True
+        env_name = meta.get("api_key_env")
+        if env_name and os.getenv(str(env_name), "").strip():
+            return True
+        return False
 
     def _run_web_interface(self, args):
         """Launch web chatbot interface"""

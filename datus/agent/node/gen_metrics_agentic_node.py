@@ -10,15 +10,15 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-from typing import AsyncGenerator, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.cli.execution_state import ExecutionInterrupted
-from datus.cli.generation_hooks import make_kb_path_normalizer
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import MessagePart, build_structured_content
@@ -42,12 +42,16 @@ class GenMetricsAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_metrics"
 
+    # Define-metric workflow scoped to ``gen_metrics`` via SKILL.md allowed_agents.
+    DEFAULT_SKILLS = "gen-metrics"
+
     def __init__(
         self,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         """
         Initialize the GenMetricsAgenticNode.
@@ -67,8 +71,8 @@ class GenMetricsAgenticNode(AgenticNode):
             if isinstance(agentic_node_config, dict):
                 self.max_turns = agentic_node_config.get("max_turns", 40)
 
-        self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_database))
-        self.knowledge_base_dir = str(agent_config.path_manager.knowledge_base_home)
+        self.metrics_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_datasource))
+        self.knowledge_base_dir = str(agent_config.path_manager.subject_dir)
 
         from datus.configuration.node_type import NodeType
 
@@ -84,6 +88,7 @@ class GenMetricsAgenticNode(AgenticNode):
             tools=[],
             mcp_servers={},
             scope=scope,
+            is_subagent=is_subagent,
         )
 
         # Initialize metrics storage for context queries
@@ -97,6 +102,8 @@ class GenMetricsAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
         self.ask_user_tool = None
+        self.hooks = None
+        self.generation_evidence = GenerationEvidence()
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -129,10 +136,7 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            self.filesystem_func_tool = FilesystemFuncTool(
-                root_path=self.knowledge_base_dir,
-                path_normalizer=make_kb_path_normalizer(self.agent_config, default_kind="metric"),
-            )
+            self.filesystem_func_tool = self._make_filesystem_tool()
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
             logger.debug("Added filesystem tools: read_file, write_file, edit_file, glob, grep")
@@ -144,11 +148,14 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config)
+            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
-            logger.debug("Added tools: check_semantic_object_exists, end_metric_generation")
+            self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
+            logger.debug(
+                "Added tools: check_semantic_object_exists, end_metric_generation, end_semantic_model_generation"
+            )
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
@@ -158,18 +165,19 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            # Default to "metricflow", override from config if specified
-            adapter_type = "metricflow"
+            adapter_type = None
             if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
                 node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
                 if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
                     adapter_type = node_config.get("semantic_adapter")
+            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
 
             # Initialize semantic func tool
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 adapter_type=adapter_type,
+                generation_evidence=self.generation_evidence,
             )
 
             # Add all available tools from semantic func tool
@@ -187,8 +195,8 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool import DBFuncTool
 
-            self.db_func_tool = DBFuncTool.create_dynamic(
-                self.agent_config,
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
             )
             self.tools.extend(self.db_func_tool.available_tools())
@@ -212,6 +220,39 @@ class GenMetricsAgenticNode(AgenticNode):
             )
         except Exception as e:
             logger.error(f"Failed to setup gen_semantic_model tools: {e}")
+
+    def _tool_category_map(self) -> Dict[str, List[Any]]:
+        """Map tools to permission categories so profile rules apply.
+
+        ``generation_tools`` / ``gen_semantic_model_tools`` expose semantic
+        layer operations (``end_metric_generation`` etc.) so they ride the
+        ``semantic_tools`` category for the sake of profile rules.
+        """
+        mapping = super()._tool_category_map()
+        if self.db_func_tool:
+            mapping["db_tools"] = list(self.db_func_tool.available_tools())
+        semantic_bucket: List[Any] = []
+        if getattr(self, "semantic_tools", None):
+            semantic_bucket.extend(self.semantic_tools.available_tools())
+        if self.generation_tools:
+            from datus.tools.func_tool import trans_to_function_tool
+
+            semantic_bucket.extend(
+                [
+                    trans_to_function_tool(self.generation_tools.check_semantic_object_exists),
+                    trans_to_function_tool(self.generation_tools.end_metric_generation),
+                    trans_to_function_tool(self.generation_tools.end_semantic_model_generation),
+                ]
+            )
+        if self.gen_semantic_model_tools:
+            semantic_bucket.extend(self.gen_semantic_model_tools.available_tools())
+        if semantic_bucket:
+            mapping["semantic_tools"] = semantic_bucket
+        if self.filesystem_func_tool:
+            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
+        if self.ask_user_tool:
+            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
+        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -244,6 +285,8 @@ class GenMetricsAgenticNode(AgenticNode):
         Returns:
             Dictionary of template variables
         """
+        from datus.utils.node_utils import build_datasource_prompt_context
+
         context = {}
 
         # Tool name lists for template display
@@ -251,9 +294,11 @@ class GenMetricsAgenticNode(AgenticNode):
         context["mcp_tools"] = ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None"
         context["semantic_model_dir"] = self.metrics_dir
         context["knowledge_base_dir"] = self.knowledge_base_dir
-        context["kind_subdir"] = "semantic_models"
-        context["current_database"] = self.agent_config.current_database
+        # Filesystem tool is rooted at project_root; full path required.
+        context["kind_subdir"] = f"subject/semantic_models/{self.agent_config.current_datasource}"
+        context["current_datasource"] = self.agent_config.current_datasource
         context["has_ask_user_tool"] = self.ask_user_tool is not None
+        context.update(build_datasource_prompt_context(self.agent_config))
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -379,12 +424,18 @@ class GenMetricsAgenticNode(AgenticNode):
             enhanced_message = user_input.user_message
             enhanced_parts = []
 
-            if user_input.catalog or user_input.database or user_input.db_schema:
+            from datus.utils.node_utils import resolve_database_name_for_prompt
+
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                user_input.database or "",
+            )
+            if user_input.catalog or effective_db or user_input.db_schema:
                 context_parts = []
                 if user_input.catalog:
                     context_parts.append(f"catalog: {user_input.catalog}")
-                if user_input.database:
-                    context_parts.append(f"database: {user_input.database}")
+                if effective_db:
+                    context_parts.append(f"database: {effective_db}")
                 if user_input.db_schema:
                     context_parts.append(f"schema: {user_input.db_schema}")
                 context_part_str = f"Context: {', '.join(context_parts)}"
@@ -415,10 +466,10 @@ class GenMetricsAgenticNode(AgenticNode):
                 tools=self.tools,
                 mcp_servers=self.mcp_servers,
                 instruction=system_instruction,
-                max_turns=self.max_turns,
+                max_turns=user_input.max_turns if user_input.max_turns else self.max_turns,
                 session=session,
                 action_history_manager=action_history_manager,
-                hooks=None,
+                hooks=self._compose_hooks(self.hooks),
                 agent_name=self.get_node_name(),
                 interrupt_controller=self.interrupt_controller,
             ):
@@ -453,6 +504,12 @@ class GenMetricsAgenticNode(AgenticNode):
             )
             if extracted_output:
                 response_content = extracted_output
+
+            if metric_file and not self.generation_evidence.metric_kb_sync_passed:
+                raise RuntimeError(
+                    "Metric generation did not publish to Knowledge Base. "
+                    "Call end_metric_generation after validate_semantic and query_metrics(dry_run=True) succeed."
+                )
 
             # Extract token usage (only in interactive mode with session)
             tokens_used = 0

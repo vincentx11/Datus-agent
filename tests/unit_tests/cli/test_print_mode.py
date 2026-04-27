@@ -28,7 +28,7 @@ def _make_args(**overrides):
         subagent=None,
         proxy_tools=None,
         session_scope=None,
-        namespace="test_ns",
+        datasource="test_ns",
         db_type="sqlite",
         db_path=None,
         config=None,
@@ -53,7 +53,7 @@ def _make_runner(**overrides):
         patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
         patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
     ):
-        mock_cfg.return_value = MagicMock(namespaces=[])
+        mock_cfg.return_value = MagicMock(datasource_configs={})
         mock_completer.return_value.parse_at_context.return_value = ([], [], [])
         from datus.cli.print_mode import PrintModeRunner
 
@@ -71,7 +71,7 @@ class TestWritePayload:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -103,7 +103,7 @@ class TestReadInteractionInput:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -122,7 +122,7 @@ class TestReadInteractionInput:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -136,7 +136,7 @@ class TestReadInteractionInput:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -179,7 +179,7 @@ class TestPrintModeRun:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -226,7 +226,7 @@ class TestPrintModeRun:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter"),
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             from datus.cli.print_mode import PrintModeRunner
 
             runner = PrintModeRunner(_make_args())
@@ -253,7 +253,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             mock_completer.return_value.parse_at_context.return_value = ([], [], [])
             from datus.cli.print_mode import PrintModeRunner
 
@@ -289,7 +289,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             mock_completer.return_value.parse_at_context.return_value = ([], [], [])
             from datus.cli.print_mode import PrintModeRunner
 
@@ -323,7 +323,7 @@ class TestResumeSessionId:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             mock_completer.return_value.parse_at_context.return_value = ([], [], [])
             from datus.cli.print_mode import PrintModeRunner
 
@@ -365,7 +365,7 @@ class TestRunUsesFactory:
             patch("datus.cli.print_mode.load_agent_config") as mock_cfg,
             patch("datus.cli.print_mode.AtReferenceCompleter") as mock_completer,
         ):
-            mock_cfg.return_value = MagicMock(namespaces=[])
+            mock_cfg.return_value = MagicMock(datasource_configs={})
             mock_completer.return_value.parse_at_context.return_value = ([], [], [])
             from datus.cli.print_mode import PrintModeRunner
 
@@ -485,7 +485,7 @@ class TestStreamChatActions:
         output = buf.getvalue().strip()
         data = json.loads(output)
         assert data["message_id"] == "int_1"
-        mock_node.interaction_broker.submit.assert_awaited_once_with("int_1", "user_response")
+        mock_node.interaction_broker.submit.assert_awaited_once_with("int_1", [["user_response"]])
 
     @pytest.mark.asyncio
     async def test_stream_chat_interaction_with_proxy_skips_stdin(self):
