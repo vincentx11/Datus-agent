@@ -129,7 +129,11 @@ class AgenticNode(Node):
         self.actions: List[ActionHistory] = []
         self.session_id: Optional[str] = None
         self._session: Optional[AdvancedSQLiteSession] = None
-        self.ephemeral: bool = False  # When True, use in-memory session (no SQLite persistence)
+        # Optional extra path layer between {sessions_dir}/{user_scope}/ and the .db
+        # file. Set by SubAgentTaskTool to the parent's session_id so subagent dbs
+        # nest under their launching main session — enabling later resume.
+        self.session_subdir: Optional[str] = None
+        self._session_manager: Optional["SessionManager"] = None  # noqa: F821 — lazy
         # Populated lazily via the ``model`` property so ``/model`` switches
         # take effect on the next access without rebuilding the node.
         # ``_pinned_model`` exists because the parent :class:`Node` writes
@@ -244,6 +248,39 @@ class AgenticNode(Node):
         whenever callers clear the pin.
         """
         self._pinned_model = value
+
+    @property
+    def session_manager(self):
+        """Lazy node-owned SessionManager.
+
+        Path layout (each layer optional except the leaf):
+            {agent_config.session_dir}
+              / {self.scope}                  — user/tenant isolation
+              / {self.session_subdir}         — main_session_id when this node is a subagent
+              / {self.session_id}.db
+        """
+        # Use getattr so tests that bypass __init__ still get the lazy default.
+        if getattr(self, "_session_manager", None) is None:
+            import os
+
+            from datus.models.session_manager import SessionManager
+
+            cfg = getattr(self, "agent_config", None)
+            base_dir = getattr(cfg, "session_dir", None) if cfg is not None else None
+            if not base_dir:
+                from datus.utils.path_manager import get_path_manager
+
+                base_dir = str(get_path_manager(agent_config=cfg).sessions_dir)
+            user_scope = getattr(self, "scope", None)
+            session_subdir = getattr(self, "session_subdir", None)
+
+            if session_subdir:
+                scoped_dir = SessionManager(session_dir=base_dir, scope=user_scope).session_dir
+                nested_dir = os.path.join(scoped_dir, session_subdir)
+                self._session_manager = SessionManager(session_dir=nested_dir, scope=None)
+            else:
+                self._session_manager = SessionManager(session_dir=base_dir, scope=user_scope)
+        return self._session_manager
 
     @property
     def context_length(self) -> Optional[int]:
@@ -524,18 +561,8 @@ class AgenticNode(Node):
                 self.session_id = self._generate_session_id()
                 logger.info(f"Generated new session ID: {self.session_id}")
 
-            if self.model:
-                if self.ephemeral:
-                    # In-memory session for sub-agents — no SQLite persistence
-                    self._session = AdvancedSQLiteSession(
-                        session_id=self.session_id,
-                        db_path=":memory:",
-                        create_tables=True,
-                    )
-                    logger.debug(f"Created ephemeral in-memory session: {self.session_id}")
-                else:
-                    self._session = self.model.create_session(self.session_id)
-                    logger.debug(f"Created session: {self.session_id}")
+            self._session = self.session_manager.create_session(self.session_id)
+            logger.debug(f"Created session: {self.session_id}")
 
         return self._session, None
 
@@ -600,13 +627,6 @@ class AgenticNode(Node):
         Returns:
             Dict with success, summary, and summary_token count
         """
-        if self.ephemeral:
-            # Ephemeral in-memory sessions don't need compaction — just reset
-            self._session = None
-            self.session_id = None
-            logger.debug("Skipped compaction for ephemeral session")
-            return {"success": False, "summary": "", "summary_token": 0}
-
         try:
             model = self.model
         except Exception as exc:
@@ -736,11 +756,23 @@ class AgenticNode(Node):
             return {}
 
         nodes_config = agent_config.agentic_nodes
-        if node_name not in nodes_config:
+        from datus.configuration.scoped_context_overrides import get_override
+
+        override = get_override(node_name)
+        if node_name not in nodes_config and override is None:
             logger.debug(f"Node configuration '{node_name}' not found in agent.yml, using default configuration")
             return {}
 
-        node_config = nodes_config[node_name]
+        if override is not None:
+            # Layer the runtime override (with parent-merged scoped_context) on top
+            # of any yaml entry, so child node __init__ sees the effective context.
+            base = nodes_config.get(node_name) if node_name in nodes_config else {}
+            base_dict = (
+                dict(base) if isinstance(base, dict) else (base.model_dump() if hasattr(base, "model_dump") else {})
+            )
+            node_config = {**base_dict, **override.model_dump(exclude_unset=True)}
+        else:
+            node_config = nodes_config[node_name]
 
         # Extract configuration attributes
         config = {}
@@ -808,16 +840,33 @@ class AgenticNode(Node):
 
         The permission manager uses global config from agent.yml and node-specific
         overrides to control access to tools/MCP/skills with allow/deny/ask levels.
+
+        ``execution_mode="workflow"`` nodes (``/bootstrap``, scheduler subagents,
+        ``auto_create``, etc.) ignore the user's profile and run under a fresh
+        ``dangerous`` profile. Combined with the non-interactive ``PermissionHooks``
+        gate (see :meth:`_ensure_permission_hooks`), this means workflow flows
+        execute exactly the operations ``dangerous`` allows and fail loudly on
+        anything else — no broker prompts, no auto-approval, no drift when the
+        user happens to be on ``normal`` or ``auto``.
         """
         if not self.agent_config or not hasattr(self.agent_config, "permissions_config"):
             return
 
-        permissions_config = self.agent_config.permissions_config
-        if not permissions_config:
-            return
-
         try:
             from datus.tools.permission.permission_manager import PermissionManager
+
+            is_workflow = getattr(self, "execution_mode", None) == "workflow"
+            if is_workflow:
+                from datus.tools.permission.profiles import get_profile
+
+                permissions_config = get_profile("dangerous")
+                active_profile = "dangerous"
+            else:
+                permissions_config = self.agent_config.permissions_config
+                active_profile = getattr(self.agent_config, "active_profile_name", None) or "normal"
+
+            if not permissions_config:
+                return
 
             # Get node-specific permission overrides from node_config
             node_permissions = self.node_config.get("permissions", {})
@@ -825,12 +874,15 @@ class AgenticNode(Node):
             self.permission_manager = PermissionManager(
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
-                active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
+                active_profile=active_profile,
             )
             # Forward existing callback to permission manager
             if self._permission_callback:
                 self.permission_manager.set_permission_callback(self._permission_callback)
-            logger.debug(f"Permission manager initialized for node '{self.get_node_name()}'")
+            logger.debug(
+                f"Permission manager initialized for node '{self.get_node_name()}' "
+                f"(profile={active_profile}, workflow={is_workflow})"
+            )
 
         except Exception as e:
             logger.exception("Failed to setup permission manager")
@@ -1368,24 +1420,15 @@ class AgenticNode(Node):
 
     def clear_session(self) -> None:
         """Clear the current session."""
-        if self.ephemeral:
-            self._session = None
-            logger.debug(f"Cleared ephemeral session: {self.session_id}")
-            return
-        if self.model and self.session_id:
-            self.model.clear_session(self.session_id)
+        if self.session_id:
+            self.session_manager.clear_session(self.session_id)
             self._session = None
             logger.info(f"Cleared session: {self.session_id}")
 
     def delete_session(self) -> None:
         """Delete the current session completely."""
-        if self.ephemeral:
-            self._session = None
-            self.session_id = None
-            logger.debug("Deleted ephemeral session")
-            return
-        if self.model and self.session_id:
-            self.model.delete_session(self.session_id)
+        if self.session_id:
+            self.session_manager.delete_session(self.session_id)
             self._session = None
             self.session_id = None
             logger.info("Deleted session")
@@ -1575,6 +1618,11 @@ class AgenticNode(Node):
                     self.tool_registry.register_tools(category, tools)
             from datus.tools.permission.permission_hooks import PermissionHooks
 
+            # ``execution_mode="workflow"`` flows have no human in the loop, so
+            # ASK / EXTERNAL fs hits short-circuit to ``PermissionDeniedException``
+            # inside the hook rather than awaiting the broker indefinitely.
+            non_interactive = getattr(self, "execution_mode", None) == "workflow"
+
             # Never call ``_get_or_create_broker`` here — it resets the queue
             # and orphans any parent CLI listener when running as a sub-agent.
             self.permission_hooks = PermissionHooks(
@@ -1583,6 +1631,7 @@ class AgenticNode(Node):
                 node_name=self.get_node_name(),
                 tool_registry=self.tool_registry,
                 fs_policy=self._make_filesystem_policy(),
+                non_interactive=non_interactive,
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "

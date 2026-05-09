@@ -388,6 +388,108 @@ class TestProcessTemplateItem:
         assert item["tags"] == "education,free_rate"
 
     @pytest.mark.asyncio
+    async def test_success_with_subject_prefixed_summary_path(self, tmp_path):
+        """LLM may report subject/sql_summaries/...; resolver should not duplicate prefixes."""
+        from unittest.mock import patch
+
+        import yaml
+
+        from datus.schemas.action_history import ActionHistory, ActionStatus
+        from datus.storage.reference_template.reference_template_init import process_template_item
+
+        kb_dir = tmp_path / "subject"
+        summary_dir = kb_dir / "sql_summaries"
+        summary_dir.mkdir(parents=True)
+        summary_file = summary_dir / "tpl_001.yaml"
+        summary_file.write_text(
+            yaml.dump(
+                {
+                    "name": "free_rate_query",
+                    "summary": "Query free meal rates by school type",
+                    "search_text": "free rate school type continuation",
+                    "subject_tree": "Education/FreeRate",
+                    "tags": "education,free_rate",
+                }
+            )
+        )
+
+        success_action = MagicMock(spec=ActionHistory)
+        success_action.status = ActionStatus.SUCCESS
+        success_action.output = {"sql_summary_file": "subject/sql_summaries/tpl_001.yaml"}
+        success_action.messages = []
+
+        async def mock_execute_stream(*args, **kwargs):
+            yield success_action
+
+        mock_node = MagicMock()
+        mock_node.knowledge_base_dir = str(kb_dir)
+        mock_node.execute_stream = mock_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.path_manager.sql_summary_path.return_value = summary_dir
+        mock_config.current_datasource = "test_ns"
+
+        item = {
+            "template": "SELECT * FROM t WHERE x = '{{val}}'",
+            "filepath": "/tmp/test.j2",
+            "comment": "",
+            "parameters": '[{"name": "val"}]',
+        }
+
+        with patch(
+            "datus.storage.reference_template.reference_template_init.SqlSummaryAgenticNode",
+            return_value=mock_node,
+        ):
+            result = await process_template_item(item, mock_config, build_mode="overwrite")
+
+        assert result == "subject/sql_summaries/tpl_001.yaml"
+        assert item["name"] == "free_rate_query"
+        assert item["summary"] == "Query free meal rates by school type"
+        assert item["subject_tree"] == "Education/FreeRate"
+
+    @pytest.mark.asyncio
+    async def test_rejects_generated_summary_path_outside_sandbox(self, tmp_path):
+        """A generated summary path outside the SQL-summary sandbox is rejected."""
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionHistory, ActionStatus
+        from datus.storage.reference_template.reference_template_init import process_template_item
+
+        kb_dir = tmp_path / "subject"
+        (kb_dir / "sql_summaries").mkdir(parents=True)
+
+        success_action = MagicMock(spec=ActionHistory)
+        success_action.status = ActionStatus.SUCCESS
+        success_action.output = {"sql_summary_file": "../../outside.yaml"}
+        success_action.messages = []
+
+        async def mock_execute_stream(*args, **kwargs):
+            yield success_action
+
+        mock_node = MagicMock()
+        mock_node.knowledge_base_dir = str(kb_dir)
+        mock_node.execute_stream = mock_execute_stream
+
+        mock_config = MagicMock()
+        mock_config.path_manager.sql_summary_path.return_value = kb_dir / "sql_summaries"
+        mock_config.current_datasource = "test_ns"
+
+        item = {
+            "template": "SELECT * FROM t WHERE x = '{{val}}'",
+            "filepath": "/tmp/test.j2",
+            "comment": "",
+            "parameters": '[{"name": "val"}]',
+        }
+
+        with patch(
+            "datus.storage.reference_template.reference_template_init.SqlSummaryAgenticNode",
+            return_value=mock_node,
+        ):
+            result = await process_template_item(item, mock_config, build_mode="overwrite")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_no_sql_summary_file_returns_none(self):
         """LLM returns success but no sql_summary_file in output."""
         from unittest.mock import patch
@@ -1064,3 +1166,90 @@ class TestExtractCsvValues:
         values = _extract_csv_values(result)
         assert "hello world" in values
         assert "another" in values
+
+
+# ---------------------------------------------------------------------------
+# init_reference_template_async — overwrite truncate semantics
+# ---------------------------------------------------------------------------
+
+
+class TestInitReferenceTemplateAsyncOverwriteTruncate:
+    """Verify that build_mode='overwrite' wipes the storage before re-population."""
+
+    @pytest.mark.asyncio
+    async def test_overwrite_calls_truncate_before_upsert(self, tmp_path):
+        """truncate must be called before upsert_batch when build_mode='overwrite'."""
+        from datus.storage.reference_template.reference_template_init import init_reference_template_async
+
+        (tmp_path / "a.j2").write_text("SELECT {{x}}")
+
+        mock_storage = MagicMock()
+        mock_storage.get_reference_template_size.return_value = 0
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+
+        with patch(
+            "datus.storage.reference_template.reference_template_init.process_template_item",
+            return_value="summary.yaml",
+        ):
+            await init_reference_template_async(
+                storage=mock_storage,
+                global_config=mock_config,
+                template_dir=str(tmp_path),
+                build_mode="overwrite",
+            )
+
+        mock_storage.truncate.assert_called_once_with()
+        # truncate must precede the eventual upsert_batch call
+        method_names = [c[0] for c in mock_storage.method_calls]
+        assert "truncate" in method_names
+        assert "upsert_batch" in method_names
+        assert method_names.index("truncate") < method_names.index("upsert_batch")
+
+    @pytest.mark.asyncio
+    async def test_incremental_does_not_call_truncate(self, tmp_path):
+        """truncate must NOT be called when build_mode='incremental'."""
+        from datus.storage.reference_template.reference_template_init import init_reference_template_async
+
+        (tmp_path / "a.j2").write_text("SELECT {{x}}")
+
+        mock_storage = MagicMock()
+        mock_storage.get_reference_template_size.return_value = 0
+        mock_storage.search_all_reference_templates.return_value = []
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+
+        with patch(
+            "datus.storage.reference_template.reference_template_init.process_template_item",
+            return_value="summary.yaml",
+        ):
+            await init_reference_template_async(
+                storage=mock_storage,
+                global_config=mock_config,
+                template_dir=str(tmp_path),
+                build_mode="incremental",
+            )
+
+        mock_storage.truncate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_overwrite_validate_only_does_not_truncate(self, tmp_path):
+        """validate_only short-circuits before truncate; nothing should be wiped on a dry run."""
+        from datus.storage.reference_template.reference_template_init import init_reference_template_async
+
+        (tmp_path / "a.j2").write_text("SELECT {{x}}")
+
+        mock_storage = MagicMock()
+        mock_storage.get_reference_template_size.return_value = 0
+        mock_config = MagicMock()
+        mock_config.project_name = "unit-test-project"
+
+        await init_reference_template_async(
+            storage=mock_storage,
+            global_config=mock_config,
+            template_dir=str(tmp_path),
+            validate_only=True,
+            build_mode="overwrite",
+        )
+
+        mock_storage.truncate.assert_not_called()

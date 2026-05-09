@@ -46,7 +46,7 @@ from datus.cli.autocomplete import (
     ServiceCommandCompleter,
     SlashCommandCompleter,
 )
-from datus.cli.bi_dashboard import BiDashboardCommands
+from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import (
     PASTE_COLLAPSE_THRESHOLD,
@@ -58,6 +58,7 @@ from datus.cli.cli_styles import (
 )
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
+from datus.cli.init_commands import InitCommands
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
@@ -216,7 +217,11 @@ class DatusCLI:
             else:
                 self._init_prompt_session()
         else:
-            self.at_completer = AtReferenceCompleter(self.agent_config, available_subagents=self.available_subagents)
+            self.at_completer = AtReferenceCompleter(
+                self.agent_config,
+                available_subagents=self.available_subagents,
+                visibility_provider=self._visible_subagents_for_default,
+            )
 
         # Last executed SQL and result
         self.last_sql = None
@@ -241,10 +246,14 @@ class DatusCLI:
         self.chat_commands = ChatCommands(self)
         self.context_commands = ContextCommands(self)
         self.metadata_commands = MetadataCommands(self)
-        self.bi_dashboard_commands = BiDashboardCommands(self)
+        self.bootstrap_bi_commands = BootstrapBiCommands(self)
+        from datus.cli.bootstrap_commands import BootstrapCommands
+
+        self.bootstrap_commands = BootstrapCommands(self)
         self.model_commands = ModelCommands(self)
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
+        self.init_commands = InitCommands(self)
         self.service_commands = ServiceCommands(self)
         from datus.cli.datasource_commands import DatasourceCommands
 
@@ -323,9 +332,11 @@ class DatusCLI:
             # system
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
-            "bootstrap-bi": self.bi_dashboard_commands.cmd,
+            "bootstrap": self.bootstrap_commands.cmd,
+            "bootstrap-bi": self.bootstrap_bi_commands.cmd,
             "model": self.model_commands.cmd_model,
             "effort": self.effort_commands.cmd_effort,
+            "init": self.init_commands.cmd_init,
             "services": self.service_commands.cmd_services,
             "profile": self._cmd_profile,
         }
@@ -651,8 +662,10 @@ class DatusCLI:
         sql_completer = SQLCompleter()
         self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
-            self.agent_config, available_subagents=self.available_subagents
-        )  # Router for @Table / @Metrics / @Sql inline references
+            self.agent_config,
+            available_subagents=self.available_subagents,
+            visibility_provider=self._visible_subagents_for_default,
+        )  # Router for @Table / @Metrics / @Sql / @Agent inline references
         self.slash_completer = SlashCommandCompleter()
 
         # Use merge_completers to combine completers
@@ -754,6 +767,7 @@ class DatusCLI:
         self._print_welcome()
         self._warn_no_model()
         self._warn_no_datasource()
+        self._bootstrap_services()
 
         while True:
             try:
@@ -809,6 +823,7 @@ class DatusCLI:
         self._print_welcome()
         self._warn_no_model()
         self._warn_no_datasource()
+        self._bootstrap_services()
 
         # Prefill support mirrors the PromptSession path: ``.rewind`` stores
         # the replayed user message in ``_prefill_input`` and expects the
@@ -925,7 +940,7 @@ class DatusCLI:
     def _maybe_schedule_startup_sync(self) -> None:
         """Kick off a one-shot background metadata sync for the default
         datasource so the first ``@Table`` completion after launch reflects
-        any tables added since the last ``datus agent init``. Gated by
+        any tables added since the last ``datus-agent bootstrap-kb``. Gated by
         ``agent.autocomplete.background_sync_on_startup``.
         """
         bg_sync = getattr(self, "bg_sync", None)
@@ -1077,18 +1092,21 @@ class DatusCLI:
         return visible
 
     def _cmd_agent(self, args: str):
-        """Open the unified agent management TUI (Built-in tab seed).
+        """Open the unified agent management TUI (Custom tab seed).
 
-        ``/agent`` with no args lands on the Built-in tab so users can
-        tweak ``model`` / ``max_turns`` overrides for system subagents.
-        ``/agent <name>`` keeps the legacy direct-setter shortcut for
-        scripting — no TUI is launched.
+        ``/agent`` with no args lands on the Custom tab — that's the
+        actionable surface for switching the default agent. The Built-in
+        tab is config-only in the TUI (``max_turns`` overrides), so
+        seeding it would land users on a tab where ``Enter`` no longer
+        sets a default. ``/agent <name>`` keeps the legacy direct-setter
+        shortcut for scripting — no TUI is launched, and built-in names
+        remain accepted for backward compatibility.
         """
         name = args.strip()
         if name:
             self._set_default_agent_by_name(name)
             return
-        self._open_agent_app(seed_tab="builtin")
+        self._open_agent_app(seed_tab="custom")
 
     def _cmd_subagent(self, args: str):
         """Open the unified agent management TUI (Custom tab seed).
@@ -1878,6 +1896,21 @@ class DatusCLI:
         """Print a one-time hint when no datasource is configured."""
         if not self.agent_config.services.datasources:
             self.console.print("[yellow]No datasources configured. Use /datasource to add one.[/]")
+
+    def _bootstrap_services(self) -> None:
+        """Pin project defaults and kick off background adapter installs.
+
+        Skipped silently in non-interactive sessions (CI, ``echo |
+        datus-cli``, MCP / API hosts) — see ``service_bootstrap._is_interactive``
+        for the exact guard. Failures inside the bootstrap never abort
+        startup.
+        """
+        try:
+            from datus.cli import service_bootstrap
+
+            service_bootstrap.run(self)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"service bootstrap failed: {exc}")
 
     def prompt_input(self, message: str, default: str = "", choices: list = None, multiline: bool = False):
         """

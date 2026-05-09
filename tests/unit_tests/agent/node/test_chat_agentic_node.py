@@ -22,6 +22,8 @@ Tests verify:
 NO MOCK EXCEPT LLM: The only mock is LLMBaseModel.create_model -> MockLLMModel.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from datus.configuration.node_type import NodeType
@@ -496,25 +498,23 @@ class TestChatAgenticNodeMCPSetup:
         assert isinstance(node.mcp_servers, dict)
         assert len(node.mcp_servers) == 0
 
-    def test_setup_metricflow_mcp_returns_none_without_db_config(self, real_agent_config, mock_llm_create):
-        """_setup_metricflow_mcp returns None when agent_config is None."""
+    def test_mcp_setup_uses_configured_servers_only(self, real_agent_config, mock_llm_create):
+        """MCP server setup delegates configured names to MCPManager."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         node = ChatAgenticNode(
-            node_id="test_mf_none",
-            description="Test metricflow none",
+            node_id="test_mcp_configured",
+            description="Test configured MCP",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
+        node.node_config = {"mcp": "custom_server"}
 
-        # Temporarily set agent_config to None
-        original_config = node.agent_config
-        node.agent_config = None
-
-        result = node._setup_metricflow_mcp()
-        assert result is None
-
-        node.agent_config = original_config
+        mock_server = MagicMock()
+        with patch.object(node, "_setup_mcp_server_from_config", return_value=mock_server) as mock_setup:
+            result = node._setup_mcp_servers()
+        mock_setup.assert_called_once_with("custom_server")
+        assert result == {"custom_server": mock_server}
 
     def test_setup_mcp_server_from_config_returns_none_for_unknown_server(self, real_agent_config, mock_llm_create):
         """_setup_mcp_server_from_config returns None for non-existent server name."""
@@ -568,6 +568,23 @@ class TestChatAgenticNodeSystemPrompt:
         prompt = node._get_system_prompt(conversation_summary="Previous conversation about SQL queries.")
         assert isinstance(prompt, str)
         assert len(prompt) > 0
+
+    def test_get_system_prompt_contains_active_permission_profile(self, real_agent_config, mock_llm_create):
+        """Runtime /profile changes must be visible to the next LLM turn."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config.active_profile_name = "dangerous"
+        node = ChatAgenticNode(
+            node_id="test_prompt_profile",
+            description="Test active permission profile in prompt",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "Current permission profile: dangerous" in prompt
+        assert "authoritative for this turn" in prompt
 
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
@@ -1142,6 +1159,118 @@ class TestChatAgenticNodeExecuteStreamWithTools:
         assert final_action.action_type == "chat_response"
         # Key assertion: response must be a string, not a dict
         assert isinstance(final_action.output["response"], str)
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_uses_tool_summary_when_model_gives_no_response(
+        self, real_agent_config, mock_llm_create
+    ):
+        """Tool raw_output stays out of the final response, but its summary can be used."""
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_tool_raw_output_not_response",
+            description="Test tool raw output is ignored",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="List tables", database="california_schools")
+
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            action = ActionHistory(
+                action_id="complete_tool",
+                role=ActionRole.TOOL,
+                messages="Tool call: list_tables",
+                action_type="list_tables",
+                input={"function_name": "list_tables", "arguments": "{}"},
+                output={
+                    "success": True,
+                    "raw_output": {
+                        "success": 1,
+                        "error": None,
+                        "result": [{"type": "table", "name": "orders"}],
+                    },
+                    "summary": "1 table: orders",
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(action)
+            yield action
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.action_type == "chat_response"
+        assert final_action.output["response"] == "1 table: orders"
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_keeps_final_thinking_text_after_tool(self, real_agent_config, mock_llm_create):
+        """Provider-marked thinking text after a tool result can be the final visible answer."""
+        from unittest.mock import patch
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.schemas.action_history import ActionHistory
+
+        node = ChatAgenticNode(
+            node_id="test_final_thinking_after_tool",
+            description="Test final thinking text after tool is preserved",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node.input = ChatNodeInput(user_message="List tables", database="california_schools")
+
+        async def mock_execute(prompt, execution_mode, original_input, action_history_manager, session):
+            pre_tool_thinking = ActionHistory(
+                action_id="thinking_before_tool",
+                role=ActionRole.ASSISTANT,
+                messages="thinking",
+                action_type="response",
+                input={},
+                output={"content": "I should inspect the database first.", "is_thinking": True},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(pre_tool_thinking)
+            yield pre_tool_thinking
+
+            tool_action = ActionHistory(
+                action_id="complete_tool",
+                role=ActionRole.TOOL,
+                messages="Tool call: list_tables",
+                action_type="list_tables",
+                input={"function_name": "list_tables", "arguments": "{}"},
+                output={"success": True, "summary": "1 table: orders"},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(tool_action)
+            yield tool_action
+
+            final_thinking = ActionHistory(
+                action_id="thinking_after_tool",
+                role=ActionRole.ASSISTANT,
+                messages="final",
+                action_type="response",
+                input={},
+                output={"content": "The database has one table: orders.", "is_thinking": True},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_thinking)
+            yield final_thinking
+
+        with patch.object(node, "_execute_with_recursive_replan", mock_execute):
+            ahm = ActionHistoryManager()
+            actions = []
+            async for action in node.execute_stream(ahm):
+                actions.append(action)
+
+        final_action = actions[-1]
+        assert final_action.action_type == "chat_response"
+        assert final_action.output["response"] == "The database has one table: orders."
 
     @pytest.mark.asyncio
     async def test_execute_stream_extracts_string_content_from_action(self, real_agent_config, mock_llm_create):

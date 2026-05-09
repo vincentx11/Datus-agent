@@ -19,7 +19,9 @@ def create_node(
     agent_config: "AgentConfig",
     node_id_suffix: str = "",
     scope: Optional[str] = None,
+    *,
     execution_mode: Literal["interactive", "workflow"] = "interactive",
+    node_id: Optional[str] = None,
 ):
     """Create an interactive agentic node based on subagent_name.
 
@@ -28,33 +30,51 @@ def create_node(
         agent_config: Agent configuration.
         node_id_suffix: Suffix appended to node_id (e.g. "_cli", "_print").
         scope: Optional session scope for directory isolation.
-        execution_mode: Whether the node will run in "interactive" mode (e.g. CLI, REPL, API) or "workflow" mode (e.g. DAComp). Defaults to "interactive".
+        execution_mode: Node execution mode. CLI defaults to ``interactive``;
+            API workflow runs pass ``workflow``.
+        node_id: Override the auto-generated ``f"{subagent_name}{node_id_suffix}"``
+            id. API path passes ``session_id`` here so the node's id matches the
+            HTTP session.
     """
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
 
         if subagent_name == "gen_semantic_model":
-            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+            from datus.agent.node.gen_semantic_model_agentic_node import (
+                GenSemanticModelAgenticNode,
+            )
 
-            return GenSemanticModelAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenSemanticModelAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope
+            )
 
         elif subagent_name == "gen_metrics":
             from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-            return GenMetricsAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenMetricsAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope
+            )
 
         elif subagent_name == "gen_sql_summary":
             from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
             return SqlSummaryAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode=execution_mode, scope=scope
+                node_name=subagent_name,
+                agent_config=agent_config,
+                execution_mode=execution_mode,
+                scope=scope,
             )
 
         elif subagent_name == "gen_ext_knowledge":
-            from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+            from datus.agent.node.gen_ext_knowledge_agentic_node import (
+                GenExtKnowledgeAgenticNode,
+            )
 
             return GenExtKnowledgeAgenticNode(
-                node_name=subagent_name, agent_config=agent_config, execution_mode=execution_mode, scope=scope
+                node_name=subagent_name,
+                agent_config=agent_config,
+                execution_mode=execution_mode,
+                scope=scope,
             )
 
         elif subagent_name == "gen_table" or node_class_type == "gen_table":
@@ -70,13 +90,17 @@ def create_node(
         elif subagent_name == "gen_job":
             from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
 
-            return GenJobAgenticNode(agent_config=agent_config, execution_mode=execution_mode, scope=scope)
+            return GenJobAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope
+            )
 
         elif subagent_name == "gen_report" or node_class_type == "gen_report":
             from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
             return GenReportAgenticNode(
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 description=f"Report generation node for {subagent_name}",
                 node_type="gen_report",
                 input_data=None,
@@ -98,7 +122,9 @@ def create_node(
             from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
             return ExploreAgenticNode(
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 description=f"Explore node for {subagent_name}",
                 node_type="explore",
                 input_data=None,
@@ -106,30 +132,38 @@ def create_node(
                 tools=None,
                 node_name=subagent_name,
                 execution_mode=execution_mode,
-                scope=scope,
             )
 
         elif subagent_name == "gen_skill" or node_class_type == "gen_skill":
             from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
             return SkillCreatorAgenticNode(
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 description=f"Skill generation node for {subagent_name}",
                 node_type="gen_skill",
                 input_data=None,
                 agent_config=agent_config,
                 tools=None,
-                node_name=subagent_name if node_class_type == "gen_skill" else "gen_skill",
+                node_name=subagent_name
+                if node_class_type == "gen_skill"
+                else "gen_skill",
                 execution_mode=execution_mode,
+                scope=scope,
             )
 
         elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+            from datus.agent.node.gen_dashboard_agentic_node import (
+                GenDashboardAgenticNode,
+            )
 
             return GenDashboardAgenticNode(
                 agent_config=agent_config,
                 execution_mode=execution_mode,
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 node_name=subagent_name if node_class_type == "gen_dashboard" else None,
                 scope=scope,
             )
@@ -140,7 +174,9 @@ def create_node(
             return SchedulerAgenticNode(
                 agent_config=agent_config,
                 execution_mode=execution_mode,
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 node_name=subagent_name if node_class_type == "scheduler" else None,
                 scope=scope,
             )
@@ -158,7 +194,9 @@ def create_node(
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
             return GenSQLAgenticNode(
-                node_id=f"{subagent_name}{node_id_suffix}",
+                node_id=node_id
+                if node_id is not None
+                else f"{subagent_name}{node_id_suffix}",
                 description=f"SQL generation node for {subagent_name}",
                 node_type="gensql",
                 input_data=None,
@@ -172,7 +210,7 @@ def create_node(
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         return ChatAgenticNode(
-            node_id=f"chat{node_id_suffix}",
+            node_id=node_id if node_id is not None else f"chat{node_id_suffix}",
             description="Chat node for interactive mode",
             node_type="chat",
             input_data=None,
@@ -181,29 +219,6 @@ def create_node(
             scope=scope,
             execution_mode=execution_mode,
         )
-
-
-def create_interactive_node(
-    subagent_name: Optional[str],
-    agent_config: "AgentConfig",
-    node_id_suffix: str = "",
-    scope: Optional[str] = None,
-):
-    """Create an interactive agentic node based on subagent_name.
-
-    Args:
-        subagent_name: Name of the subagent, or None for default chat node.
-        agent_config: Agent configuration.
-        node_id_suffix: Suffix appended to node_id (e.g. "_cli", "_print").
-        scope: Optional session scope for directory isolation.
-    """
-    return create_node(
-        subagent_name=subagent_name,
-        agent_config=agent_config,
-        node_id_suffix=node_id_suffix,
-        scope=scope,
-        execution_mode="interactive",
-    )
 
 
 def create_node_input(
@@ -236,11 +251,15 @@ def create_node_input(
         source_session_id: Source session the feedback node should copy from.
             Only consumed by :class:`FeedbackAgenticNode`.
     """
-    from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
+    from datus.agent.node.gen_ext_knowledge_agentic_node import (
+        GenExtKnowledgeAgenticNode,
+    )
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.gen_semantic_model_agentic_node import (
+        GenSemanticModelAgenticNode,
+    )
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -276,7 +295,9 @@ def create_node_input(
         )
 
     elif isinstance(node, GenExtKnowledgeAgenticNode):
-        from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
+        from datus.schemas.ext_knowledge_agentic_node_models import (
+            ExtKnowledgeNodeInput,
+        )
 
         return ExtKnowledgeNodeInput(
             user_message=user_message,
@@ -363,7 +384,9 @@ def create_node_input(
         )
 
 
-def _resolve_node_class_type(subagent_name: str, agent_config: "AgentConfig") -> Optional[str]:
+def _resolve_node_class_type(
+    subagent_name: str, agent_config: "AgentConfig"
+) -> Optional[str]:
     """Resolve node_class from agent config for a subagent."""
     if hasattr(agent_config, "agentic_nodes") and agent_config.agentic_nodes:
         node_config = agent_config.agentic_nodes.get(subagent_name, {})

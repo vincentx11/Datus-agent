@@ -14,8 +14,6 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.chat_agentic_node import ChatAgenticNode
-from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.api.models.cli_models import (
     SSEDataType,
     SSEEndData,
@@ -29,13 +27,12 @@ from datus.api.models.cli_models import (
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager
+from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
-
-from ...agent.node.node_factory import create_node
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
@@ -48,7 +45,9 @@ def is_thinking_only_content(content_items) -> bool:
     Used by both the SSE coalescing logic and the bridge outbound conversion
     to avoid duplicating the detection heuristic.
     """
-    return bool(content_items) and all(getattr(item, "type", "") == "thinking" for item in content_items)
+    return bool(content_items) and all(
+        getattr(item, "type", "") == "thinking" for item in content_items
+    )
 
 
 def _is_thinking_delta(event: SSEEvent) -> bool:
@@ -72,6 +71,95 @@ def _delta_message_id(event: SSEEvent) -> str:
     if isinstance(data, SSEMessageData):
         return data.payload.message_id
     return ""
+
+
+def _has_visible_content(event: SSEEvent) -> bool:
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return False
+    return any(
+        bool(getattr(item, "payload", {}).get("content"))
+        for item in event.data.payload.content
+    )
+
+
+def _assistant_content_fingerprint(event: SSEEvent) -> str:
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return ""
+    if event.data.payload.role != "assistant":
+        return ""
+    parts = []
+    for item in event.data.payload.content:
+        if item.type not in {"markdown", "thinking", "code"}:
+            continue
+        payload = getattr(item, "payload", {}) or {}
+        content = payload.get("content")
+        if content:
+            parts.append(str(content).strip())
+    return "\n".join(part for part in parts if part)
+
+
+def _should_skip_duplicate_assistant_message(
+    action,
+    event: SSEEvent,
+    seen_fingerprints: set[str],
+) -> bool:
+    if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if action.action_type == "thinking_delta":
+        return False
+    if event.event != "message" or not isinstance(event.data, SSEMessageData):
+        return False
+    if event.data.type != SSEDataType.CREATE_MESSAGE:
+        return False
+    fingerprint = _assistant_content_fingerprint(event)
+    return bool(fingerprint and fingerprint in seen_fingerprints)
+
+
+def _remember_assistant_message(event: SSEEvent, seen_fingerprints: set[str]) -> None:
+    fingerprint = _assistant_content_fingerprint(event)
+    if fingerprint:
+        seen_fingerprints.add(fingerprint)
+
+
+def _should_include_final_response(action, assistant_response_sent: bool) -> bool:
+    """Return True for top-level wrapper responses that should be rendered.
+
+    Sub-agent actions are forwarded with ``depth > 0``. Their own
+    ``*_response`` wrappers must stay inside the tool/sub-agent transcript and
+    must not become the top-level assistant bubble.
+    """
+    return (
+        action.role == ActionRole.ASSISTANT
+        and action.status == ActionStatus.SUCCESS
+        and getattr(action, "depth", 0) == 0
+        and bool(action.action_type)
+        and action.action_type.endswith("_response")
+        and not assistant_response_sent
+    )
+
+
+def _is_visible_assistant_response(
+    action, event: SSEEvent, *, tool_result_seen: bool
+) -> bool:
+    """Return True when an action already emitted user-visible assistant text.
+
+    Model providers do not agree on whether final text appears as ``response``,
+    ``message`` or a completed thinking chunk. For web de-duping we care about
+    the observable SSE message: after a tool result, any visible assistant text
+    means the wrapper ``chat_response`` would duplicate it.
+    """
+    if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
+        return False
+    if (
+        not action.action_type
+        or action.action_type == "thinking_delta"
+        or action.action_type.endswith("_response")
+    ):
+        return False
+    if not _has_visible_content(event):
+        return False
+    output = action.output if isinstance(action.output, dict) else {}
+    return tool_result_seen or output.get("is_thinking") is not True
 
 
 def _coalesce_deltas(events: list[SSEEvent]) -> list[SSEEvent]:
@@ -123,7 +211,9 @@ def _merge_delta_run(run: list[SSEEvent]) -> SSEEvent:
     parts: list[str] = []
     for ev in run:
         data = ev.data
-        if not isinstance(data, SSEMessageData):  # guaranteed by caller; guard for safety
+        if not isinstance(
+            data, SSEMessageData
+        ):  # guaranteed by caller; guard for safety
             continue
         for item in data.payload.content:
             parts.append(item.payload.get("content", ""))
@@ -221,11 +311,15 @@ class ChatTaskManager:
         if request.model:
             provider, _, model_id = request.model.partition("/")
             if not model_id:
-                raise ValueError(f"Invalid model format '{request.model}': expected 'provider/model_id'")
+                raise ValueError(
+                    f"Invalid model format '{request.model}': expected 'provider/model_id'"
+                )
             if provider == "custom":
                 agent_config.set_active_custom(model_id, persist=False)
             else:
-                agent_config.set_active_provider_model(provider, model_id, persist=False)
+                agent_config.set_active_provider_model(
+                    provider, model_id, persist=False
+                )
         _fill_database_context(
             agent_config,
             catalog=request.catalog,
@@ -234,7 +328,9 @@ class ChatTaskManager:
         )
         agent_name = sub_agent_id or "chat"
         safe_name = agent_name.replace(" ", "_")
-        session_id = request.session_id or f"{safe_name}_session_{str(uuid.uuid4())[:8]}"
+        session_id = (
+            request.session_id or f"{safe_name}_session_{str(uuid.uuid4())[:8]}"
+        )
         request.session_id = session_id
 
         if session_id in self._tasks:
@@ -245,7 +341,9 @@ class ChatTaskManager:
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
-            self._run_loop(task, agent_config, request, sub_agent_id=sub_agent_id, user_id=user_id)
+            self._run_loop(
+                task, agent_config, request, sub_agent_id=sub_agent_id, user_id=user_id
+            )
         )
         task.asyncio_task = asyncio_task
         return task
@@ -277,7 +375,9 @@ class ChatTaskManager:
     def get_task(self, session_id: str) -> Optional[ChatTask]:
         return self._tasks.get(session_id) or self._completed_tasks.get(session_id)
 
-    async def consume_events(self, task: ChatTask, start_from: Optional[int] = None) -> AsyncGenerator[SSEEvent, None]:
+    async def consume_events(
+        self, task: ChatTask, start_from: Optional[int] = None
+    ) -> AsyncGenerator[SSEEvent, None]:
         """Yield events from *task*'s buffer.
 
         If *start_from* is ``None``, resume from the last recorded
@@ -294,14 +394,16 @@ class ChatTaskManager:
             async with task.condition:
                 while cursor >= len(task.events) and task.status == "running":
                     try:
-                        await asyncio.wait_for(task.condition.wait(), timeout=HEARTBEAT_INTERVAL)
+                        await asyncio.wait_for(
+                            task.condition.wait(), timeout=HEARTBEAT_INTERVAL
+                        )
                     except asyncio.TimeoutError:
                         if cursor >= len(task.events) and task.status == "running":
                             ping_event = SSEEvent(
                                 id=-1,
                                 event="ping",
                                 data=SSEPingData(),
-                                timestamp=datetime.now().isoformat() + "Z",
+                                timestamp=now_utc_iso(),
                             )
                             break  # exit inner loop so ping can be yielded
                 new_events = task.events[cursor:]
@@ -322,7 +424,11 @@ class ChatTaskManager:
 
     async def wait_all_tasks(self) -> None:
         """Wait for all running tasks to finish without cancelling them."""
-        pending = [t.asyncio_task for t in self._tasks.values() if t.asyncio_task and not t.asyncio_task.done()]
+        pending = [
+            t.asyncio_task
+            for t in self._tasks.values()
+            if t.asyncio_task and not t.asyncio_task.done()
+        ]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
@@ -331,7 +437,11 @@ class ChatTaskManager:
         for task in list(self._tasks.values()):
             if task.asyncio_task and not task.asyncio_task.done():
                 task.asyncio_task.cancel()
-        pending = [t.asyncio_task for t in self._tasks.values() if t.asyncio_task and not t.asyncio_task.done()]
+        pending = [
+            t.asyncio_task
+            for t in self._tasks.values()
+            if t.asyncio_task and not t.asyncio_task.done()
+        ]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
@@ -367,7 +477,11 @@ class ChatTaskManager:
             #    Runs in thread pool because setup_tools() triggers synchronous
             #    operations (psycopg ConnectionPool creation, PG DDL for table
             #    creation via get_storage()) that would freeze the event loop.
-            interactive_enabled = request.interactive if request.interactive is not None else self._default_interactive
+            interactive_enabled = (
+                request.interactive
+                if request.interactive is not None
+                else self._default_interactive
+            )
 
             def _init_node():
                 n = self._create_node(
@@ -398,14 +512,17 @@ class ChatTaskManager:
                         session_id=session_id,
                         llm_session_id=node.session_id,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1
 
             # 3. Resolve @-references
             at_tables, at_metrics, at_sqls = self._resolve_at_context(
-                agent_config, request.table_paths, request.metric_paths, request.sql_paths
+                agent_config,
+                request.table_paths,
+                request.metric_paths,
+                request.sql_paths,
             )
 
             # 4. Build typed input and assign to node
@@ -430,12 +547,17 @@ class ChatTaskManager:
             elif effective_source == "web":
                 apply_proxy_tools(node, ["write_file", "edit_file"])
             elif effective_source:
-                logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
+                logger.warning(
+                    "Unsupported source '%s'; skipping proxy shortcut", effective_source
+                )
 
             # 6. Execute streaming
             action_history = ActionHistoryManager()
             action_count = 0
             seen_delta_action_ids: set[str] = set()
+            assistant_response_sent = False
+            tool_result_seen = False
+            seen_assistant_message_fingerprints: set[str] = set()
 
             async for action in node.execute_stream_with_interactions(action_history):
                 action_count += 1
@@ -443,7 +565,9 @@ class ChatTaskManager:
                 # Convert action to SSE
                 # Per-request stream_response overrides the server-level --stream flag
                 effective_stream = (
-                    request.stream_response if request.stream_response is not None else self._stream_thinking
+                    request.stream_response
+                    if request.stream_response is not None
+                    else self._stream_thinking
                 )
 
                 is_first_delta = True
@@ -465,10 +589,31 @@ class ChatTaskManager:
                     stream_thinking=effective_stream,
                     is_first_delta=is_first_delta,
                     is_update=bool(is_update),
+                    include_final_response=_should_include_final_response(
+                        action, assistant_response_sent
+                    ),
                 )
                 if sse:
+                    if _should_skip_duplicate_assistant_message(
+                        action,
+                        sse,
+                        seen_assistant_message_fingerprints,
+                    ):
+                        continue
                     await self._push_event(task, sse)
                     event_id += 1
+                    _remember_assistant_message(
+                        sse, seen_assistant_message_fingerprints
+                    )
+                    if _is_visible_assistant_response(
+                        action, sse, tool_result_seen=tool_result_seen
+                    ):
+                        assistant_response_sent = True
+                    if (
+                        action.role == ActionRole.TOOL
+                        and action.status != ActionStatus.PROCESSING
+                    ):
+                        tool_result_seen = True
 
             # 7. End event
             token_kwargs: dict = {}
@@ -485,7 +630,9 @@ class ChatTaskManager:
                         "context_length": turn_usage.context_length,
                     }
             except Exception:
-                logger.debug("Failed to extract turn token usage for end event", exc_info=True)
+                logger.debug(
+                    "Failed to extract turn token usage for end event", exc_info=True
+                )
 
             await self._push_event(
                 task,
@@ -500,7 +647,7 @@ class ChatTaskManager:
                         duration=(datetime.now() - start_time).total_seconds(),
                         **token_kwargs,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1
@@ -525,7 +672,7 @@ class ChatTaskManager:
                         session_id=session_id,
                         llm_session_id=task.node.session_id if task.node else None,
                     ),
-                    timestamp=datetime.now().isoformat() + "Z",
+                    timestamp=now_utc_iso(),
                 ),
             )
             event_id += 1
@@ -549,7 +696,9 @@ class ChatTaskManager:
         """Remove completed tasks older than COMPLETED_TASK_TTL."""
         now = datetime.now()
         expired = [
-            sid for sid, t in self._completed_tasks.items() if (now - t.created_at).total_seconds() > COMPLETED_TASK_TTL
+            sid
+            for sid, t in self._completed_tasks.items()
+            if (now - t.created_at).total_seconds() > COMPLETED_TASK_TTL
         ]
         for sid in expired:
             self._completed_tasks.pop(sid, None)
@@ -568,16 +717,44 @@ class ChatTaskManager:
     ) -> AgenticNode:
         """Create a fresh AgenticNode based on subagent_id (builtin name or custom DB ID).
 
+        Delegates dispatch to :func:`datus.agent.node.node_factory.create_interactive_node`
+        so the API path matches the CLI exactly: every built-in sub_agent is wired to
+        its dedicated AgenticNode subclass, and custom sub_agents honour their
+        ``node_class`` field (``gen_report`` / ``gen_table`` / ``gen_dashboard`` /
+        ``scheduler`` / ``gen_skill`` / ``explore``) instead of always falling back
+        to ``GenSQLAgenticNode``.
+
         ``user_id`` is propagated as the node ``scope`` so that session files
         are isolated per user under ``{session_dir}/{user_id}/``.
         """
-        execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
-        return create_node(
-            subagent_name=subagent_id,
+        from datus.agent.node.node_factory import create_interactive_node
+
+        execution_mode: Literal["interactive", "workflow"] = (
+            "interactive" if interactive else "workflow"
+        )
+
+        # ``agentic_nodes`` is keyed by sanitized node_name; the API receives the
+        # custom sub_agent's UUID under the "id" field. Translate UUID -> name so
+        # the factory's ``_resolve_node_class_type`` can look up node_class and
+        # downstream tools can resolve scoped_context via sub_agent_config().
+        node_name = subagent_id
+        if subagent_id:
+            for key, entry in (agent_config.agentic_nodes or {}).items():
+                entry_id = (
+                    entry.get("id")
+                    if isinstance(entry, dict)
+                    else getattr(entry, "id", None)
+                )
+                if entry_id == subagent_id:
+                    node_name = key
+                    break
+
+        return create_interactive_node(
+            subagent_name=node_name,
             agent_config=agent_config,
-            node_id_suffix=f"_{session_id}" if session_id else "",
             scope=user_id,
             execution_mode=execution_mode,
+            node_id=session_id,
         )
 
     # ------------------------------------------------------------------
@@ -597,77 +774,29 @@ class ChatTaskManager:
         plan_mode: bool = False,
         source_session_id: Optional[str] = None,
     ):
-        """Create node input based on node type."""
-        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-        from datus.agent.node.gen_ext_knowledge_agentic_node import GenExtKnowledgeAgenticNode
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
-        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
+        """Create node input based on node type.
 
-        if isinstance(current_node, FeedbackAgenticNode):
-            from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
+        Delegates to :func:`datus.agent.node.node_factory.create_node_input` so
+        the API path covers every AgenticNode subclass the CLI knows about
+        (GenReport / Explore / SkillCreator / GenTable / GenJob in addition to
+        the legacy GenSQL / Semantic / SqlSummary / ExtKnowledge / Feedback /
+        Chat branches).
+        """
+        from datus.agent.node.node_factory import create_node_input
 
-            return FeedbackNodeInput(
-                user_message=user_message,
-                database=database,
-                source_session_id=source_session_id,
-            )
-
-        if isinstance(current_node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
-            from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-            return SemanticNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, SqlSummaryAgenticNode):
-            from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
-
-            return SqlSummaryNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, GenExtKnowledgeAgenticNode):
-            from datus.schemas.ext_knowledge_agentic_node_models import ExtKnowledgeNodeInput
-
-            return ExtKnowledgeNodeInput(
-                user_message=user_message,
-                prompt_language="en",
-            )
-        elif isinstance(current_node, GenSQLAgenticNode):
-            from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-
-            return GenSQLNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                schemas=at_tables,
-                metrics=at_metrics,
-                reference_sql=at_sqls,
-                prompt_language="en",
-                plan_mode=plan_mode,
-            )
-        else:
-            from datus.schemas.chat_agentic_node_models import ChatNodeInput
-
-            return ChatNodeInput(
-                user_message=user_message,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                schemas=at_tables,
-                metrics=at_metrics,
-                reference_sql=at_sqls,
-                plan_mode=plan_mode,
-            )
+        return create_node_input(
+            user_message=user_message,
+            node=current_node,
+            catalog=catalog,
+            database=database,
+            db_schema=db_schema,
+            at_tables=at_tables,
+            at_metrics=at_metrics,
+            at_sqls=at_sqls,
+            prompt_language="en",
+            plan_mode=plan_mode,
+            source_session_id=source_session_id,
+        )
 
     # ------------------------------------------------------------------
     # @ reference resolution

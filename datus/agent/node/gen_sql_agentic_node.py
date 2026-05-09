@@ -23,7 +23,7 @@ from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.tools.mcp_tools import MCPServer
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
@@ -97,6 +97,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
+        self.semantic_tools: Optional[SemanticTools] = None
         # PlanTool instance when `plan_tools` is declared in the sub-agent's
         # `tools:` list. Distinct from `plan_hooks` below, which is only
         # active in full plan_mode workflows.
@@ -227,6 +228,8 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.db_func_tool.available_tools())
         if self.context_search_tools:
             self.tools.extend(self.context_search_tools.available_tools())
+        if self.semantic_tools:
+            self.tools.extend(self.semantic_tools.available_tools())
         if self.reference_template_tools:
             self.tools.extend(self.reference_template_tools.available_tools())
         if self.date_parsing_tools:
@@ -241,7 +244,7 @@ class GenSQLAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
 
     # Default tools when not configured in agent.yml
-    DEFAULT_TOOLS = "db_tools.*, filesystem_tools.*"
+    DEFAULT_TOOLS = "db_tools.*, semantic_tools.*, context_search_tools.*"
 
     def setup_tools(self):
         """Setup tools based on configuration, falling back to DEFAULT_TOOLS."""
@@ -249,11 +252,11 @@ class GenSQLAgenticNode(AgenticNode):
             return
 
         self.tools = []
-        config_value = self.node_config.get("tools")
-        if config_value is None:
-            config_value = self.DEFAULT_TOOLS
+        tools_str = self.node_config.get("tools")
+        if not tools_str:
+            tools_str = self.DEFAULT_TOOLS
 
-        tool_patterns = [p.strip() for p in config_value.split(",") if p.strip()]
+        tool_patterns = [p.strip() for p in tools_str.split(",") if p.strip()]
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
 
@@ -292,12 +295,23 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_context_search_tools(self):
         """Setup context search tools."""
         try:
-            self.context_search_tools = ContextSearchTools(
-                self.agent_config, sub_agent_name=self.node_config["system_prompt"]
-            )
+            self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=self.get_node_name())
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup context search tools: {e}")
+
+    def _setup_semantic_tools(self):
+        """Setup semantic tools for metric/dimension exploration."""
+        try:
+            adapter_type = self.node_config.get("adapter_type", "metricflow")
+            self.semantic_tools = SemanticTools(
+                agent_config=self.agent_config,
+                sub_agent_name=self.node_config.get("system_prompt"),
+                adapter_type=adapter_type,
+            )
+            self.tools.extend(self.semantic_tools.available_tools())
+        except Exception as e:
+            logger.error(f"Failed to setup semantic tools: {e}")
 
     def _setup_reference_template_tools(self):
         """Setup reference template tools.
@@ -369,6 +383,8 @@ class GenSQLAgenticNode(AgenticNode):
                     self._setup_db_tools()
                 elif base_type == "context_search_tools":
                     self._setup_context_search_tools()
+                elif base_type == "semantic_tools":
+                    self._setup_semantic_tools()
                 elif base_type == "reference_template_tools":
                     self._setup_reference_template_tools()
                 elif base_type == "date_parsing_tools":
@@ -387,6 +403,8 @@ class GenSQLAgenticNode(AgenticNode):
                 self._setup_db_tools()
             elif pattern == "context_search_tools":
                 self._setup_context_search_tools()
+            elif pattern == "semantic_tools":
+                self._setup_semantic_tools()
             elif pattern == "reference_template_tools":
                 self._setup_reference_template_tools()
             elif pattern == "date_parsing_tools":
@@ -416,6 +434,15 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.context_search_tools:
                     self.context_search_tools = ContextSearchTools(self.agent_config, self.node_config["system_prompt"])
                 tool_instance = self.context_search_tools
+            elif tool_type == "semantic_tools":
+                if not self.semantic_tools:
+                    adapter_type = self.node_config.get("adapter_type", "metricflow")
+                    self.semantic_tools = SemanticTools(
+                        agent_config=self.agent_config,
+                        sub_agent_name=self.node_config.get("system_prompt"),
+                        adapter_type=adapter_type,
+                    )
+                tool_instance = self.semantic_tools
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
@@ -464,29 +491,6 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup {tool_type}.{method_name}: {e}")
 
-    def _setup_metricflow_mcp(self) -> Optional[Any]:
-        """Setup MetricFlow MCP server."""
-        try:
-            if not self.agent_config:
-                logger.warning("Agent config not available for metricflow MCP setup")
-                return None
-
-            # Get current database config
-            db_config = self.agent_config.current_db_config()
-            if not db_config:
-                logger.warning("Database config not found")
-                return None
-
-            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
-            if metricflow_server:
-                logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
-                return metricflow_server
-            else:
-                logger.warning(f"Failed to create metricflow MCP server for db_config: {db_config}")
-        except Exception as e:
-            logger.error(f"Failed to setup metricflow_mcp: {e}")
-        return None
-
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
         try:
@@ -527,16 +531,6 @@ class GenSQLAgenticNode(AgenticNode):
 
         for server_name in mcp_server_names:
             try:
-                # Handle metricflow_mcp
-                if server_name == "metricflow_mcp":
-                    server = self._setup_metricflow_mcp()
-                    if server:
-                        mcp_servers["metricflow_mcp"] = server
-                        logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
-                        )
-
-                # Handle MCP servers from {agent.home}/conf/.mcp.json using mcp_manager
                 server = self._setup_mcp_server_from_config(server_name)
                 if server:
                     mcp_servers[server_name] = server
@@ -551,6 +545,51 @@ class GenSQLAgenticNode(AgenticNode):
             logger.debug(f"MCP server '{name}': type={type(server)}, instance={server}")
 
         return mcp_servers
+
+    def _get_available_tool_names(self) -> list[str]:
+        """Return native tool names plus discoverable MCP tool names."""
+        tool_names = {getattr(tool, "name", "") for tool in (self.tools or []) if getattr(tool, "name", "")}
+        tool_names.update(self._get_mcp_tool_names_for_prompt())
+        return sorted(tool_names)
+
+    def _get_mcp_tool_names_for_prompt(self) -> set[str]:
+        """Collect MCP tool names that can be known without starting new MCP connections."""
+        active_server_names = [name for name in (self.mcp_servers or {}).keys() if name]
+        if not active_server_names or not self.agent_config:
+            return set()
+
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            mcp_manager = MCPManager(agent_config=self.agent_config)
+        except Exception as e:
+            logger.debug(f"Unable to inspect MCP tool filters for prompt context: {e}")
+            return set()
+
+        tool_names: set[str] = set()
+        for server_name in active_server_names:
+            server_config = mcp_manager.get_server_config(server_name)
+            tool_filter = getattr(server_config, "tool_filter", None) if server_config else None
+
+            allowed_tool_names = getattr(tool_filter, "allowed_tool_names", None)
+            if allowed_tool_names:
+                tool_names.update(name for name in allowed_tool_names if tool_filter.is_tool_allowed(name))
+
+            cached_tool_names = self._get_cached_mcp_tool_names(self.mcp_servers[server_name])
+            if tool_filter:
+                cached_tool_names = {name for name in cached_tool_names if tool_filter.is_tool_allowed(name)}
+            tool_names.update(cached_tool_names)
+
+        return tool_names
+
+    @staticmethod
+    def _get_cached_mcp_tool_names(server: Any) -> set[str]:
+        """Read SDK-cached MCP tool names when the server already discovered them."""
+        cached_tools = getattr(server, "_tools_list", None)
+        if not isinstance(cached_tools, (list, tuple, set)):
+            return set()
+
+        return {getattr(tool, "name", "") for tool in cached_tools if getattr(tool, "name", "")}
 
     def _get_system_prompt(
         self,
@@ -571,7 +610,7 @@ class GenSQLAgenticNode(AgenticNode):
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
             has_filesystem_tools=bool(self.filesystem_func_tool),
-            has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
+            has_mf_tools=False,
             has_context_search_tools=bool(self.context_search_tools),
             has_reference_template_tools=bool(
                 self.reference_template_tools and self.reference_template_tools.has_reference_templates
@@ -582,8 +621,23 @@ class GenSQLAgenticNode(AgenticNode):
             workspace_root=self._resolve_workspace_root(),
         )
         context["conversation_summary"] = conversation_summary
-        context["has_ask_user_tool"] = self.ask_user_tool is not None
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        available_tool_names = self._get_available_tool_names()
+        context["available_tool_names"] = available_tool_names
+        context["has_read_query_tool"] = "read_query" in available_tool_names
+        context["has_describe_table_tool"] = "describe_table" in available_tool_names
+        context["has_list_metrics_tool"] = "list_metrics" in available_tool_names
+        context["has_query_metrics_tool"] = "query_metrics" in available_tool_names
+        context["has_ask_user_tool"] = "ask_user" in available_tool_names
+        context["has_reference_template_tools"] = any(
+            name in available_tool_names
+            for name in (
+                "search_reference_template",
+                "get_reference_template",
+                "render_reference_template",
+                "execute_reference_template",
+            )
+        )
         from datus.utils.time_utils import get_default_current_date
 
         ref = self.date_parsing_tools.reference_date if self.date_parsing_tools else None
@@ -1031,7 +1085,9 @@ class GenSQLAgenticNode(AgenticNode):
         Extract SQL content and formatted output from model response.
 
         Uses the existing llm_result2json utility for robust JSON parsing.
-        Handles the expected template format: {"sql": "...", "tables": [...], "explanation": "..."}
+        Handles the current template format: {"sql": "...", "output": "..."}.
+        Older {"sql": "...", "tables": [...], "explanation": "..."} responses are
+        still accepted as a compatibility fallback.
 
         Args:
             output: Output dictionary from model generation
@@ -1057,13 +1113,13 @@ class GenSQLAgenticNode(AgenticNode):
                 # Extract SQL
                 sql = parsed.get("sql")
 
-                # Build output from explanation and tables if available
-                output_text = None
+                # New sql_system protocol uses `output` as the single user-facing field.
+                output_text = parsed.get("output")
                 explanation = parsed.get("explanation", "")
                 tables = parsed.get("tables", [])
 
-                # If we have explanation or tables, format them as output
-                if explanation or tables:
+                # Backward compatibility for older prompts that returned explanation/tables.
+                if not output_text and (explanation or tables):
                     output_parts = []
                     if explanation:
                         output_parts.append(f"Explanation: {explanation}")
@@ -1071,10 +1127,6 @@ class GenSQLAgenticNode(AgenticNode):
                         tables_str = ", ".join(tables) if isinstance(tables, list) else str(tables)
                         output_parts.append(f"Tables used: {tables_str}")
                     output_text = "\n".join(output_parts)
-
-                # Fallback to direct output field if no explanation/tables
-                if not output_text:
-                    output_text = parsed.get("output")
 
                 # Unescape output content if present
                 if output_text and isinstance(output_text, str):
@@ -1149,7 +1201,7 @@ def prepare_template_context(
     node_config: Union[Dict[str, Any], SubAgentConfig],
     has_db_tools: bool = True,
     has_filesystem_tools: bool = True,
-    has_mf_tools: bool = True,
+    has_mf_tools: bool = False,
     has_context_search_tools: bool = True,
     has_reference_template_tools: bool = False,
     has_parsing_tools: bool = True,
@@ -1164,7 +1216,7 @@ def prepare_template_context(
         node_config: Node configuration
         has_db_tools: Whether database tools are available
         has_filesystem_tools: Whether filesystem tools are available
-        has_mf_tools: Whether MetricFlow MCP tools are available
+        has_mf_tools: Legacy MetricFlow prompt flag
         has_context_search_tools: Whether context search tools are available
         has_reference_template_tools: Whether reference template tools are available
         has_parsing_tools: Whether date parsing tools are available

@@ -53,6 +53,29 @@ def _normalize_dimension_rows(raw) -> list:
     return normalized
 
 
+def _normalize_name_list(value) -> List[str]:
+    """Normalize LLM-provided string/list arguments into a clean list of names."""
+    value = normalize_null(value)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    else:
+        candidates = [value]
+
+    names = []
+    for candidate in candidates:
+        candidate = normalize_null(candidate)
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            names.append(text)
+    return names
+
+
 def _run_async(coro):
     """
     Run async coroutine safely, handling both sync and async contexts.
@@ -118,6 +141,26 @@ class SemanticTools:
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
+        self._adapter_load_error: Optional[str] = None
+
+    def _configured_adapter_type(self) -> Optional[str]:
+        """Return the configured adapter type without instantiating the adapter."""
+        if self.adapter_type:
+            return self.adapter_type
+
+        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+        if not callable(resolver):
+            return None
+
+        try:
+            resolved_adapter = resolver(self.adapter_type)
+        except Exception as e:
+            logger.debug(f"No semantic adapter configuration available: {e}")
+            return None
+
+        if resolved_adapter:
+            self.adapter_type = resolved_adapter
+        return resolved_adapter
 
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
@@ -182,9 +225,11 @@ class SemanticTools:
 
                 self.adapter_type = resolved_adapter
                 self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
+                self._adapter_load_error = None
                 logger.info(f"Loaded semantic adapter: {resolved_adapter}")
             except Exception as e:
                 logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
+                self._adapter_load_error = str(e)
                 self._adapter = None
         return self._adapter
 
@@ -239,8 +284,10 @@ class SemanticTools:
             trans_to_function_tool(self.query_metrics),
         ]
 
-        # Add adapter-dependent tools
-        if self.adapter:
+        # Add validation whenever an adapter is configured, even if the current
+        # YAML makes adapter construction fail. In that case validate_semantic
+        # returns the adapter-load error so the agent can fix the files.
+        if self._configured_adapter_type():
             tools.append(trans_to_function_tool(self.validate_semantic))
 
         # Add attribution tools if attribution_tool is available
@@ -468,6 +515,20 @@ class SemanticTools:
         Returns:
             FuncToolResult with query results or explain plan
         """
+        metrics = _normalize_name_list(metrics)
+        dimensions = _normalize_name_list(dimensions)
+        path = _normalize_name_list(path)
+        order_by = _normalize_name_list(order_by)
+
+        if not metrics:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "query_metrics requires at least one metric name. "
+                    "Call list_metrics first and pass one or more metric names exactly as returned."
+                ),
+            )
+
         if not self.adapter:
             return FuncToolResult(
                 success=0,
@@ -477,6 +538,8 @@ class SemanticTools:
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
+        time_granularity = normalize_null(time_granularity)
+        where = normalize_null(where)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
@@ -488,14 +551,14 @@ class SemanticTools:
             result = _run_async(
                 self.adapter.query_metrics(
                     metrics=metrics,
-                    dimensions=dimensions or [],
-                    path=path,
+                    dimensions=dimensions,
+                    path=path or None,
                     time_start=time_start,
                     time_end=time_end,
                     time_granularity=time_granularity,
                     where=where,
                     limit=limit,
-                    order_by=order_by,
+                    order_by=order_by or None,
                     dry_run=dry_run,
                 )
             )
@@ -545,7 +608,14 @@ class SemanticTools:
             FuncToolResult with validation status and issues
         """
         logger.info("validate_semantic called")
-        if not self.adapter:
+        adapter = self.adapter
+        if not adapter:
+            if self._adapter_load_error:
+                return FuncToolResult(
+                    success=0,
+                    error=f"Failed to load semantic adapter '{self.adapter_type}': {self._adapter_load_error}",
+                    result=None,
+                )
             return FuncToolResult(
                 success=0,
                 error="No semantic adapter configured. Cannot validate without adapter.",
@@ -553,7 +623,7 @@ class SemanticTools:
             )
 
         try:
-            validation_result = _run_async(self.adapter.validate_semantic())
+            validation_result = _run_async(adapter.validate_semantic())
 
             # Serialize ValidationIssue objects to dicts
             issues_data = [

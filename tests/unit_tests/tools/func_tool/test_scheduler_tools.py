@@ -40,7 +40,7 @@ from datus.utils.exceptions import DatusException, ErrorCode
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_agent_config(scheduler_config=None):
+def _make_agent_config(scheduler_config=None, project_root="/tmp/datus_test_project_root"):
     cfg = MagicMock()
     if scheduler_config is None:
         cfg.scheduler_config = {
@@ -54,6 +54,15 @@ def _make_agent_config(scheduler_config=None):
     else:
         cfg.scheduler_config = scheduler_config
     cfg.scheduler_services = {"airflow_local": cfg.scheduler_config} if cfg.scheduler_config else {}
+    # ``project_root`` anchors relative SQL paths in scheduler tools (matches
+    # ``FilesystemFuncTool``). MagicMock would otherwise return a child mock
+    # that ``Path()`` cannot consume.
+    cfg.project_root = project_root
+    cfg.project_name = "unit-test-workspace"
+    # Match CLI default: ``filesystem_strict`` is False unless a test opts in.
+    # Without this an auto-attribute MagicMock would be truthy, flipping
+    # SchedulerTools into strict mode and breaking existing EXTERNAL-path tests.
+    cfg.filesystem_strict = False
 
     def _get_scheduler_config(service_name=None):
         if service_name:
@@ -93,6 +102,7 @@ def _make_scheduled_job(job_id="spark_pi_test"):
     job.schedule = "0 8 * * *"
     job.description = "test"
     job.platform = "airflow"
+    job.extra = {}
     return job
 
 
@@ -251,7 +261,7 @@ class TestAdapterCloseError:
             ),
             ("pause_job", ("dag_1",), {}, None),
             ("resume_job", ("dag_1",), {}, None),
-            ("delete_job", ("dag_1",), {}, None),
+            ("delete_job", ("dag_1",), {}, lambda a: setattr(a, "get_job", MagicMock(return_value=None))),
             (
                 "list_job_runs",
                 ("dag_1",),
@@ -614,6 +624,52 @@ class TestSubmitSqlJob:
         assert result.result["job_id"] == "sql_job_1"
         payload = mock_adapter.submit_job.call_args[0][0]
         assert payload.db_connection == {"conn_id": "starrocks_default"}
+        assert result.result["conn_id"] == "starrocks_default"
+
+    def test_submit_uses_default_sql_connection_when_conn_id_omitted(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        mock_job = _make_scheduled_job("sql_job_1")
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="sql_job_1", sql_file_path=str(sql_file))
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.submit_job.call_args[0][0]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
+
+    def test_submit_without_conn_id_errors_when_multiple_defaults(self, tmp_path):
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text("SELECT 1")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "a": {"description": "A", "default": True, "capabilities": ["sql"]},
+            "b": {"description": "B", "default": True, "capabilities": ["sql"]},
+        }
+        mock_adapter = MagicMock()
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="sql_job_1", sql_file_path=str(sql_file))
+
+        assert result.success == 0
+        assert "multiple default" in (result.error or "")
+        mock_adapter.submit_job.assert_not_called()
 
     def test_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
@@ -764,6 +820,7 @@ class TestResumeJob:
 class TestDeleteJob:
     def test_delete_success(self):
         mock_adapter = MagicMock()
+        mock_adapter.get_job.return_value = None
         tools = SchedulerTools(_make_agent_config())
 
         with patch.object(tools, "_get_adapter", return_value=mock_adapter):
@@ -772,6 +829,37 @@ class TestDeleteJob:
         assert result.success == 1
         assert result.result["status"] == "deleted"
         mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
+
+    def test_delete_fails_when_job_still_exists_after_adapter_delete(self):
+        mock_adapter = MagicMock()
+        mock_adapter.get_job.return_value = _make_scheduled_job("old_dag")
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
+        assert result.success == 0
+        assert "still exists" in (result.error or "")
+
+    def test_delete_succeeds_when_remaining_job_is_inactive_metadata(self):
+        mock_adapter = MagicMock()
+        remaining = _make_scheduled_job("old_dag")
+        remaining.status.value = "deleted"
+        remaining.extra = {"is_active": False}
+        mock_adapter.get_job.return_value = remaining
+        tools = SchedulerTools(_make_agent_config())
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.delete_job("old_dag")
+
+        mock_adapter.delete_job.assert_called_once_with("old_dag")
+        mock_adapter.get_job.assert_called_once_with("old_dag")
+        assert result.success == 1
+        assert result.result["status"] == "deleted_inactive"
+        assert result.result["metadata_cleanup"] == "pending"
 
     def test_delete_adapter_exception(self):
         mock_adapter = MagicMock()
@@ -811,6 +899,66 @@ class TestUpdateJob:
         assert result.result["job_id"] == "dag_to_update"
         payload = mock_adapter.update_job.call_args[0][1]
         assert payload.db_connection == {"conn_id": "starrocks_default"}
+
+    def test_update_uses_default_sql_connection_when_conn_id_omitted(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        mock_job = _make_scheduled_job("dag_to_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_to_update",
+                sql_file_path=str(sql_file),
+                job_name="DAG To Update",
+            )
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.update_job.call_args[0][1]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
+
+    def test_update_uses_default_sql_connection_with_scalar_capability(self, tmp_path):
+        sql_file = tmp_path / "updated.sql"
+        sql_file.write_text("SELECT 2")
+
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": "sql",
+            }
+        }
+        mock_job = _make_scheduled_job("dag_to_update")
+        mock_adapter = MagicMock()
+        mock_adapter.update_job.return_value = mock_job
+        tools = SchedulerTools(cfg)
+
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.update_job(
+                job_id="dag_to_update",
+                sql_file_path=str(sql_file),
+                job_name="DAG To Update",
+            )
+
+        assert result.success == 1
+        assert result.result["conn_id"] == "lakehouse_demo"
+        payload = mock_adapter.update_job.call_args[0][1]
+        assert payload.db_connection == {"conn_id": "lakehouse_demo"}
 
     def test_update_missing_sql_file(self, tmp_path):
         tools = SchedulerTools(_make_agent_config())
@@ -955,6 +1103,27 @@ class TestListSchedulerConnections:
         conn_ids = [c["conn_id"] for c in result.result["connections"]]
         assert "starrocks_default" in conn_ids
         assert "pg_conn" in conn_ids
+
+    def test_returns_structured_connection_metadata(self):
+        cfg = _make_agent_config()
+        cfg.scheduler_config["connections"] = {
+            "lakehouse_demo": {
+                "description": "Shared lakehouse",
+                "type": "duckdb_iceberg",
+                "default": True,
+                "capabilities": ["sql", "lakehouse"],
+            }
+        }
+        tools = SchedulerTools(cfg)
+        result = tools.list_scheduler_connections()
+
+        assert result.success == 1
+        conn = result.result["connections"][0]
+        assert conn["conn_id"] == "lakehouse_demo"
+        assert conn["description"] == "Shared lakehouse"
+        assert conn["type"] == "duckdb_iceberg"
+        assert conn["default"] is True
+        assert conn["capabilities"] == ["sql", "lakehouse"]
 
     def test_empty_connections(self):
         cfg = _make_agent_config()
@@ -1163,3 +1332,233 @@ class TestSchedulerDeliverableTarget:
         assert result.success == 0
         # On failure the tool sets result=None, so there's no dict to contain a target.
         assert result.result is None or "deliverable_target" not in (result.result or {})
+
+
+# ── Path policy: align with FilesystemFuncTool ───────────────────────────
+
+
+class TestSqlPathPolicy:
+    """``_load_sql_content`` must anchor relative paths to ``agent_config.project_root``,
+    treat HIDDEN paths as not-found (mirroring ``FilesystemFuncTool.read_file``), and
+    fail closed on EXTERNAL paths in strict mode.
+    """
+
+    def _adapter_returning(self, job_id="job_x"):
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = _make_scheduled_job(job_id)
+        mock_adapter.update_job.return_value = _make_scheduled_job(job_id)
+        return mock_adapter
+
+    def test_relative_path_anchored_to_project_root(self, tmp_path, monkeypatch):
+        """A relative ``jobs/q.sql`` resolves against ``project_root``, not CWD.
+
+        We set CWD to a different directory to prove relative paths do not
+        accidentally pick up files in the process CWD.
+        """
+        (tmp_path / "jobs").mkdir()
+        (tmp_path / "jobs" / "q.sql").write_text("SELECT 1")
+
+        elsewhere = tmp_path.parent / "elsewhere_cwd"
+        elsewhere.mkdir(exist_ok=True)
+        monkeypatch.chdir(elsewhere)
+
+        tools = SchedulerTools(_make_agent_config(project_root=str(tmp_path)))
+        with patch.object(tools, "_get_adapter", return_value=self._adapter_returning("job_x")):
+            result = tools.submit_sql_job(
+                job_name="job_x",
+                sql_file_path="jobs/q.sql",
+                conn_id="c1",
+            )
+        assert result.success == 1, result.error
+
+    def test_relative_path_uses_project_root_not_cwd(self, tmp_path, monkeypatch):
+        """When the file exists under CWD but NOT under project_root, lookup must fail.
+
+        This is the bug B aims to fix: previously ``Path(...).expanduser()``
+        resolved against CWD, so a file in CWD would be found even if
+        ``write_file`` had landed at ``project_root/jobs/q.sql``.
+        """
+        cwd_dir = tmp_path / "cwd_only"
+        cwd_dir.mkdir()
+        (cwd_dir / "jobs").mkdir()
+        (cwd_dir / "jobs" / "q.sql").write_text("SELECT 1")
+
+        project_root = tmp_path / "real_project"
+        project_root.mkdir()
+        # Note: no ``jobs/q.sql`` under project_root.
+
+        monkeypatch.chdir(cwd_dir)
+        tools = SchedulerTools(_make_agent_config(project_root=str(project_root)))
+        result = tools.submit_sql_job(
+            job_name="job_x",
+            sql_file_path="jobs/q.sql",
+            conn_id="c1",
+        )
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_hidden_zone_returns_not_found(self, tmp_path):
+        """A SQL path under ``.datus/`` (HIDDEN, not whitelisted) is reported as
+        not found — same semantics as ``FilesystemFuncTool.read_file``.
+        """
+        hidden_dir = tmp_path / ".datus" / "sessions"
+        hidden_dir.mkdir(parents=True)
+        sql_file = hidden_dir / "secret.sql"
+        sql_file.write_text("SELECT 1")
+
+        tools = SchedulerTools(_make_agent_config(project_root=str(tmp_path)))
+        result = tools.submit_sql_job(
+            job_name="job_x",
+            sql_file_path=".datus/sessions/secret.sql",
+            conn_id="c1",
+        )
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    def test_strict_rejects_external_path(self, tmp_path):
+        """Strict mode rejects absolute paths outside project_root."""
+        external_root = tmp_path / "outside"
+        external_root.mkdir()
+        sql_file = external_root / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        tools = SchedulerTools(
+            _make_agent_config(project_root=str(project_root)),
+            strict=True,
+        )
+        result = tools.submit_sql_job(
+            job_name="job_x",
+            sql_file_path=str(sql_file),
+            conn_id="c1",
+        )
+        assert result.success == 0
+        assert "outside workspace" in (result.error or "").lower()
+
+    def test_non_strict_allows_external_path(self, tmp_path):
+        """Default (non-strict) mode lets absolute paths through, matching
+        ``FilesystemFuncTool.read_file`` (the permission hook handles ASK in CLI).
+        """
+        external_sql = tmp_path / "outside.sql"
+        external_sql.write_text("SELECT 1")
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        tools = SchedulerTools(_make_agent_config(project_root=str(project_root)))
+        with patch.object(tools, "_get_adapter", return_value=self._adapter_returning("job_x")):
+            result = tools.submit_sql_job(
+                job_name="job_x",
+                sql_file_path=str(external_sql),
+                conn_id="c1",
+            )
+        assert result.success == 1, result.error
+
+    def test_sparksql_relative_path_anchored(self, tmp_path, monkeypatch):
+        """``submit_sparksql_job`` shares the same anchoring behavior."""
+        (tmp_path / "jobs").mkdir()
+        (tmp_path / "jobs" / "spark.sql").write_text("SELECT * FROM t")
+
+        elsewhere = tmp_path.parent / "elsewhere_spark_cwd"
+        elsewhere.mkdir(exist_ok=True)
+        monkeypatch.chdir(elsewhere)
+
+        tools = SchedulerTools(_make_agent_config(project_root=str(tmp_path)))
+        with patch.object(tools, "_get_adapter", return_value=self._adapter_returning("spark_x")):
+            result = tools.submit_sparksql_job(
+                job_name="spark_x",
+                sql_file_path="jobs/spark.sql",
+            )
+        assert result.success == 1, result.error
+
+    def test_update_job_relative_path_anchored(self, tmp_path, monkeypatch):
+        """``update_job`` shares the same anchoring behavior."""
+        (tmp_path / "jobs").mkdir()
+        (tmp_path / "jobs" / "u.sql").write_text("SELECT 2")
+
+        elsewhere = tmp_path.parent / "elsewhere_update_cwd"
+        elsewhere.mkdir(exist_ok=True)
+        monkeypatch.chdir(elsewhere)
+
+        tools = SchedulerTools(_make_agent_config(project_root=str(tmp_path)))
+        with patch.object(tools, "_get_adapter", return_value=self._adapter_returning("job_u")):
+            result = tools.update_job(
+                job_id="job_u",
+                sql_file_path="jobs/u.sql",
+                job_name="job_u",
+                conn_id="c1",
+            )
+        assert result.success == 1, result.error
+
+    def test_strict_rejects_external_in_update(self, tmp_path):
+        """Strict mode also gates ``update_job`` (it shares the same helper)."""
+        external_root = tmp_path / "outside"
+        external_root.mkdir()
+        sql_file = external_root / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        tools = SchedulerTools(
+            _make_agent_config(project_root=str(project_root)),
+            strict=True,
+        )
+        result = tools.update_job(
+            job_id="job_u",
+            sql_file_path=str(sql_file),
+            job_name="job_u",
+            conn_id="c1",
+        )
+        assert result.success == 0
+        assert "outside workspace" in (result.error or "").lower()
+
+    def test_strict_inherits_from_agent_config_filesystem_strict(self, tmp_path):
+        """When ``strict`` is not passed, fall back to ``agent_config.filesystem_strict``.
+
+        This is how ``ChatTaskManager`` / ``gateway/main.py`` propagate
+        server-mode fail-closed semantics without every construction site
+        having to thread the flag manually.
+        """
+        external_root = tmp_path / "outside"
+        external_root.mkdir()
+        sql_file = external_root / "q.sql"
+        sql_file.write_text("SELECT 1")
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        cfg = _make_agent_config(project_root=str(project_root))
+        cfg.filesystem_strict = True  # API/gateway sets this
+
+        # Note: no explicit ``strict=`` kwarg.
+        tools = SchedulerTools(cfg)
+        result = tools.submit_sql_job(
+            job_name="job_x",
+            sql_file_path=str(sql_file),
+            conn_id="c1",
+        )
+        assert result.success == 0
+        assert "outside workspace" in (result.error or "").lower()
+
+    def test_explicit_strict_false_overrides_agent_config(self, tmp_path):
+        """An explicit ``strict=False`` overrides ``agent_config.filesystem_strict=True``."""
+        external_sql = tmp_path / "outside.sql"
+        external_sql.write_text("SELECT 1")
+
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        cfg = _make_agent_config(project_root=str(project_root))
+        cfg.filesystem_strict = True  # process-wide says strict
+
+        tools = SchedulerTools(cfg, strict=False)  # but caller forces non-strict
+        with patch.object(tools, "_get_adapter", return_value=self._adapter_returning("job_x")):
+            result = tools.submit_sql_job(
+                job_name="job_x",
+                sql_file_path=str(external_sql),
+                conn_id="c1",
+            )
+        assert result.success == 1, result.error

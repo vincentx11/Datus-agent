@@ -79,10 +79,12 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     # system
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),
+    SlashSpec("bootstrap", "Bootstrap KB (schema / sql / semantic / metrics / knowledge)", "system"),
     SlashSpec("bootstrap-bi", "Extract BI dashboard assets for sub-agent context", "system"),
     SlashSpec("model", "Switch LLM provider/model", "system", aliases=("models",)),
     SlashSpec("effort", "Set reasoning effort (off|minimal|low|medium|high)", "system"),
-    SlashSpec("services", "List configured service platforms and their read-only methods", "system"),
+    SlashSpec("init", "Generate AGENTS.md for the current project", "system"),
+    SlashSpec("services", "Configure dashboards/schedulers (TUI) or list read-only methods", "system"),
     SlashSpec(
         "profile",
         "Switch the permission profile (normal / auto / dangerous)",

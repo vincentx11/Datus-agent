@@ -5,7 +5,7 @@
 """Scheduler tools for submitting and managing jobs via Datus scheduler adapters."""
 
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from agents import Tool
 from datus_scheduler_core.models import SchedulerJobPayload
@@ -14,7 +14,8 @@ from datus_scheduler_core.registry import SchedulerAdapterRegistry
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
-from datus.utils.exceptions import DatusException
+from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -26,13 +27,145 @@ class SchedulerTools(BaseTool):
     tool_name = "scheduler_tools"
     tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
 
-    def __init__(self, agent_config: AgentConfig, scheduler_service: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        scheduler_service: Optional[str] = None,
+        *,
+        strict: Optional[bool] = None,
+        **kwargs,
+    ):
+        """
+        Args:
+            strict: When ``True``, SQL file paths outside the project root are
+                rejected with the same fail-closed semantics ``FilesystemFuncTool``
+                uses on EXTERNAL paths. Used by API / gateway surfaces that have
+                no interactive broker. When ``None`` (the default), falls back to
+                ``agent_config.filesystem_strict`` — the process-wide flag that
+                ``ChatTaskManager`` / ``gateway/main.py`` set to ``True`` so every
+                file-touching tool fails closed in server mode without callers
+                having to thread the flag through manually. CLI keeps the
+                permissive default because ``PermissionHooks`` brokers EXTERNAL
+                access interactively. Pass ``True``/``False`` explicitly to
+                override the agent_config default.
+        """
         super().__init__(**kwargs)
         self.agent_config = agent_config
         self.scheduler_service = scheduler_service
+        if strict is None:
+            strict = bool(getattr(agent_config, "filesystem_strict", False))
+        self._strict = strict
+
+    # ── SQL file resolution ───────────────────────────────────────────────
+
+    def _load_sql_content(self, sql_file_path: str) -> Tuple[Optional[str], Optional[FuncToolResult]]:
+        """Resolve and read a SQL file using the same path policy as ``FilesystemFuncTool``.
+
+        Anchors relative paths to ``agent_config.project_root`` so a SQL file
+        produced by ``write_file`` is read back from the same location regardless
+        of process CWD. HIDDEN paths get the same "not found" response
+        ``FilesystemFuncTool`` uses (so ``.datus/sessions/...`` stays invisible).
+        EXTERNAL paths are rejected only in ``strict`` mode.
+
+        Returns:
+            ``(sql_content, None)`` on success, or ``(None, error_result)`` on failure.
+        """
+        try:
+            resolved = classify_path(
+                sql_file_path,
+                root_path=Path(self.agent_config.project_root),
+                current_node=None,
+                datus_home=None,
+            )
+        except Exception as exc:
+            return None, FuncToolResult(success=0, error=f"Failed to resolve SQL file path '{sql_file_path}': {exc}")
+
+        if resolved.zone == PathZone.HIDDEN:
+            return None, FuncToolResult(success=0, error=f"SQL file not found: {resolved.display}")
+        if self._strict and resolved.zone == PathZone.EXTERNAL:
+            return None, FuncToolResult(
+                success=0,
+                error=f"Path outside workspace is not allowed in strict mode: {resolved.display}",
+            )
+
+        sql_path = resolved.resolved
+        try:
+            if not sql_path.exists():
+                return None, FuncToolResult(success=0, error=f"SQL file not found: {resolved.display}")
+            sql_content = sql_path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            return None, FuncToolResult(success=0, error=f"Failed to read SQL file '{resolved.display}': {exc}")
+
+        if not sql_content:
+            return None, FuncToolResult(success=0, error=f"SQL file is empty: {resolved.display}")
+        return sql_content, None
 
     def _selected_scheduler_config(self) -> dict:
         return dict(self.agent_config.get_scheduler_config(self.scheduler_service))
+
+    @staticmethod
+    def _normalize_scheduler_connection(conn_id: str, raw: Any) -> Dict[str, Any]:
+        if isinstance(raw, dict):
+            raw_capabilities = raw.get("capabilities") or []
+            if isinstance(raw_capabilities, str):
+                capabilities = [raw_capabilities]
+            else:
+                try:
+                    capabilities = list(raw_capabilities)
+                except TypeError:
+                    capabilities = [raw_capabilities]
+            return {
+                "conn_id": conn_id,
+                "description": raw.get("description", ""),
+                "type": raw.get("type", ""),
+                "default": bool(raw.get("default", False)),
+                "capabilities": capabilities,
+            }
+        return {
+            "conn_id": conn_id,
+            "description": str(raw),
+            "type": "",
+            "default": False,
+            "capabilities": [],
+        }
+
+    def _scheduler_connections(self) -> List[Dict[str, Any]]:
+        try:
+            scheduler_config = self._selected_scheduler_config()
+        except DatusException:
+            raise
+        connections = scheduler_config.get("connections", {}) or {}
+        return [self._normalize_scheduler_connection(conn_id, raw) for conn_id, raw in connections.items()]
+
+    def _resolve_sql_conn_id(self, conn_id: Optional[str]) -> str:
+        if conn_id:
+            return conn_id
+
+        sql_connections = []
+        for conn in self._scheduler_connections():
+            capabilities = {str(item).lower() for item in conn.get("capabilities", [])}
+            if capabilities and "sql" not in capabilities:
+                continue
+            if conn.get("default"):
+                sql_connections.append(conn)
+
+        if len(sql_connections) == 1:
+            return str(sql_connections[0]["conn_id"])
+        if not sql_connections:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "'conn_id' is required because no default SQL scheduler connection is configured. "
+                    "Set conn_id explicitly or mark one scheduler connection as default: true."
+                ),
+            )
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=(
+                "'conn_id' is required because multiple default SQL scheduler connections are configured: "
+                + ", ".join(str(conn["conn_id"]) for conn in sql_connections)
+            ),
+        )
 
     # ── Adapter factory ────────────────────────────────────────────────────
 
@@ -63,7 +196,7 @@ class SchedulerTools(BaseTool):
         self,
         job_name: str,
         sql_file_path: str,
-        conn_id: str,
+        conn_id: Optional[str] = None,
         schedule: Optional[str] = None,
         description: Optional[str] = None,
     ) -> FuncToolResult:
@@ -76,23 +209,17 @@ class SchedulerTools(BaseTool):
         Args:
             job_name:        Human-readable job name; used to derive the DAG/job ID.
             sql_file_path:   Local path to the .sql file.
-            conn_id:         Scheduler connection ID (e.g. Airflow Connection ID).
+            conn_id:         Scheduler connection ID (e.g. Airflow Connection ID). If omitted,
+                             the single default SQL-capable scheduler connection is used.
             schedule:        Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
             description:     Optional human-readable description for the DAG.
 
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        # Read SQL file
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
         # Submit
         try:
@@ -101,10 +228,11 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
         try:
+            resolved_conn_id = self._resolve_sql_conn_id(conn_id)
             payload = SchedulerJobPayload(
                 job_name=job_name,
                 sql=sql_content,
-                db_connection={"conn_id": conn_id},
+                db_connection={"conn_id": resolved_conn_id},
                 schedule=schedule,
                 description=description,
             )
@@ -117,6 +245,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "conn_id": resolved_conn_id,
                     "deliverable_target": self._build_scheduler_target(job),
                 },
             )
@@ -152,15 +281,9 @@ class SchedulerTools(BaseTool):
         Returns:
             FuncToolResult with result containing job_id and status.
         """
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
         try:
             adapter = self._get_adapter()
@@ -429,6 +552,30 @@ class SchedulerTools(BaseTool):
 
         try:
             adapter.delete_job(job_id)
+            remaining = adapter.get_job(job_id)
+            if remaining is not None:
+                status = getattr(remaining.status, "value", remaining.status)
+                extra = remaining.extra or {}
+                is_active = extra.get("is_active", True)
+                if status == "deleted" or is_active is False:
+                    return FuncToolResult(
+                        success=1,
+                        result={
+                            "job_id": job_id,
+                            "status": "deleted_inactive",
+                            "metadata_cleanup": "pending",
+                            "message": (
+                                "Job is removed from active scheduling, but platform metadata/history still exists."
+                            ),
+                        },
+                    )
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Job '{job_id}' still exists after delete_job returned successfully. "
+                        "The platform still returns it as an active scheduler job."
+                    ),
+                )
             return FuncToolResult(success=1, result={"job_id": job_id, "status": "deleted"})
         except Exception as exc:
             logger.error("delete_job failed: %s", exc)
@@ -455,15 +602,17 @@ class SchedulerTools(BaseTool):
         Re-renders the job definition with updated content.  The scheduler reloads
         it automatically.  Supports both SQL and SparkSQL job types.
 
-        For SQL jobs, ``conn_id`` is required — it references the scheduler-managed
-        connection (e.g. Airflow Connection ID) resolved at runtime.
+        For SQL jobs, ``conn_id`` references the scheduler-managed connection
+        (e.g. Airflow Connection ID) resolved at runtime. If omitted, the single
+        default SQL-capable scheduler connection is used.
 
         Args:
             job_id:         The existing job/DAG identifier to update.
             sql_file_path:  Local path to the new .sql file.
             job_name:       Human-readable job name (used for rendering the job definition).
             job_type:       'sql' (default) or 'sparksql'.
-            conn_id:        Scheduler connection ID (e.g. Airflow Connection ID). Required for sql jobs.
+            conn_id:        Scheduler connection ID (e.g. Airflow Connection ID). Optional when one default
+                            SQL-capable scheduler connection is configured.
             spark_master:   Spark master URL, default 'local[*]' (sparksql only).
             schedule:       Cron expression, e.g. '0 8 * * *'.  None = manual trigger only.
             description:    Optional human-readable description.
@@ -474,23 +623,33 @@ class SchedulerTools(BaseTool):
         if job_type not in ("sql", "sparksql"):
             return FuncToolResult(success=0, error=f"Unsupported job_type '{job_type}'. Use 'sql' or 'sparksql'.")
 
-        # Read SQL file
-        try:
-            sql_path = Path(sql_file_path).expanduser()
-            if not sql_path.exists():
-                return FuncToolResult(success=0, error=f"SQL file not found: {sql_file_path}")
-            sql_content = sql_path.read_text(encoding="utf-8").strip()
-            if not sql_content:
-                return FuncToolResult(success=0, error=f"SQL file is empty: {sql_file_path}")
-        except Exception as exc:
-            return FuncToolResult(success=0, error=f"Failed to read SQL file '{sql_file_path}': {exc}")
+        sql_content, err = self._load_sql_content(sql_file_path)
+        if err is not None:
+            return err
 
-        # Validate conn_id for sql jobs
-        if job_type == "sql" and not conn_id:
-            return FuncToolResult(
-                success=0,
-                error="'conn_id' is required for sql job_type. "
-                "Set it to the Airflow Connection ID for the target database.",
+        resolved_conn_id = None
+        if job_type == "sparksql":
+            payload = SchedulerJobPayload(
+                job_name=job_name,
+                schedule=schedule,
+                description=description,
+                extra={
+                    "job_type": "sparksql",
+                    "sparksql": sql_content,
+                    "spark_master": spark_master or "local[*]",
+                },
+            )
+        else:
+            try:
+                resolved_conn_id = self._resolve_sql_conn_id(conn_id)
+            except (ValueError, DatusException) as exc:
+                return FuncToolResult(success=0, error=str(exc))
+            payload = SchedulerJobPayload(
+                job_name=job_name,
+                sql=sql_content,
+                db_connection={"conn_id": resolved_conn_id},
+                schedule=schedule,
+                description=description,
             )
 
         try:
@@ -499,25 +658,6 @@ class SchedulerTools(BaseTool):
             return FuncToolResult(success=0, error=str(exc))
 
         try:
-            if job_type == "sparksql":
-                payload = SchedulerJobPayload(
-                    job_name=job_name,
-                    schedule=schedule,
-                    description=description,
-                    extra={
-                        "job_type": "sparksql",
-                        "sparksql": sql_content,
-                        "spark_master": spark_master or "local[*]",
-                    },
-                )
-            else:
-                payload = SchedulerJobPayload(
-                    job_name=job_name,
-                    sql=sql_content,
-                    db_connection={"conn_id": conn_id},
-                    schedule=schedule,
-                    description=description,
-                )
             job = adapter.update_job(job_id, payload)
             return FuncToolResult(
                 success=1,
@@ -527,6 +667,7 @@ class SchedulerTools(BaseTool):
                     "status": job.status.value,
                     "scheduler": job.platform,
                     "platform": job.platform,
+                    "conn_id": resolved_conn_id,
                     "deliverable_target": self._build_scheduler_target(job),
                 },
             )
@@ -634,7 +775,7 @@ class SchedulerTools(BaseTool):
             scheduler_config = self._selected_scheduler_config()
         except DatusException as exc:
             return FuncToolResult(success=0, error=str(exc))
-        connections = scheduler_config.get("connections", {})
+        connections = scheduler_config.get("connections", {}) or {}
         if not connections:
             return FuncToolResult(
                 success=1,
@@ -645,7 +786,7 @@ class SchedulerTools(BaseTool):
                     "Check Airflow (Admin > Connections) for available connections.",
                 },
             )
-        conn_list = [{"conn_id": k, "description": v} for k, v in connections.items()]
+        conn_list = [self._normalize_scheduler_connection(k, v) for k, v in connections.items()]
         return FuncToolResult(
             success=1,
             result={
@@ -659,14 +800,25 @@ class SchedulerTools(BaseTool):
     def _connections_description(self) -> str:
         """Build a suffix describing available conn_ids from scheduler config."""
         try:
-            scheduler_config = self._selected_scheduler_config()
+            connections = self._scheduler_connections()
         except DatusException:
             return ""
-        connections = scheduler_config.get("connections", {})
         if not connections:
             return ""
-        items = ", ".join(f"'{k}' ({v})" for k, v in connections.items())
-        return f"\n\nAvailable conn_id values: {items}"
+        items = []
+        for conn in connections:
+            details = []
+            if conn.get("description"):
+                details.append(str(conn["description"]))
+            if conn.get("type"):
+                details.append(f"type={conn['type']}")
+            if conn.get("default"):
+                details.append("default")
+            if conn.get("capabilities"):
+                details.append("capabilities=" + ",".join(str(item) for item in conn["capabilities"]))
+            suffix = f" ({'; '.join(details)})" if details else ""
+            items.append(f"'{conn['conn_id']}'{suffix}")
+        return f"\n\nAvailable conn_id values: {', '.join(items)}"
 
     @staticmethod
     def _build_scheduler_target(job: Any) -> dict:

@@ -3,7 +3,6 @@ Service for handling Database Management operations.
 """
 
 import os
-from datetime import datetime
 from typing import List, Optional
 
 from datus_db_core import BaseSqlConnector
@@ -29,6 +28,8 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_table_name_parts
+from datus.utils.text_utils import redact_uri
+from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 # Database types that do NOT support schema switching
@@ -114,7 +115,7 @@ class DatasourceService:
         dialect = getattr(connector, "dialect", "unknown")
         has_schema = connector_registry.support_schema(dialect)
         catalog_name = request.catalog_name or getattr(connector, "catalog_name", None)
-        now = datetime.now().isoformat() + "Z"
+        now = now_utc_iso()
 
         def _disconnected(db_name: str) -> DatabaseInfo:
             return DatabaseInfo(
@@ -596,5 +597,5 @@ def _get_uri(connector: BaseSqlConnector) -> str:
         return ""
     connection_string = getattr(connector, "connection_string", "")
     if connection_string:
-        return connection_string
+        return redact_uri(connection_string)
     return f"{connector.dialect}://"

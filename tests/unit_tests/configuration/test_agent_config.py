@@ -27,6 +27,7 @@ from datus.configuration.agent_config import (
     NodeConfig,
     ServicesConfig,
     ValidationConfig,
+    _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
     resolve_env,
@@ -73,6 +74,29 @@ class TestResolveEnv:
 
     def test_no_placeholder_unchanged(self):
         assert resolve_env("plain/path/no/vars") == "plain/path/no/vars"
+
+    def test_file_db_extra_resolves_nested_env_values(self, monkeypatch):
+        monkeypatch.setenv("ICEBERG_URI", "http://iceberg-rest:8181")
+        monkeypatch.setenv("WAREHOUSE", "s3://warehouse/")
+        monkeypatch.setenv("REGION", "us-east-1")
+
+        cfg = _parse_single_file_db(
+            {
+                "uri": ":memory:",
+                "iceberg": {
+                    "catalog_uri": "${ICEBERG_URI}",
+                    "warehouse": "${WAREHOUSE}",
+                    "regions": ["${REGION}"],
+                    "tuple_value": ("${REGION}",),
+                },
+            },
+            "duckdb",
+        )
+
+        assert cfg.extra["iceberg"]["catalog_uri"] == "http://iceberg-rest:8181"
+        assert cfg.extra["iceberg"]["warehouse"] == "s3://warehouse/"
+        assert cfg.extra["iceberg"]["regions"] == ["us-east-1"]
+        assert cfg.extra["iceberg"]["tuple_value"] == ("us-east-1",)
 
 
 # ---------------------------------------------------------------------------
@@ -504,28 +528,57 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
 
-    def test_resolve_semantic_adapter_defaults_to_metricflow_without_service_config(self, tmp_path):
+    def test_resolve_semantic_adapter_raises_when_no_service_configured(self, tmp_path):
+        """The implicit metricflow fallback was removed: callers must
+        explicitly configure at least one entry under
+        ``services.semantic_layer``. The error message points the user at
+        the YAML or the ``/services semantic`` TUI."""
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
+        with pytest.raises(DatusException, match="No semantic layer configured"):
+            cfg.resolve_semantic_adapter()
 
-    def test_build_semantic_adapter_config_defaults_to_metricflow_without_service_config(self, tmp_path):
+    def test_build_semantic_adapter_config_raises_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
+        with pytest.raises(DatusException, match="No semantic layer configured"):
+            cfg.build_semantic_adapter_config()
 
-        config = cfg.build_semantic_adapter_config()
+    def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "demo_lakehouse": {
+                        "type": "duckdb",
+                        "uri": "duckdb:///:memory:",
+                        "default": True,
+                        "iceberg": {
+                            "catalog_alias": "lake",
+                            "catalog_uri": "http://127.0.0.1:8181",
+                            "warehouse": "s3://warehouse/",
+                        },
+                    }
+                }
+            },
+        )
 
-        assert config["type"] == "metricflow"
-        assert config["agent_home"] == str(tmp_path / "h")
-        assert config["semantic_models_path"].endswith("subject/semantic_models")
+        datasource = cfg.services.datasources["demo_lakehouse"]
+        assert datasource.extra == {
+            "iceberg": {
+                "catalog_alias": "lake",
+                "catalog_uri": "http://127.0.0.1:8181",
+                "warehouse": "s3://warehouse/",
+            }
+        }
 
     def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
         cfg = self._make(
@@ -553,6 +606,124 @@ class TestAgentConfigServiceSelectors:
             },
         )
         assert cfg.default_scheduler_service() == "airflow_prod"
+
+    def test_active_scheduler_overrides_global_default(self, tmp_path):
+        """Project-level ``active_scheduler`` outranks ``default: true``."""
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={
+                "datasources": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                    "airflow_dev": {"type": "airflow"},
+                },
+            },
+            active_scheduler="airflow_dev",
+            skip_init_dirs=True,
+        )
+        # Explicit name still wins over project override.
+        assert cfg.get_scheduler_config("airflow_prod")["name"] == "airflow_prod"
+        # No explicit name → project override beats the global default flag.
+        chosen = cfg.get_scheduler_config()
+        assert chosen.get("name") == "airflow_dev"
+
+    def test_active_scheduler_stale_falls_back_to_global_default(self, tmp_path, caplog):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={
+                "datasources": {},
+                "schedulers": {
+                    "airflow_prod": {"type": "airflow", "default": True},
+                },
+            },
+            active_scheduler="never_configured",
+            skip_init_dirs=True,
+        )
+        with caplog.at_level("WARNING"):
+            chosen = cfg.get_scheduler_config()
+        assert chosen.get("name") == "airflow_prod"
+        joined = " ".join(r.message for r in caplog.records)
+        assert "never_configured" in joined
+
+    def test_set_active_dashboard_persists_to_project_override(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={"datasources": {}},
+            skip_init_dirs=True,
+        )
+        cfg.set_active_dashboard("superset")
+        assert cfg.active_dashboard() == "superset"
+
+        from datus.configuration.project_config import load_project_override
+
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        assert loaded is not None
+        assert loaded.dashboard == "superset"
+
+        cfg.set_active_dashboard(None)
+        assert cfg.active_dashboard() is None
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        # Cleared field is omitted on disk.
+        assert loaded is None or loaded.dashboard is None
+
+    def test_set_active_scheduler_persists_to_project_override(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path / "proj"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            services={"datasources": {}},
+            skip_init_dirs=True,
+        )
+        cfg.set_active_scheduler("airflow")
+        assert cfg.active_scheduler() == "airflow"
+
+        from datus.configuration.project_config import load_project_override
+
+        loaded = load_project_override(cwd=str(tmp_path / "proj"))
+        assert loaded is not None
+        assert loaded.scheduler == "airflow"
 
     def test_file_datasource_uri_expands_env_vars(self, tmp_path, monkeypatch):
         db_dir = tmp_path / "db"
@@ -668,6 +839,147 @@ class TestAgentConfigServiceSelectors:
                 },
             )
 
+    # ── default_dashboard_service ─────────────────────────────────────
+
+    def test_default_dashboard_service_returns_none_for_empty_section(self, tmp_path):
+        cfg = self._make(tmp_path, services={"datasources": {}})
+        assert cfg.default_dashboard_service() is None
+
+    def test_default_dashboard_service_uses_unique_entry(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://x"},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() == "superset"
+
+    def test_default_dashboard_service_picks_default_flag(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://prod"},
+                    "grafana": {"type": "grafana", "api_base_url": "http://dev", "default": True},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() == "grafana"
+
+    def test_default_dashboard_service_rejects_multiple_defaults(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "default": True, "api_base_url": "http://a"},
+                    "grafana": {"type": "grafana", "default": True, "api_base_url": "http://b"},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="Multiple BI services are marked"):
+            cfg.default_dashboard_service()
+
+    def test_default_dashboard_service_returns_none_when_multiple_no_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "bi_platforms": {
+                    "superset": {"type": "superset", "api_base_url": "http://a"},
+                    "grafana": {"type": "grafana", "api_base_url": "http://b"},
+                },
+            },
+        )
+        assert cfg.default_dashboard_service() is None
+
+    # ── default_semantic_adapter ───────────────────────────────────────
+
+    def test_default_semantic_adapter_returns_none_for_empty_section(self, tmp_path):
+        """Empty section now means "nothing configured" — callers must
+        explicitly add an entry. Returning ``None`` here lets the resolver
+        own the user-facing error."""
+        cfg = self._make(tmp_path, services={"datasources": {}})
+        assert cfg.default_semantic_adapter() is None
+
+    def test_default_semantic_adapter_uses_unique_entry(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {"metricflow": {}},
+            },
+        )
+        assert cfg.default_semantic_adapter() == "metricflow"
+
+    def test_default_semantic_adapter_picks_default_flag(self, tmp_path):
+        """When multiple semantic adapters are configured, ``default: true``
+        wins over the unique-entry shortcut (which doesn't apply here)."""
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    # Hypothetical second adapter — registry validation is
+                    # deferred so the test can exercise the selection
+                    # logic without registering a real adapter.
+                    "dbt": {},
+                },
+            },
+        )
+        assert cfg.default_semantic_adapter() == "metricflow"
+
+    def test_default_semantic_adapter_rejects_multiple_defaults(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    "dbt": {"default": True},
+                },
+            },
+        )
+        with pytest.raises(DatusException, match="Multiple semantic layers are marked"):
+            cfg.default_semantic_adapter()
+
+    # ── active_semantic / set_active_semantic / resolver pin ────────────
+
+    def test_active_semantic_pin_outranks_global_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {
+                    "metricflow": {"default": True},
+                    "dbt": {},
+                },
+            },
+        )
+        cfg.set_active_semantic("dbt", persist=False)
+        assert cfg.resolve_semantic_adapter() == "dbt"
+
+    def test_stale_active_semantic_falls_through_to_default(self, tmp_path, caplog):
+        """A pin pointing at a deleted adapter is ignored (with warning);
+        resolution falls through to the global default."""
+        import logging
+
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {},
+                "semantic_layer": {"metricflow": {}},
+            },
+        )
+        cfg.set_active_semantic("never_configured", persist=False)
+        with caplog.at_level(logging.WARNING):
+            assert cfg.resolve_semantic_adapter() == "metricflow"
+
 
 # ---------------------------------------------------------------------------
 # AgentConfig.api_config
@@ -704,6 +1016,47 @@ class TestAgentConfigApiSection:
         api = {"auth_provider": {"class": "pkg.mod.Cls", "kwargs": {"a": 1}}}
         cfg = self._make(tmp_path, api=api)
         assert cfg.api_config == api
+
+
+class TestAgentConfigChannels:
+    def _make(self, tmp_path, channels=None):
+        kwargs = dict(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            skip_init_dirs=True,
+        )
+        if channels is not None:
+            kwargs["channels"] = channels
+        return AgentConfig(**kwargs)
+
+    def test_channel_config_resolves_nested_env_values(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+        cfg = self._make(
+            tmp_path,
+            channels={
+                "slack-main": {
+                    "adapter": "slack",
+                    "extra": {
+                        "app_token": "${SLACK_APP_TOKEN}",
+                        "bot_token": "${SLACK_BOT_TOKEN}",
+                    },
+                }
+            },
+        )
+
+        extra = cfg.channels_config["slack-main"]["extra"]
+        assert extra["app_token"] == "xapp-test"
+        assert extra["bot_token"] == "xoxb-test"
 
 
 class TestNormalizeProjectName:

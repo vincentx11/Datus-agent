@@ -3,7 +3,6 @@
 import asyncio
 import os
 import types
-from datetime import datetime
 from typing import AsyncGenerator, Optional
 
 from datus.api.models.kb_models import (
@@ -31,6 +30,7 @@ from datus.storage.semantic_model.semantic_model_init import (
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
+from datus.utils.time_utils import now_utc_iso, to_utc_iso
 
 logger = get_logger(__name__)
 
@@ -477,7 +477,7 @@ class KbService:
 
     @staticmethod
     def _build_args(request: BootstrapKbInput, project_root: str) -> types.SimpleNamespace:
-        """Create a SimpleNamespace mimicking argparse.Namespace for datus init functions."""
+        """Create a SimpleNamespace mimicking argparse.Namespace for the bootstrap-kb helpers."""
         # Resolve relative paths against the project root
         success_story = os.path.join(project_root, request.success_story) if request.success_story else None
         sql_dir = os.path.join(project_root, request.sql_dir) if request.sql_dir else None
@@ -513,7 +513,7 @@ class KbService:
             error=error,
             progress=progress,
             payload=payload,
-            timestamp=datetime.now().isoformat(),
+            timestamp=now_utc_iso(),
         )
 
     @staticmethod
@@ -534,5 +534,5 @@ class KbService:
             error=event.error,
             progress=progress,
             payload=event.payload,
-            timestamp=event.timestamp.isoformat() if event.timestamp else datetime.now().isoformat(),
+            timestamp=to_utc_iso(event.timestamp) or now_utc_iso(),
         )

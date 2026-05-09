@@ -130,7 +130,7 @@ class DbConfig:
                 # Store unknown fields in extra for adapter-specific config
                 # Skip internal fields that are handled separately
                 if v is not None and v != "" and k not in internal_fields:
-                    extra_params[k] = resolve_env(v) if isinstance(v, str) else v
+                    extra_params[k] = _resolve_nested_value(v)
                 continue
             if not v:
                 params[k] = v
@@ -451,6 +451,11 @@ class DashboardConfig:
     # to enable multi-instance deployments where the alias differs from the
     # adapter type (``platform=superset_prod``, ``adapter_type=superset``).
     adapter_type: str = ""
+    # YAML ``default: true`` flag. When set, this service is the global
+    # default returned by :meth:`AgentConfig.default_dashboard_service`.
+    # At most one entry under ``services.bi_platforms`` may carry this
+    # flag; multiple defaults are rejected at config load time.
+    default: bool = False
 
 
 logger = get_logger(__name__)
@@ -479,6 +484,12 @@ DEFAULT_REFLECTION_NODES = {
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
+    known_fields = {"uri", "name", "type", "schema", "default"}
+    extra = {
+        key: _resolve_nested_value(value)
+        for key, value in db_config.items()
+        if key not in known_fields and value is not None and value != ""
+    }
     if "name" in db_config:
         login_name = db_config["name"]
         db_name = file_stem_from_uri(uri)
@@ -487,7 +498,14 @@ def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
         db_name = login_name
     if not uri.startswith(dialect):
         uri = f"{dialect}:///{os.path.expanduser(uri)}"
-    return DbConfig(type=dialect, uri=uri, database=db_name, schema=db_config.get("schema", ""), logic_name=login_name)
+    return DbConfig(
+        type=dialect,
+        uri=uri,
+        database=db_name,
+        schema=db_config.get("schema", ""),
+        logic_name=login_name,
+        extra=extra or None,
+    )
 
 
 @dataclass
@@ -596,6 +614,17 @@ class AgentConfig:
         self._target_reasoning_effort: Optional[str] = (
             kwargs.get("target_reasoning_effort") or kwargs.get("reasoning_effort") or None
         )
+        # Project-level active service overrides forwarded by
+        # ``_apply_project_override`` from ``./.datus/config.yml``. ``None``
+        # means "no project override" — service resolution falls back to
+        # the explicit call-site argument, then the global ``default: true``
+        # flag, then the unique-entry shortcut. Validated lazily at the
+        # consumer ( ``BIFuncTool._resolved_platform`` /
+        # ``AgentConfig.get_scheduler_config``) so a missing service name
+        # does not block ``AgentConfig`` construction itself.
+        self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
+        self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
+        self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -723,8 +752,10 @@ class AgentConfig:
         # value at node build time and do not hot-reload.
         self.validation_config = ValidationConfig.from_dict(kwargs.get("validation", {}))
 
-        # Initialize channels configuration for Datus Gateway IM gateway
-        self.channels_config: Dict[str, Any] = kwargs.get("channels", {})
+        # Initialize channels configuration for Datus Gateway IM gateway.
+        # Keep this aligned with other config sections: channel credentials may
+        # use ${ENV_VAR} placeholders inside nested adapter-specific fields.
+        self.channels_config: Dict[str, Any] = _resolve_nested_value(kwargs.get("channels", {}))
 
         # Platform documentation fetch configs (datasource-independent)
         document_raw = kwargs.get("document", {}) or {}
@@ -1033,6 +1064,22 @@ class AgentConfig:
                 )
             return self.scheduler_services[service_name]
 
+        # Project-level override from ``./.datus/config.yml`` wins over the
+        # global ``default: true`` flag so a project can pin a different
+        # scheduler than the workspace-wide default without rewriting
+        # agent.yml. A stale override (service deleted from agent.yml) is
+        # ignored with a warning so the user sees one clear error rather
+        # than a confusing "no scheduler configured" later.
+        active_override = self._active_scheduler
+        if active_override:
+            if active_override in self.scheduler_services:
+                return self.scheduler_services[active_override]
+            logger.warning(
+                "Project override active_scheduler=`%s` is not configured under "
+                "`agent.services.schedulers`; falling back to global default.",
+                active_override,
+            )
+
         default_service = self.default_scheduler_service()
         if default_service:
             return self.scheduler_services[default_service]
@@ -1051,19 +1098,147 @@ class AgentConfig:
             ),
         )
 
+    def default_dashboard_service(self) -> Optional[str]:
+        """Return the dashboard service marked as the global default, or ``None``.
+
+        Mirrors :meth:`default_scheduler_service`: at most one entry under
+        ``services.bi_platforms`` may carry ``default: true`` (multiple
+        defaults are an explicit error so the user fixes the config rather
+        than us silently picking one). When no entry is flagged, fall
+        through to the single-entry shortcut so simple deployments still
+        Just Work without writing the flag.
+        """
+        defaults = [name for name, cfg in self.dashboard_config.items() if getattr(cfg, "default", False)]
+        if len(defaults) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "Multiple BI services are marked with `default: true` in "
+                    "`agent.services.bi_platforms`. Keep at most one default dashboard."
+                ),
+            )
+        if defaults:
+            return defaults[0]
+        if len(self.dashboard_config) == 1:
+            return next(iter(self.dashboard_config))
+        return None
+
+    def active_dashboard(self) -> Optional[str]:
+        """Return the project-level default BI service, or ``None``.
+
+        Read by :class:`BIFuncTool._resolved_platform` between the explicit
+        ``bi_service`` argument and the global ``default: true`` flag.
+        ``None`` means "no project override — fall back to
+        ``default_dashboard_service`` or raise on ambiguity".
+        """
+        return self._active_dashboard
+
+    def active_scheduler(self) -> Optional[str]:
+        """Return the project-level default scheduler service, or ``None``.
+
+        Read by :meth:`get_scheduler_config` between the explicit
+        ``service_name`` argument and the global ``default: true`` flag.
+        """
+        return self._active_scheduler
+
+    def active_semantic(self) -> Optional[str]:
+        """Return the project-level default semantic adapter, or ``None``.
+
+        Read by :meth:`resolve_semantic_adapter` between the explicit
+        ``adapter_type`` argument and the global ``default: true`` flag.
+        """
+        return self._active_semantic
+
+    def set_active_dashboard(self, name: Optional[str], persist: bool = True) -> None:
+        """Pin (or clear) the project-level default BI service.
+
+        ``name=None`` clears the override. When ``persist`` is ``True``
+        (default), writes ``./.datus/config.yml`` so the choice survives
+        process restarts. Validation against ``services.bi_platforms`` is
+        skipped here — :meth:`active_dashboard` is consulted lazily by
+        consumers, which surface a clear "service not configured" error
+        if the override has gone stale.
+        """
+        cleaned = (name or "").strip() or None
+        self._active_dashboard = cleaned
+        if persist:
+            self._persist_project_field("dashboard", cleaned)
+
+    def set_active_scheduler(self, name: Optional[str], persist: bool = True) -> None:
+        """Pin (or clear) the project-level default scheduler service.
+
+        Mirrors :meth:`set_active_dashboard` for the scheduler section.
+        """
+        cleaned = (name or "").strip() or None
+        self._active_scheduler = cleaned
+        if persist:
+            self._persist_project_field("scheduler", cleaned)
+
+    def set_active_semantic(self, name: Optional[str], persist: bool = True) -> None:
+        """Pin (or clear) the project-level default semantic adapter.
+
+        Mirrors :meth:`set_active_dashboard` for the semantic_layer section.
+        """
+        cleaned = (name or "").strip() or None
+        self._active_semantic = cleaned
+        if persist:
+            self._persist_project_field("semantic", cleaned)
+
+    def _persist_project_field(self, field_name: str, value: Optional[str]) -> None:
+        """Update a single top-level field in ``./.datus/config.yml``.
+
+        Reuses the same project_root resolution as
+        :meth:`set_active_provider_model` so the write target matches the
+        rest of the project-override surface. ``None`` clears the field
+        from the saved YAML rather than writing an empty string.
+        """
+        from datus.configuration.project_config import (
+            ProjectOverride,
+            load_project_override,
+            save_project_override,
+        )
+
+        current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
+        setattr(current, field_name, value)
+        save_project_override(current, cwd=str(self._project_root))
+
     def default_semantic_adapter(self) -> Optional[str]:
+        """Return the semantic adapter marked as the global default, or ``None``.
+
+        Mirrors :meth:`default_scheduler_service` /
+        :meth:`default_dashboard_service`: at most one entry under
+        ``services.semantic_layer`` may carry ``default: true``; multiple
+        defaults are rejected here so the user fixes the YAML rather than
+        having us silently pick one. Falls back to the single-entry
+        shortcut when no entry is flagged.
+        """
+        defaults = [name for name, cfg in self.semantic_layer_configs.items() if cfg.get("default")]
+        if len(defaults) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "Multiple semantic layers are marked with `default: true` in "
+                    "`agent.services.semantic_layer`. Keep at most one default semantic adapter."
+                ),
+            )
+        if defaults:
+            return defaults[0]
         if len(self.semantic_layer_configs) == 1:
             return next(iter(self.semantic_layer_configs))
-        if not self.semantic_layer_configs:
-            # MetricFlow is currently the built-in default semantic adapter.
-            return "metricflow"
         return None
 
     def resolve_semantic_adapter(self, adapter_type: Optional[str] = None) -> Optional[str]:
+        """Resolve the active semantic adapter name.
+
+        Order: explicit ``adapter_type`` argument -> project-level pin
+        (``./.datus/config.yml`` ``semantic:``) -> global ``default: true``
+        flag / single-entry shortcut. Raises when no semantic layer is
+        configured at all, or when multiple are configured without a clear
+        default — this matches the Dashboard / Scheduler resolution
+        contract so all three sections behave identically.
+        """
         normalized = str(adapter_type or "").lower().strip()
         if normalized:
-            if not self.semantic_layer_configs:
-                return normalized
             if normalized in self.semantic_layer_configs:
                 return normalized
             raise DatusException(
@@ -1074,6 +1249,25 @@ class AgentConfig:
                 ),
             )
 
+        if not self.semantic_layer_configs:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "No semantic layer configured under `agent.services.semantic_layer`. "
+                    "Add an entry (e.g. `metricflow: {}`) or run `/services semantic` to configure one."
+                ),
+            )
+
+        active_override = self._active_semantic
+        if active_override:
+            if active_override in self.semantic_layer_configs:
+                return active_override
+            logger.warning(
+                "Project override active_semantic=`%s` is not configured under "
+                "`agent.services.semantic_layer`; falling back to global default.",
+                active_override,
+            )
+
         default_adapter = self.default_semantic_adapter()
         if default_adapter:
             return default_adapter
@@ -1081,7 +1275,7 @@ class AgentConfig:
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
                 "Multiple semantic layers are configured in `agent.services.semantic_layer`, "
-                "set `semantic_adapter` on the semantic node."
+                "set `semantic_adapter` on the semantic node or mark one entry with `default: true`."
             ),
         )
 
@@ -1700,7 +1894,16 @@ class AgentConfig:
         )
 
     def sub_agent_config(self, sub_agent_name: str) -> Dict[str, Any]:
-        return self.agentic_nodes.get(sub_agent_name, {})
+        from datus.configuration.scoped_context_overrides import get_override
+
+        base = self.agentic_nodes.get(sub_agent_name, {}) or {}
+        override = get_override(sub_agent_name)
+        if override is None:
+            return base
+        # Layer override on top of YAML so non-SubAgentConfig keys
+        # (model, max_turns, permissions, hooks, ...) survive.
+        base_dict = dict(base) if isinstance(base, dict) else (base.model_dump() if hasattr(base, "model_dump") else {})
+        return {**base_dict, **override.model_dump(exclude_unset=True)}
 
     def benchmark_config(self, benchmark_platform) -> BenchmarkConfig:
         if benchmark_platform not in self.benchmark_configs:
@@ -1770,6 +1973,7 @@ class AgentConfig:
                 extra=_resolve_nested_value(auth_params.get("extra", {})),
                 dataset_db=dataset_db,
                 adapter_type=adapter_type,
+                default=bool(auth_params.get("default", False)),
             )
 
     def init_scheduler_services(self, param: Dict[str, Any]):
@@ -1864,6 +2068,8 @@ def _resolve_nested_value(value: Any) -> Any:
         return {k: _resolve_nested_value(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_resolve_nested_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_resolve_nested_value(item) for item in value)
     return value
 
 

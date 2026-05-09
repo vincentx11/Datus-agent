@@ -30,6 +30,7 @@ from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
+from datus.utils.time_utils import format_local_time
 
 
 @contextmanager
@@ -204,6 +205,24 @@ class ChatCommands:
         )
         return node_input, current_node.type
 
+    @staticmethod
+    def _render_agent_dispatch_hint(message: str, agent_name: str) -> str:
+        """Append a routing hint that nudges the chat agent to delegate.
+
+        The chat agent already exposes a ``task`` FunctionTool wired to
+        :class:`SubAgentTaskTool`; ``@Agent <name>`` is therefore a soft
+        routing instruction rather than a node switch. Keeping the user's
+        original text intact (and only appending an ``[Agent dispatch]``
+        annotation) preserves the visible transcript while making the
+        delegation deterministic when the model reads the prompt.
+        """
+        annotation = (
+            f"[Agent dispatch] The user invoked @Agent {agent_name}. "
+            f'Use the task tool with type="{agent_name}" to delegate this request '
+            f"to that subagent rather than handling it directly."
+        )
+        return f"{message.rstrip()}\n\n{annotation}"
+
     def execute_chat_command(
         self,
         message: str,
@@ -262,7 +281,14 @@ class ChatCommands:
             return
 
         try:
-            at_tables, at_metrics, at_sqls = self.cli.at_completer.parse_at_context(message)
+            at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
+            # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
+            # override: ``current_subagent_name`` and the active node remain
+            # unchanged. The hint is appended to the message so the chat
+            # agent's existing ``task`` tool fires deterministically rather
+            # than relying on the LLM to spot the bare ``@Agent`` token.
+            if at_agent:
+                message = self._render_agent_dispatch_hint(message, at_agent)
 
             if interactive:
                 # Decision logic: determine if we need to create a new node
@@ -305,12 +331,16 @@ class ChatCommands:
             # Initialize action history display
             action_display = ActionHistoryDisplay(self.console, live_state=getattr(self.cli, "live_state", None))
             incremental_actions = []
-            # Streaming text deltas (thinking_delta, depth=0) are routed to this
-            # separate queue so the main trace renderer never has to walk them
-            # again. The TUI streaming context pops deltas off this list as it
-            # repaints the pinned region, and drops the list on each paired
-            # terminal response so the accumulator resets per message.
-            streaming_deltas = []
+            # Streaming text deltas (thinking_delta, depth=0) are routed to a
+            # per-message bucket keyed by ``action.action_id`` (the
+            # ``thinking_stream_id`` shared across all deltas + the paired
+            # terminal response in one message). The producer only appends
+            # to its own bucket; the TUI streaming context drains buckets
+            # via per-bucket cursors and drops a bucket when it processes
+            # the matching terminal response. A dict avoids the data race
+            # the previous shared-list approach had between the producer
+            # (asyncio bg loop) and the consumer (refresh daemon thread).
+            streaming_deltas: dict[str, list[ActionHistory]] = {}
             # Will be set True after the streaming context exits if it has
             # already flushed the main-agent body to the scrollback. When True,
             # ``_render_final_response`` skips the one-shot
@@ -342,8 +372,8 @@ class ChatCommands:
                         # the main-agent accumulator; sub-agents have their own
                         # pinned-region path.
                         if action.action_type == "thinking_delta":
-                            if action.depth == 0:
-                                streaming_deltas.append(action)
+                            if action.depth == 0 and action.action_id:
+                                streaming_deltas.setdefault(action.action_id, []).append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -361,15 +391,12 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
-                            # Wrapper *_response closes the delta accumulator for
-                            # this message; reset so a follow-up turn doesn't see
-                            # the previous body in its replay.
-                            streaming_deltas.clear()
                             continue
                         # Plain "response" from the model layer (openai_compatible /
                         # codex) is the paired terminal action for the delta
-                        # stream. Push it to the trace list and reset the delta
-                        # accumulator at the same time.
+                        # stream. Push it to the trace list; the consumer drops
+                        # the matching delta bucket when it processes this
+                        # action via ``_print_completed_action``.
                         if (
                             action.role == ActionRole.ASSISTANT
                             and action.depth == 0
@@ -380,7 +407,6 @@ class ChatCommands:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
@@ -464,8 +490,8 @@ class ChatCommands:
                                     await auto_submit_interaction(broker, action)
                             continue
                         if action.action_type == "thinking_delta":
-                            if action.depth == 0:
-                                streaming_deltas.append(action)
+                            if action.depth == 0 and action.action_id:
+                                streaming_deltas.setdefault(action.action_id, []).append(action)
                             continue
                         # Node final actions (e.g. chat_response) — keep for
                         # final response rendering but skip streaming trace.
@@ -483,7 +509,6 @@ class ChatCommands:
                             pending_non_thinking = _drop_if_matches_final(
                                 pending_non_thinking, action, incremental_actions
                             )
-                            streaming_deltas.clear()
                             continue
                         if (
                             action.role == ActionRole.ASSISTANT
@@ -495,7 +520,6 @@ class ChatCommands:
                                 incremental_actions.append(pending_non_thinking)
                                 pending_non_thinking = None
                             incremental_actions.append(action)
-                            streaming_deltas.clear()
                             continue
                         # Defer ASSISTANT text flagged as non-thinking — it may
                         # be the tail text that duplicates the upcoming *_response.
@@ -1333,7 +1357,7 @@ class ChatCommands:
                     first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"
-                    updated = (info.get("updated_at") or info.get("latest_message_at") or "N/A")[:19]
+                    updated = format_local_time(info.get("updated_at") or info.get("latest_message_at")) or "N/A"
                     msg_count = str(info.get("message_count", 0))
                     items.append(
                         ListItem(key=sid, primary=first_msg, secondary=f"{sid}  Updated: {updated}  Msgs: {msg_count}")
@@ -1479,7 +1503,7 @@ class ChatCommands:
                     content = (turn_msg.get("content", "") or "").replace("\n", " ").replace("\r", " ")
                     if not content:
                         content = "(empty)"
-                    timestamp = (turn_msg.get("created_at") or "")[:19]
+                    timestamp = format_local_time(turn_msg.get("created_at"))
                     items.append(ListItem(key=str(idx), primary=content, secondary=f"Turn: {idx}  {timestamp}"))
 
                 app = ListSelectorApp(title="Session Rewind", items=items)

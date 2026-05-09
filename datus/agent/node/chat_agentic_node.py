@@ -22,7 +22,6 @@ from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
 from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.tools.mcp_tools import MCPServer
 from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_func_tool import SkillFuncTool
@@ -139,8 +138,9 @@ class ChatAgenticNode(AgenticNode):
 
     def setup_tools(self):
         """Initialize all tools with default database connection."""
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config)
-        self.context_search_tools = ContextSearchTools(self.agent_config)
+        node_name = self.get_node_name()
+        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=node_name)
+        self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=node_name)
         self.reference_template_tools = ReferenceTemplateTools(self.agent_config, db_func_tool=self.db_func_tool)
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
@@ -289,7 +289,11 @@ class ChatAgenticNode(AgenticNode):
 
     def _update_database_connection(self, database_name: str):
         """Update database connection to a different database."""
-        self.db_func_tool = DBFuncTool(agent_config=self.agent_config, default_datasource=database_name)
+        self.db_func_tool = DBFuncTool(
+            agent_config=self.agent_config,
+            sub_agent_name=self.get_node_name(),
+            default_datasource=database_name,
+        )
         self._rebuild_tools()
 
     # ── Permission Helpers ──────────────────────────────────────────────
@@ -347,15 +351,6 @@ class ChatAgenticNode(AgenticNode):
 
         for server_name in mcp_server_names:
             try:
-                if server_name == "metricflow_mcp":
-                    server = self._setup_metricflow_mcp()
-                    if server:
-                        mcp_servers["metricflow_mcp"] = server
-                        logger.info(
-                            f"Setup metricflow_mcp MCP server for database: {self.agent_config.current_datasource}"
-                        )
-                    continue
-
                 server = self._setup_mcp_server_from_config(server_name)
                 if server:
                     mcp_servers[server_name] = server
@@ -365,24 +360,6 @@ class ChatAgenticNode(AgenticNode):
 
         logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
         return mcp_servers
-
-    def _setup_metricflow_mcp(self) -> Optional[Any]:
-        """Setup MetricFlow MCP server."""
-        try:
-            if not self.agent_config:
-                return None
-
-            db_config = self.agent_config.current_db_config()
-            if not db_config:
-                return None
-
-            metricflow_server = MCPServer.get_metricflow_mcp_server(datasource=self.agent_config.current_datasource)
-            if metricflow_server:
-                logger.info(f"Added metricflow_mcp MCP server for database: {db_config.database}")
-                return metricflow_server
-        except Exception as e:
-            logger.error(f"Failed to setup metricflow_mcp: {e}")
-        return None
 
     def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
         """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
@@ -422,7 +399,7 @@ class ChatAgenticNode(AgenticNode):
             node_config=self.node_config,
             has_db_tools=bool(self.db_func_tool),
             has_filesystem_tools=bool(self.filesystem_func_tool),
-            has_mf_tools=any("metricflow" in k for k in self.mcp_servers.keys()),
+            has_mf_tools=False,
             has_context_search_tools=bool(self.context_search_tools),
             has_reference_template_tools=bool(
                 self.reference_template_tools and self.reference_template_tools.has_reference_templates
@@ -434,6 +411,7 @@ class ChatAgenticNode(AgenticNode):
         )
         context["conversation_summary"] = conversation_summary
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
+        context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 
         context["current_date"] = get_default_current_date(None)
@@ -694,6 +672,8 @@ class ChatAgenticNode(AgenticNode):
             response_content = ""
             tokens_used = 0
             last_successful_output = None
+            last_successful_tool_summary = ""
+            tool_result_seen = False
 
             execution_mode = "plan" if is_plan_mode and self.plan_hooks else "normal"
 
@@ -706,9 +686,17 @@ class ChatAgenticNode(AgenticNode):
             ):
                 yield stream_action
 
-                # Collect response content from successful actions
-                if stream_action.status == ActionStatus.SUCCESS and stream_action.output:
+                # Collect response content only from assistant text actions.
+                # Tool results are displayed as tool cards and must not become
+                # the final chat response.
+                if (
+                    stream_action.role == ActionRole.ASSISTANT
+                    and stream_action.status == ActionStatus.SUCCESS
+                    and stream_action.output
+                ):
                     if isinstance(stream_action.output, dict):
+                        if stream_action.output.get("is_thinking") is True and not tool_result_seen:
+                            continue
                         last_successful_output = stream_action.output
                         raw_output_value = ""
                         if stream_action.action_type == "message" and "raw_output" in stream_action.output:
@@ -724,6 +712,14 @@ class ChatAgenticNode(AgenticNode):
                             response_content = candidate
                         elif candidate and not isinstance(candidate, str):
                             response_content = str(candidate)
+                elif stream_action.role == ActionRole.TOOL:
+                    if stream_action.status == ActionStatus.SUCCESS:
+                        output = stream_action.output if isinstance(stream_action.output, dict) else {}
+                        summary = output.get("summary") or output.get("status_message") or ""
+                        if isinstance(summary, str) and summary.strip():
+                            last_successful_tool_summary = summary.strip()
+                    if stream_action.status != ActionStatus.PROCESSING:
+                        tool_result_seen = True
 
             # Fallback: extract from last successful output
             if not response_content and last_successful_output:
@@ -738,6 +734,9 @@ class ChatAgenticNode(AgenticNode):
                     response_content = candidate
                 elif candidate and not isinstance(candidate, str):
                     response_content = str(candidate)
+
+            if not response_content and last_successful_tool_summary:
+                response_content = last_successful_tool_summary
 
             # Check summary_report actions for content if still empty
             if not response_content:

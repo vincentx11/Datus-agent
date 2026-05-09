@@ -1,6 +1,14 @@
 # Data Engineering Quickstart
 
-This guide walks through a complete Datus workflow using the open DAComp data-engineering dataset. You will inspect the warehouse design, build layered tables interactively, generate ETL jobs, produce marts data, submit a daily Airflow job, and publish the result to Superset.
+This guide walks through a complete local Datus workflow using the open DAComp
+data-engineering dataset. You will inspect the warehouse design, build layered
+tables interactively in a local DuckDB workbench file, generate ETL jobs,
+produce marts data, submit a daily Airflow job, and publish the result to
+Superset.
+
+The local open-source quickstart does **not** require Iceberg, MinIO, or S3.
+The SaaS Studio tour uses a managed DuckDB + Iceberg lakehouse instead; see
+[SaaS Studio Tour Variant](#saas-studio-tour-variant) for the namespace model.
 
 ## Step 0: Download the Quickstart Data
 
@@ -8,30 +16,34 @@ DAComp is **not bundled** with `datus-agent`. This tutorial uses a small
 quickstart package derived from the DAComp Lever example, so you do not need to
 download the full DAComp archive.
 
-Download and unpack the quickstart data and local Docker stack:
+First create and enter the working directory:
 
 ```bash
 mkdir -p ~/datus-quickstart-data
 cd ~/datus-quickstart-data
+```
 
+Run the bash block below — it downloads and unpacks the quickstart data and
+local Docker stack, creates a writable DuckDB workbench, exports `DACOMP_HOME`
+/ `DATUS_QUICKSTART_STACK`, and finally prints the two `export` statements so
+you can paste them into another shell:
+
+```bash
 curl -L -o datus-de-lever-quickstart-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-de-lever-quickstart-v1.zip
 curl -L -o datus-data-engineering-quickstart-stack-v1.zip \
   https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-data-engineering-quickstart-stack-v1.zip
 
-unzip datus-de-lever-quickstart-v1.zip
-unzip datus-data-engineering-quickstart-stack-v1.zip
-```
+unzip -o datus-de-lever-quickstart-v1.zip
+unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
-Point `DACOMP_HOME` at the extracted data directory, point
-`DATUS_QUICKSTART_STACK` at the extracted Docker stack, and create a writable
-DuckDB workbench:
-
-```bash
-export DACOMP_HOME=/absolute/path/to/datus-de-lever-quickstart
-export DATUS_QUICKSTART_STACK=/absolute/path/to/datus-data-engineering-quickstart-stack
+export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
+export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
+
+echo "export DACOMP_HOME=$DACOMP_HOME"
+echo "export DATUS_QUICKSTART_STACK=$DATUS_QUICKSTART_STACK"
 ```
 
 The rest of this guide assumes the example directory contains:
@@ -59,7 +71,7 @@ Read those first so the prompts you give to the agent stay aligned with the inte
 
 ## Step 2: Start the Local Quickstart Stack
 
-The downloaded stack includes the two local demo environments used by this walkthrough.
+The downloaded stack includes the local demo services used by this walkthrough.
 
 Start Superset:
 
@@ -87,15 +99,7 @@ The Airflow compose file mounts `${DACOMP_HOME}` into the container and exposes
 an Airflow connection named `duckdb_dacomp_lever`, which points to
 `/workspace/lever_workbench.duckdb`.
 
-## Step 3: Install the Required Packages
-
-Install Datus plus the adapters used in this walkthrough:
-
-```bash
-pip install datus-agent datus-bi-superset datus-postgresql datus-scheduler-airflow
-```
-
-## Step 4: Configure `agent.yml`
+## Step 3: Configure `agent.yml`
 
 Merge the following service configuration into the existing `agent:` section in
 `~/.datus/conf/agent.yml`. Keep any existing `agent.providers` settings; the
@@ -139,6 +143,10 @@ agent:
         connections:
           duckdb_dacomp_lever: DAComp Lever DuckDB
 
+    semantic_layer:
+      metricflow:
+        type: metricflow
+
   agentic_nodes:
     gen_dashboard:
       bi_platform: superset
@@ -147,7 +155,7 @@ agent:
 ```
 
 Then start Datus with the `lever_duckdb` datasource, which points at the
-workbench DuckDB file:
+writable workbench file:
 
 ```bash
 cd "$DACOMP_HOME"
@@ -166,7 +174,7 @@ writes the active provider/model for this project to `./.datus/config.yml`.
 
 Here `dags_folder` is the host-side directory where Datus writes generated DAG files. The Airflow compose file mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
-## Step 5: Create the Required Staging Tables
+## Step 4: Create the Required Staging Tables
 
 For natural-language agent tasks, avoid starting the message with a raw SQL verb
 such as `CREATE` or `COPY`; the CLI uses those leading keywords to detect direct
@@ -194,7 +202,7 @@ Read ./docs/data_contract.yaml and create the staging tables needed for marts.le
 These four staging tables are the minimum raw-to-staging inputs for the
 requisition-enhancement example.
 
-## Step 6: Build the Intermediate and Marts Tables
+## Step 5: Build the Intermediate and Marts Tables
 
 Build the intermediate model first. It should combine requisition fields with
 user fields according to the `int_lever__requisition_users` entry in
@@ -232,7 +240,7 @@ After the marts table is built, validate it directly:
 SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## Step 7: Submit a Daily Airflow Job
+## Step 6: Submit a Daily Airflow Job
 
 Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
 
@@ -255,7 +263,7 @@ What to expect:
 - Airflow returns a `job_id`
 - the job becomes visible in the Airflow UI
 
-## Step 8: Promote the Marts Table to the Superset Serving DB
+## Step 7: Promote the Marts Table to the Superset Serving DB
 
 The marts table above was built through the `lever_duckdb` datasource. Before
 dashboard generation can create Superset assets, copy that table into the
@@ -267,10 +275,13 @@ BI-registered `superset_serving` Postgres datasource referenced by
 Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 ```
 
+The transfer tool creates `public.lever__requisition_enhanced` from the source
+result columns if it does not already exist.
+
 After this step, the table exists in the same database Superset knows as
 `bi_database_name: examples`.
 
-## Step 9: Create a Superset Dashboard
+## Step 8: Create a Superset Dashboard
 
 Once the marts table exists in `superset_serving`, ask the agent to build the dashboard.
 
@@ -282,7 +293,7 @@ Data preparation is a separate ETL / scheduler step. Dashboard generation
 expects the table or SQL dataset to already be available in the BI-registered
 database.
 
-## Step 10: Verify the End-to-End Result
+## Step 9: Verify the End-to-End Result
 
 You should now have:
 
@@ -290,3 +301,33 @@ You should now have:
 - `marts.lever__requisition_enhanced` built from raw data through staging and intermediate layers
 - a daily Airflow job visible in the scheduler UI
 - a Superset dashboard URL returned by the dashboard generation flow
+
+## SaaS Studio Tour Variant
+
+The hosted SaaS tour uses the same Lever workflow, but it does not use the
+local `lever_workbench.duckdb` file. Instead, the platform provides a shared
+DuckDB + Iceberg lakehouse:
+
+- shared read-only raw namespace: `lake.demo_raw`
+- per-workspace writable namespace: `lake.ws_<workspace_id>`
+- SaaS Airflow connection: `duckdb_lever_workbench`
+
+Every user should run the tour in a separate workspace. The backend renders the
+seeded `docs/data_contract.yaml` for that workspace, so outputs target
+`lake.ws_<workspace_id>` while sources stay in `lake.demo_raw`. Prompts and SQL
+should use fully qualified table names such as:
+
+```text
+lake.demo_raw.requisition
+lake.ws_<workspace_id>.stg_lever__requisition
+lake.ws_<workspace_id>.int_lever__requisition_users
+lake.ws_<workspace_id>.marts_lever__requisition_enhanced
+```
+
+Do not use unqualified physical schemas such as `raw.*`, `staging.*`,
+`intermediate.*`, or `marts.*` in the SaaS tour. Those names are logical layers
+only; the physical write boundary is the workspace namespace.
+
+If a demo project or Airflow DAG was generated before the workspace-namespace
+change, reset or recreate the demo project and regenerate the job so the DAG
+uses `lake.ws_<workspace_id>` instead of an old hard-coded namespace.
