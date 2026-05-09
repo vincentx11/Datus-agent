@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -3090,6 +3062,8 @@
       
         
       
+        
+      
     
     
     
@@ -3176,6 +3150,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3443,6 +3445,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3716,6 +3746,10 @@
 <td><code>/datasource</code></td>
 <td>Switch the current datasource</td>
 </tr>
+<tr>
+<td><code>/language</code></td>
+<td>Pin the response language for every agentic node (<a href="../language_command/">Language Command</a>)</td>
+</tr>
 </tbody>
 </table>
 <h2 id="system">System<a class="headerlink" href="#system" title="Permanent link">&para;</a></h2>
@@ -3734,6 +3768,18 @@
 <td><code>/models</code></td>
 <td>Switch LLM provider/model at runtime</td>
 <td><a href="../model_command/">Model Command</a></td>
+</tr>
+<tr>
+<td><code>/effort</code></td>
+<td></td>
+<td>Set reasoning effort level (off/minimal/low/medium/high)</td>
+<td><a href="../effort_command/">Effort Command</a></td>
+</tr>
+<tr>
+<td><code>/init</code></td>
+<td></td>
+<td>Generate <code>AGENTS.md</code> for the current project (uses the active LLM)</td>
+<td><a href="../init_command/">Init Command</a></td>
 </tr>
 <tr>
 <td><code>/mcp</code></td>
@@ -3757,6 +3803,12 @@
 <td><code>/services</code></td>
 <td></td>
 <td>List configured service platforms and their read-only methods</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/profile</code></td>
+<td></td>
+<td>Switch the active CLI / agent profile</td>
 <td></td>
 </tr>
 </tbody>

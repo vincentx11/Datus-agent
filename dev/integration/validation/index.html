@@ -8,19 +8,19 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/getting_started/Datus_tutorial/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/integration/validation/">
       
       
-        <link rel="prev" href="../contextual_data_engineering/">
+        <link rel="prev" href="../skills/">
       
       
-        <link rel="next" href="../dashboard_copilot/">
+        <link rel="next" href="../memory/">
       
       
         
           <link rel="alternate" href="./" hreflang="en">
         
-          <link rel="alternate" href="../../zh/getting_started/Datus_tutorial/" hreflang="zh">
+          <link rel="alternate" href="../../zh/integration/validation/" hreflang="zh">
         
       
       
@@ -29,7 +29,7 @@
     
     
       
-        <title>Tutorial - Datus Docs</title>
+        <title>Validation - Datus Docs</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#datus-tutorial-a-complete-walkthrough-for-contextual-data-engineering" class="md-skip">
+        <a href="#validation" class="md-skip">
           Skip to content
         </a>
       
@@ -123,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Tutorial
+              Validation
             
           </span>
         </div>
@@ -186,7 +186,7 @@
           </li>
         
           <li class="md-select__item">
-            <a href="../../zh/getting_started/Datus_tutorial/" hreflang="zh" class="md-select__link">
+            <a href="../../zh/integration/validation/" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -455,14 +457,10 @@
                 
   
   
-    
   
   
-  
     
     
-      
-        
       
         
       
@@ -479,11 +477,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" >
         
           
           <label class="md-nav__link" for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
@@ -504,7 +502,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -522,7 +520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../Quickstart/" class="md-nav__link">
+      <a href="../../getting_started/Quickstart/" class="md-nav__link">
         
   
   
@@ -550,7 +548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../data_engineering_quickstart/" class="md-nav__link">
+      <a href="../../getting_started/data_engineering_quickstart/" class="md-nav__link">
         
   
   
@@ -578,7 +576,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../contextual_data_engineering/" class="md-nav__link">
+      <a href="../../getting_started/contextual_data_engineering/" class="md-nav__link">
         
   
   
@@ -603,251 +601,10 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-prerequisites-configure-your-datus-agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Prerequisites: Configure Your Datus Agent
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-run-the-tutorial" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Run the Tutorial
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Run the Tutorial">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#step-16-validate-data-configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [&#8537;] Validate Data &amp; Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-26-initialize-metadata" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [2/6] Initialize Metadata
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-36-initialize-semantic-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [3/6] Initialize Semantic Model
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-46-initialize-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [4/6] Initialize Metrics
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-56-initialize-reference-sql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [&#8538;] Initialize Reference SQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-66-build-subagents" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [6/6] Build Subagents
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-benchmark-and-evaluation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Benchmark and evaluation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Benchmark and evaluation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#31-evaluate-datus_schools-baseline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.1 Evaluate datus_schools (baseline)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#32-evaluate-datus_schools_context-full-context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.2 Evaluate datus_schools_context (full context)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-multi-round-benchmark-demonstrate-context-evolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Multi-round Benchmark: Demonstrate Context Evolution
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Summary
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Next Steps
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../dashboard_copilot/" class="md-nav__link">
+      <a href="../../getting_started/dashboard_copilot/" class="md-nav__link">
         
   
   
@@ -3190,8 +2947,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -3201,6 +2960,8 @@
       
         
       
+        
+      
     
     
     
@@ -3208,11 +2969,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" checked>
         
           
           <label class="md-nav__link" for="__nav_1_14" id="__nav_1_14_label" tabindex="0">
@@ -3233,7 +2994,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_14">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3251,7 +3012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../integration/mcp/" class="md-nav__link">
+      <a href="../mcp/" class="md-nav__link">
         
   
   
@@ -3279,7 +3040,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../integration/skills/" class="md-nav__link">
+      <a href="../skills/" class="md-nav__link">
         
   
   
@@ -3304,10 +3065,162 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-validation-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where validation runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-checks-versus-validator-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in checks versus validator skills
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-a-project-specific-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add a project-specific validator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target filters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modify-built-in-validation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modify built-in validation rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../integration/memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
         
   
   
@@ -3559,6 +3472,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3620,10 +3561,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-prerequisites-configure-your-datus-agent" class="md-nav__link">
+  <a href="#where-validation-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Prerequisites: Configure Your Datus Agent
+        Where validation runs
       
     </span>
   </a>
@@ -3631,132 +3572,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-run-the-tutorial" class="md-nav__link">
+  <a href="#runtime-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Run the Tutorial
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Run the Tutorial">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#step-16-validate-data-configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [&#8537;] Validate Data &amp; Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-26-initialize-metadata" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [2/6] Initialize Metadata
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-36-initialize-semantic-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [3/6] Initialize Semantic Model
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-46-initialize-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [4/6] Initialize Metrics
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-56-initialize-reference-sql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [&#8538;] Initialize Reference SQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-66-build-subagents" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step [6/6] Build Subagents
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-benchmark-and-evaluation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Benchmark and evaluation
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Benchmark and evaluation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#31-evaluate-datus_schools-baseline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.1 Evaluate datus_schools (baseline)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#32-evaluate-datus_schools_context-full-context" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.2 Evaluate datus_schools_context (full context)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-multi-round-benchmark-demonstrate-context-evolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Multi-round Benchmark: Demonstrate Context Evolution
+        Runtime flow
       
     </span>
   </a>
@@ -3764,10 +3583,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-summary" class="md-nav__link">
+  <a href="#built-in-checks-versus-validator-skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Summary
+        Built-in checks versus validator skills
       
     </span>
   </a>
@@ -3775,10 +3594,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-steps" class="md-nav__link">
+  <a href="#configure-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next Steps
+        Configure validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-a-project-specific-validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add a project-specific validator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target filters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modify-built-in-validation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modify built-in validation rules
       
     </span>
   </a>
@@ -3802,7 +3654,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/getting_started/Datus_tutorial.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/integration/validation.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3810,249 +3662,228 @@
   
 
 
-<h1 id="datus-tutorial-a-complete-walkthrough-for-contextual-data-engineering">Datus Tutorial: A Complete Walkthrough for contextual data engineering<a class="headerlink" href="#datus-tutorial-a-complete-walkthrough-for-contextual-data-engineering" title="Permanent link">&para;</a></h1>
-<p><em>A step-by-step guide to understanding and practicing Contextual Data Engineering</em></p>
-<p>This tutorial walks you through the full workflow of Datus-agent:</p>
-<ol>
-<li>Build the <a href="../../knowledge_base/introduction/">knowledge base</a> (<a href="../../knowledge_base/metadata/">Metadata</a> / <a href="../../knowledge_base/metrics/">Metrics</a> / <a href="../../knowledge_base/reference_sql/">Reference SQL</a>)</li>
-<li>Generate two <a href="../../subagent/introduction/">subagents</a> with tools and context</li>
-<li>Explore the data context with <a href="../../cli/introduction/">Datus-CLI</a></li>
-<li>Benchmark them to compare accuracy and performance</li>
-<li>Run multi-round evaluation to demonstrate the value of <a href="../contextual_data_engineering/">contextual data engineering</a></li>
-</ol>
-<h2 id="1-prerequisites-configure-your-datus-agent">1. Prerequisites: Configure Your Datus Agent<a class="headerlink" href="#1-prerequisites-configure-your-datus-agent" title="Permanent link">&para;</a></h2>
-<p>Before running the tutorial, configure your LLM and database connections:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-agent<span class="w"> </span>configure
-</span></code></pre></div>
-<p>This sets up your LLM provider (API key) and saves the configuration to <code>~/.datus/conf/agent.yml</code>. The tutorial will automatically configure the california_schools database for you.</p>
-<p>Since this tutorial involves metric generation, you also need to install the semantic layer adapter:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-metricflow
-</span></code></pre></div>
-<p>For detailed setup instructions, see the <a href="../Quickstart/">Quick Start Guide</a>.</p>
-<h2 id="2-run-the-tutorial">2. Run the Tutorial<a class="headerlink" href="#2-run-the-tutorial" title="Permanent link">&para;</a></h2>
-<p>Start the guided tutorial:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus-agent<span class="w"> </span>tutorial
-</span></code></pre></div>
-<p><img alt="Datus Tutorial Overview" src="../../assets/datus_tutorial.png" /></p>
-<p>You will see a structured 6-step workflow. This will take approximately 10 minutes to initialize through multi-turn agent calls. You can watch Datus's execution process during the wait to understand how it works.</p>
-<h3 id="step-16-validate-data-configuration">Step [&#8537;] Validate Data &amp; Configuration<a class="headerlink" href="#step-16-validate-data-configuration" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Welcome to Datus tutorial 🎉
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Let&#39;s start learning how to prepare for benchmarking step by step using a dataset from California schools.
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>[1/6] Ensure data files and configuration
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>Data files are ready.
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>Configuration is ready.
-</span></code></pre></div>
-<p>The tutorial checks:</p>
-<ul>
-<li>Copies and validates the example dataset (california_schools)</li>
-<li>Verifies success_story.csv exists</li>
-<li>Confirms reference_sql/ directory is present</li>
-<li>Updates agent.yml with the configuration </li>
-</ul>
-<h3 id="step-26-initialize-metadata">Step [2/6] Initialize Metadata<a class="headerlink" href="#step-26-initialize-metadata" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="o">[</span><span class="m">2</span>/6<span class="o">]</span><span class="w"> </span>Initialize<span class="w"> </span>Metadata<span class="w"> </span>using<span class="w"> </span>command:
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite
-</span></code></pre></div>
-<p>Example output:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>→ Processed 3 tables with 3 sample records
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>✅ Metadata knowledge base initialized
-</span></code></pre></div>
-<p>Datus will connect to the example dataset, extract table schemas and data samples, then store them into the <a href="../../knowledge_base/introduction/">knowledge base</a> with vector index. Learn more about <a href="../../knowledge_base/metadata/">metadata management</a>.</p>
-<h3 id="step-36-initialize-semantic-model">Step [3/6] Initialize Semantic Model<a class="headerlink" href="#step-36-initialize-semantic-model" title="Permanent link">&para;</a></h3>
-<p>Semantic model generation reads the success-story SQL examples and creates MetricFlow semantic model YAML before metric generation.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="o">[</span><span class="m">3</span>/6<span class="o">]</span><span class="w"> </span>Initialize<span class="w"> </span>Semantic<span class="w"> </span>Model<span class="w"> </span>using<span class="w"> </span>command:
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span>--success_story<span class="w"> </span>~/.datus/benchmark/california_schools/success_story.csv
-</span></code></pre></div>
-<h3 id="step-46-initialize-metrics">Step [4/6] Initialize Metrics<a class="headerlink" href="#step-46-initialize-metrics" title="Permanent link">&para;</a></h3>
-<p>Metrics generation depends heavily on semantic modeling, so strong agentic models are preferred. (Recommended models: DeepSeek / Claude). For more details, see <a href="../../knowledge_base/metrics/">metrics documentation</a>.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="o">[</span><span class="m">4</span>/6<span class="o">]</span><span class="w"> </span>Initialize<span class="w"> </span>Metrics<span class="w"> </span>using<span class="w"> </span>command:
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>--components<span class="w"> </span>metrics<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span>--success_story<span class="w"> </span>~/.datus/benchmark/california_schools/success_story.csv<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">  </span>--subject_tree<span class="w"> </span><span class="s2">&quot;california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location&quot;</span>
-</span></code></pre></div>
-<p><strong>Understanding the parameters:</strong></p>
-<ul>
-<li><code>--success_story</code>: A CSV file containing sample question &amp; SQL pairs. The LLM will analyze these examples to extract and generate business metrics.</li>
-<li><code>--subject_tree</code>: A pre-defined semantic layer classification structure (e.g., <code>california_schools/Continuation_School/Free_Rate</code>). The LLM will organize generated metrics into appropriate leaf nodes within this subject tree.</li>
-</ul>
-<p>Example output:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>⠦ Metrics initializing...
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  → Processed 3 metrics
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>⚠️ The metrics has not been fully initialised successfully:
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    Error processing row 2: Failed to generate semantic model
-</span></code></pre></div>
-<blockquote>
-<p><strong>Note</strong>
-If metrics initialization fails, adjust the model configuration for <code>gen_semantic_model</code> and <code>gen_metrics</code> in <a href="../../configuration/agent/">agent.yml</a>. These errors can be safely ignored if you don't have enough success story examples at the beginning.</p>
-</blockquote>
-<h3 id="step-56-initialize-reference-sql">Step [&#8538;] Initialize Reference SQL<a class="headerlink" href="#step-56-initialize-reference-sql" title="Permanent link">&para;</a></h3>
-<p>For more information about reference SQL, see the <a href="../../knowledge_base/reference_sql/">reference SQL documentation</a>.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>--components<span class="w"> </span>reference_sql<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span>--sql_dir<span class="w"> </span>~/.datus/benchmark/california_schools/reference_sql<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span>--subject_tree<span class="w"> </span><span class="s2">&quot;california_schools/Continuation/Free_Rate,california_schools/Charter/Education_Location/,california_schools/SAT_Score/Average,california_schools/SAT_Score/Excellence_Rate,california_schools/FRPM_Enrollment/Rate,california_schools/Enrollment/Total&quot;</span>
-</span></code></pre></div>
-<p><strong>Understanding the parameters:</strong></p>
-<ul>
-<li><code>--sql_dir</code>: Directory containing reference SQL files. Datus will parse, analyze, and segment these SQL files to build reusable SQL summaries.</li>
-<li><code>--subject_tree</code>: A manually designed classification structure. The LLM will categorize and organize the SQL summaries into the appropriate subject tree nodes. It's recommended to design this classification structure manually for better organization.</li>
-</ul>
-<p>Output:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>→ Processed 19 SQL successfully
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>✅ Imported SQL files into reference completed
-</span></code></pre></div>
-<p>You can explore the metrics and reference SQL generated by Datus using <a href="../../cli/introduction/">Datus-CLI</a>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-cli --datasource california_schools
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>/subject
-</span></code></pre></div>
-<p><img alt="Subject Tree Structure" src="../../assets/tutorial_subject_tree.png" /></p>
-<h3 id="step-66-build-subagents">Step [6/6] Build Subagents<a class="headerlink" href="#step-66-build-subagents" title="Permanent link">&para;</a></h3>
-<p>The tutorial automatically generates two <a href="../../subagent/introduction/">subagents</a>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>[6/6] Building sub-agents:
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>  ✅ Sub-agent `datus_schools` have been added. It can work using database tools.
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>  ✅ Sub-agent `datus_schools_context` have been added. It can work using metrics, relevant SQL and database tools.
-</span></code></pre></div>
-<p>Check the <a href="../../configuration/agent/"><code>agent.yml</code></a> configuration file to see the subagent definitions:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">    </span><span class="nt">datus_schools</span><span class="p">:</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_schools</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1.0&#39;</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db_tools, date_parsing_tools</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">      </span><span class="nt">mcp</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">      </span><span class="nt">rules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">    </span><span class="nt">datus_schools_context</span><span class="p">:</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">      </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_schools_context</span>
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1.0&#39;</span>
-</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
-</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
-</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">context_search_tools, db_tools, date_parsing_tools</span>
-</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="w">      </span><span class="nt">mcp</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;&#39;</span>
-</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a><span class="w">      </span><span class="nt">rules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
-</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="w">  </span><span class="nt">workflow</span><span class="p">:</span>
-</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="w">    </span><span class="nt">datus_schools</span><span class="p">:</span>
-</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_schools</span>
-</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">execute_sql</span>
-</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">output</span>
-</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a><span class="w">    </span><span class="nt">datus_schools_context</span><span class="p">:</span>
-</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_schools_context</span>
-</span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">execute_sql</span>
-</span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">output</span>
-</span></code></pre></div>
-<p><strong>Understanding the configuration:</strong></p>
-<p><strong>agentic_nodes</strong>: Defines the two subagents with different capabilities</p>
-<ul>
-<li><code>datus_schools</code>: Baseline agent with only <code>db_tools</code> and <code>date_parsing_tools</code></li>
-<li><code>datus_schools_context</code>: Context-rich agent with additional <code>context_search_tools</code> that can access metrics and reference SQL from the knowledge base</li>
-</ul>
-<p><strong>workflow</strong>: Defines the execution flow for each agent. These <a href="../../workflow/introduction/">workflows</a> are designed to output results to files, making it easy to evaluate and compare agent performance.</p>
-<ul>
-<li>Step 1: Subagent analyzes the question and generates SQL</li>
-<li>Step 2: <code>execute_sql</code> node executes the generated SQL to produce the final result</li>
-<li>Step 3: <code>output</code> node formats and writes the results to local disk</li>
-</ul>
-<p>The key difference is that <code>datus_schools_context</code> has access to <code>context_search_tools</code>, enabling it to leverage the <a href="../../knowledge_base/metrics/">metrics</a> and <a href="../../knowledge_base/reference_sql/">reference SQL</a> you built in previous steps.</p>
-<p>You can now:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/datus_schools &lt;your question&gt;
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>/datus_schools_context &lt;your question&gt;
-</span></code></pre></div>
-<p>Or use the chatbot in <a href="../../web_chatbot/introduction/">Datus-Chat</a>. </p>
-<h2 id="3-benchmark-and-evaluation">3. Benchmark and evaluation<a class="headerlink" href="#3-benchmark-and-evaluation" title="Permanent link">&para;</a></h2>
-<p>This is the key part of the tutorial: comparing a <strong>non-context</strong> agent vs. a <strong>context-rich</strong> agent.</p>
-<h3 id="31-evaluate-datus_schools-baseline">3.1 Evaluate <code>datus_schools</code> (baseline)<a class="headerlink" href="#31-evaluate-datus_schools-baseline" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>datus-agent<span class="w"> </span>benchmark<span class="w">   </span>--datasource<span class="w"> </span>california_schools<span class="w">   </span>--benchmark<span class="w"> </span>california_schools<span class="w">   </span>--workflow<span class="w"> </span>datus_schools
-</span></code></pre></div>
-<p>Save the results:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>datus-agent<span class="w"> </span><span class="nb">eval</span><span class="w">   </span>--datasource<span class="w"> </span>california_schools<span class="w">   </span>--benchmark<span class="w"> </span>california_schools<span class="w">   </span>--output_file<span class="w"> </span>schools1.txt
-</span></code></pre></div>
-<p><img alt="Evaluation Results" src="../../assets/eval_schools.png" /></p>
-<h3 id="32-evaluate-datus_schools_context-full-context">3.2 Evaluate <code>datus_schools_context</code> (full context)<a class="headerlink" href="#32-evaluate-datus_schools_context-full-context" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>datus-agent<span class="w"> </span>benchmark<span class="w">   </span>--datasource<span class="w"> </span>california_schools<span class="w">   </span>--benchmark<span class="w"> </span>california_schools<span class="w">   </span>--workflow<span class="w"> </span>datus_schools_context
-</span></code></pre></div>
-<p>Save the results:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datus-agent<span class="w"> </span><span class="nb">eval</span><span class="w">   </span>--datasource<span class="w"> </span>california_schools<span class="w">   </span>--benchmark<span class="w"> </span>california_schools<span class="w">   </span>--output_file<span class="w"> </span>schools2.txt
-</span></code></pre></div>
-<p><em>Example evaluation output showing detailed metrics and performance analysis for both agents.</em></p>
-<p>By comparing <code>schools1.txt</code> and <code>schools2.txt</code>, you can explicitly see how the context-rich agent improves SQL accuracy, reduces errors, and generates more semantically correct queries compared to the baseline agent.</p>
-<h2 id="4-multi-round-benchmark-demonstrate-context-evolution">4. Multi-round Benchmark: Demonstrate Context Evolution<a class="headerlink" href="#4-multi-round-benchmark-demonstrate-context-evolution" title="Permanent link">&para;</a></h2>
-<p>This is the most powerful demonstration of contextual data engineering:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.multi_round_benchmark<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span>--benchmark<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span>--workflow<span class="w"> </span>datus_schools_context<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">  </span>--max_round<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">  </span>--group_name<span class="w"> </span>context_tools
-</span></code></pre></div>
-<p><img alt="Benchmark Comparison" src="../../assets/benchmark_comparsion.png" /></p>
-<p><em>The left graph shows the benchmark result without data context tools (<code>datus_schools</code>), while the right graph shows the benchmark result with data context tools (<code>datus_schools_context</code>). Notice the significant improvement in accuracy when context is available.</em></p>
-<h2 id="5-summary">5. Summary<a class="headerlink" href="#5-summary" title="Permanent link">&para;</a></h2>
-<p>By completing this tutorial, you have:</p>
+<h1 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h1>
+<p>Validation is the post-deliverable guardrail for subagents that create or
+update durable resources. It is separate from generation-time checks such as
+<code>read_query</code>, <code>validate_ddl</code>, or <code>validate_semantic</code>: those tools help the
+main agent produce correct SQL or YAML before it finishes, while the validation
+hook runs after mutating tools report what they delivered.</p>
+<h2 id="where-validation-runs">Where validation runs<a class="headerlink" href="#where-validation-runs" title="Permanent link">&para;</a></h2>
+<p><code>ValidationHook</code> is attached to deliverable-producing subagents:</p>
 <table>
 <thead>
 <tr>
-<th>Component</th>
-<th>What You Achieved</th>
+<th>Subagent</th>
+<th>Targets collected</th>
+<th>Built-in checks</th>
+<th>Validator skills</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Metadata bootstrap</td>
-<td>Loaded schema, column descriptions, and physical structures</td>
+<td><code>gen_table</code></td>
+<td>Tables from <code>execute_ddl</code></td>
+<td>Table exists</td>
+<td><code>table-validation</code></td>
 </tr>
 <tr>
-<td>Metrics bootstrap</td>
-<td>Created semantic models and business metrics</td>
+<td><code>gen_job</code></td>
+<td>Tables and transfers from DDL, DML, and <code>transfer_query_result</code></td>
+<td>Table exists, transfer row-count parity</td>
+<td><code>table-validation</code>, <code>transfer-reconciliation</code></td>
 </tr>
 <tr>
-<td>Reference SQL import</td>
-<td>Captured real SQL patterns and joins</td>
+<td><code>gen_dashboard</code></td>
+<td>Dashboards, charts, and datasets from BI tools</td>
+<td>BI resource exists</td>
+<td><code>bi-validation</code></td>
 </tr>
 <tr>
-<td>Subagent creation</td>
-<td>Built domain-scoped, context-rich agents</td>
-</tr>
-<tr>
-<td>Benchmarking</td>
-<td>Measured SQL correctness and LLM reliability</td>
-</tr>
-<tr>
-<td>Multi-round evaluation</td>
-<td>Observed how context improves accuracy over time</td>
+<td><code>scheduler</code></td>
+<td>Scheduler jobs from submit/update tools</td>
+<td>Job exists and status is not failed, plus deterministic runtime trigger/poll when runtime tools are available</td>
+<td><code>scheduler-validation</code></td>
 </tr>
 </tbody>
 </table>
-<p>You now have:</p>
+<p>Semantic model and metric generation use their own publish gate:
+<code>validate_semantic</code> and, for metrics, <code>query_metrics(..., dry_run=True)</code>.
+Those flows do not use <code>ValidationHook</code> targets.</p>
+<h2 id="runtime-flow">Runtime flow<a class="headerlink" href="#runtime-flow" title="Permanent link">&para;</a></h2>
+<ol>
+<li>A mutating tool returns a <code>FuncToolResult</code> with
+   <code>result.deliverable_target</code>.</li>
+<li><code>ValidationHook.on_tool_end</code> reads that target and adds it to the current
+   session. The hook accumulates the whole run, not just the last tool call.</li>
+<li>When the agent finishes, <code>ValidationHook.on_end</code> wraps all collected targets
+   in a <code>SessionTarget</code>.</li>
+<li>Layer A runs deterministic code checks. These are always enforced, even if
+   LLM validator skills are disabled.</li>
+<li>Scheduler jobs get an extra deterministic runtime check when the scheduler
+   tool exposes trigger and run-history APIs: the hook triggers the delivered
+   job once, polls the matching run, and attaches logs for failures.</li>
+<li>Layer B runs matching validator skills when
+   <code>agent.validation.skill_validators_enabled</code> is true.</li>
+<li>If any blocking check fails, the owning subagent retries with a compact
+   validation failure report as the next prompt. Retry count is capped by
+   <code>agent.validation.max_retries</code>. If blocking failures remain, the node
+   returns <code>success=false</code> with the <code>validation_report</code>.</li>
+</ol>
+<p>Advisory failures and warnings are reported but do not force a retry.</p>
+<h2 id="built-in-checks-versus-validator-skills">Built-in checks versus validator skills<a class="headerlink" href="#built-in-checks-versus-validator-skills" title="Permanent link">&para;</a></h2>
+<p>Layer A is code-level infrastructure. It checks invariants that should be true
+for every run:</p>
 <ul>
-<li>✔ A fully usable domain <a href="../../subagent/introduction/">subagent</a></li>
-<li>✔ An evolvable <a href="../../knowledge_base/introduction/">knowledge base</a></li>
-<li>✔ A repeatable benchmark and evaluation framework</li>
-<li>✔ A real demonstration of <a href="../contextual_data_engineering/">contextual data engineering</a></li>
+<li>table targets can be described</li>
+<li>transfer target tables exist</li>
+<li>source and transferred row counts match when the transfer tool reported both</li>
+<li>BI dashboards, charts, and datasets are reachable</li>
+<li>scheduler jobs exist and are not already failed</li>
 </ul>
-<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<p>Layer B is the user-extensible rule layer. It is implemented with skills whose
+frontmatter has <code>kind: validator</code>. Validator skills are not loaded with
+<code>load_skill</code>, are not shown as normal skills to the main agent, and are run
+only by <code>ValidationHook</code> at the end of a matching subagent run.</p>
+<p>Validator subagents receive only a read-only tool surface:</p>
 <ul>
-<li>Explore <a href="../../cli/introduction/">Datus-CLI</a> for interactive data exploration</li>
-<li>Learn about <a href="../../workflow/introduction/">workflow orchestration</a> for production use cases</li>
-<li>Discover <a href="../../adapters/db_adapters/">database adapters</a> for different data warehouses</li>
+<li>database read tools such as <code>describe_table</code>, <code>get_table_ddl</code>, and
+  <code>read_query</code></li>
+<li>BI read tools such as <code>get_dashboard</code>, <code>get_chart</code>, <code>get_chart_data</code>, and
+  <code>get_dataset</code></li>
+<li>scheduler read tools such as <code>get_scheduler_job</code>, <code>list_job_runs</code>, and
+  <code>get_run_log</code></li>
 </ul>
+<p>Write tools and recursive subagent tools are intentionally excluded. Scheduler
+validators must not call <code>trigger_scheduler_job</code>; deterministic trigger/poll is
+owned by the hook.</p>
+<h2 id="configure-validation">Configure validation<a class="headerlink" href="#configure-validation" title="Permanent link">&para;</a></h2>
+<p>In <code>agent.yml</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">validation</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="c1"># Set to false to disable Layer B validator skills. Layer A still runs.</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">skill_validators_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="c1"># Number of main-agent attempts including the first attempt.</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">max_retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+</span></code></pre></div>
+<p>Use <code>skill_validators_enabled: false</code> when you need the cheaper deterministic
+checks only. To disable one validator while keeping others enabled, shadow or
+edit that skill and set <code>severity: off</code>.</p>
+<h2 id="add-a-project-specific-validator">Add a project-specific validator<a class="headerlink" href="#add-a-project-specific-validator" title="Permanent link">&para;</a></h2>
+<p>Create a project-local skill under <code>./.datus/skills/&lt;name&gt;/SKILL.md</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>./.datus/skills/
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>└── finance-table-validation/
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    └── SKILL.md
+</span></code></pre></div>
+<p>If your <code>skills.directories</code> setting is customized, place the validator under
+one of the configured directories. With the default scan order, project-local
+skills in <code>./.datus/skills</code> override user-global skills in <code>~/.datus/skills</code>,
+and both override bundled built-in skills.</p>
+<p>Example:</p>
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>---
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>name: finance-table-validation
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>description: Validate finance mart tables after gen_job writes them
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>tags: [validation, finance, data-quality]
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>version: &quot;1.0.0&quot;
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>user_invocable: false
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>disable_model_invocation: false
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>kind: validator
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>severity: blocking
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>mode: llm
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>allowed_agents:
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="k">-</span><span class="w"> </span>gen_job
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>targets:
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span><span class="k">-</span><span class="w"> </span>type: table
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    schema: marts
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="gu">    table_pattern: finance_*</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="gu">---</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="gh"># Finance Table Validation</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>ValidationHook invokes this skill after a matching <span class="sb">`gen_job`</span> run. You receive a
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="sb">`SessionTarget`</span>; loop over <span class="sb">`session.targets`</span> and validate every matching table.
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>
+</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>For each finance mart table:
+</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>
+</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="k">1.</span> Use <span class="sb">`read_query`</span> on the target datasource to check that the latest business
+</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>   date is present.
+</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="k">2.</span> Use <span class="sb">`read_query`</span> to confirm <span class="sb">`amount`</span> is not negative.
+</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="k">3.</span> Return one check per rule and per table.
+</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
+</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>Do not mutate data. If a table fails, report the exact table and failed rule so
+</span><span id="__span-2-32"><a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>the retry prompt can fix only the broken target.
+</span></code></pre></div>
+<p>The hook appends the JSON output contract automatically. A valid validator
+response includes a single fenced JSON block:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;checks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="p">{</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;non_negative_amount&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">&quot;passed&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;blocking&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">&quot;observed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;table&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;marts.finance_daily&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;negative_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">},</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">&quot;expected&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;negative_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="p">],</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">&quot;blocking_issues&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;marts.finance_daily has negative amount values&quot;</span><span class="p">]</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>blocking_issues</code> entries are converted into failed blocking checks. Use them
+for concise must-fix findings.</p>
+<h2 id="target-filters">Target filters<a class="headerlink" href="#target-filters" title="Permanent link">&para;</a></h2>
+<p><code>targets</code> decides when a validator runs. An empty list matches every target in
+the session. Otherwise, any matching filter activates the validator.</p>
+<p>Supported target types:</p>
+<ul>
+<li><code>table</code></li>
+<li><code>transfer</code></li>
+<li><code>dashboard</code></li>
+<li><code>chart</code></li>
+<li><code>dataset</code></li>
+<li><code>scheduler_job</code></li>
+</ul>
+<p>Table-like targets also support:</p>
+<ul>
+<li><code>database</code></li>
+<li><code>schema</code></li>
+<li><code>table</code></li>
+<li><code>table_pattern</code> using <code>fnmatch</code> glob syntax</li>
+</ul>
+<p>Examples:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Any table created by gen_table.</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_table</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nt">targets</span><span class="p">:</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># Only marts.* tables whose names start with rev_.</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_job</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="nt">targets</span><span class="p">:</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">marts</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="nt">table_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">rev_*</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="c1"># Any dashboard/chart/dataset delivered by gen_dashboard.</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_dashboard</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</span></code></pre></div>
+<p><code>allowed_agents</code> can name either a concrete configured subagent alias or the
+canonical node class such as <code>gen_job</code>, <code>gen_dashboard</code>, or <code>scheduler</code>.</p>
+<h2 id="modify-built-in-validation-rules">Modify built-in validation rules<a class="headerlink" href="#modify-built-in-validation-rules" title="Permanent link">&para;</a></h2>
+<p>To change a built-in validator for one project, copy the bundled skill into the
+project-local skill directory with the same <code>name</code> and edit it there:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>./.datus/skills/table-validation/SKILL.md
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>./.datus/skills/bi-validation/SKILL.md
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>./.datus/skills/scheduler-validation/SKILL.md
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>./.datus/skills/transfer-reconciliation/SKILL.md
+</span></code></pre></div>
+<p>Keep <code>kind: validator</code>, the intended <code>allowed_agents</code>, and a correct
+<code>targets</code> filter. Restart Datus or reopen the subagent so the skill registry
+rescans the file.</p>
+<p>Use project-level validators for table-specific data-content checks such as
+null ratios, accepted value sets, duplicate-key checks, sample diffs, or
+business thresholds. The bundled <code>table-validation</code> skill deliberately stays
+limited to explicit schema contracts; object existence and basic row-count
+invariants belong to Layer A.</p>
 
 
 
@@ -4084,7 +3915,7 @@ If metrics initialization fails, adjust the model configuration for <code>gen_se
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../contextual_data_engineering/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contextual Data Engineering">
+          <a href="../skills/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Skills">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4094,20 +3925,20 @@ If metrics initialization fails, adjust the model configuration for <code>gen_se
                 Previous
               </span>
               <div class="md-ellipsis">
-                Contextual Data Engineering
+                Skills
               </div>
             </div>
           </a>
         
         
           
-          <a href="../dashboard_copilot/" class="md-footer__link md-footer__link--next" aria-label="Next: Dashboard Copilot">
+          <a href="../memory/" class="md-footer__link md-footer__link--next" aria-label="Next: Auto Memory">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Dashboard Copilot
+                Auto Memory
               </div>
             </div>
             <div class="md-footer__button md-icon">

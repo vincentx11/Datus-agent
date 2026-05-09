@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     上下文数据工程
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    教程
   
 
     
@@ -3090,6 +3062,8 @@
       
         
       
+        
+      
     
     
     
@@ -3176,6 +3150,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
   
 
     
@@ -3443,6 +3445,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3716,6 +3746,10 @@
 <td><code>/datasource</code></td>
 <td>切换当前数据源</td>
 </tr>
+<tr>
+<td><code>/language</code></td>
+<td>固定所有 agentic 节点的响应语言（<a href="../language_command/">Language 命令</a>）</td>
+</tr>
 </tbody>
 </table>
 <h2 id="_5">系统<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
@@ -3734,6 +3768,18 @@
 <td><code>/models</code></td>
 <td>运行时切换 LLM 提供商/模型</td>
 <td><a href="../model_command/">Model 命令</a></td>
+</tr>
+<tr>
+<td><code>/effort</code></td>
+<td></td>
+<td>设置 reasoning 强度（off/minimal/low/medium/high）</td>
+<td><a href="../effort_command/">Effort 命令</a></td>
+</tr>
+<tr>
+<td><code>/init</code></td>
+<td></td>
+<td>为当前项目生成 <code>AGENTS.md</code>（使用当前 LLM）</td>
+<td><a href="../init_command/">Init 命令</a></td>
 </tr>
 <tr>
 <td><code>/mcp</code></td>
@@ -3757,6 +3803,12 @@
 <td><code>/services</code></td>
 <td></td>
 <td>列出已配置的服务平台及其只读方法</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/profile</code></td>
+<td></td>
+<td>切换当前 CLI / agent profile</td>
 <td></td>
 </tr>
 </tbody>

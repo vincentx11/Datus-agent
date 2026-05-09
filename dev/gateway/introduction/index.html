@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -1649,6 +1621,17 @@
     <span class="md-ellipsis">
       
         CLI Flags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-configuration-configure-subcommand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel Configuration (configure subcommand)
       
     </span>
   </a>
@@ -3373,6 +3356,8 @@
       
         
       
+        
+      
     
     
     
@@ -3459,6 +3444,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3731,6 +3744,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3935,6 +3976,17 @@
     <span class="md-ellipsis">
       
         CLI Flags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-configuration-configure-subcommand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel Configuration (configure subcommand)
       
     </span>
   </a>
@@ -4397,6 +4449,45 @@
 </tr>
 </tbody>
 </table>
+<h3 id="channel-configuration-configure-subcommand">Channel Configuration (<code>configure</code> subcommand)<a class="headerlink" href="#channel-configuration-configure-subcommand" title="Permanent link">&para;</a></h3>
+<p>Manage IM channels (Feishu, Slack, …) interactively without hand-editing
+<code>agent.yml</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-gateway<span class="w"> </span>configure
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1"># or with a non-default config file</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>datus-gateway<span class="w"> </span>configure<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
+</span></code></pre></div>
+<p>The wizard opens a single-window TUI: an <strong>Add</strong> entry at the top, followed
+by a live list of currently configured channels. Selecting a channel opens
+a per-channel submenu that lets you:</p>
+<ul>
+<li>Toggle <code>enabled</code></li>
+<li>Change <code>verbose</code> level</li>
+<li>Reinstall the channel's adapter dependencies (e.g. <code>lark-oapi</code>,
+  <code>slack-sdk[socket_mode]</code>)</li>
+<li>Delete the channel</li>
+</ul>
+<p>Adding a channel prompts for the channel name plus the adapter-specific
+secrets (Feishu App ID/Secret, Slack App/Bot tokens, …); secret values are
+redacted in display and may be supplied as <code>${ENV_VAR}</code> placeholders. Any
+save operation is written back to <code>agent.yml</code> immediately, so the next
+<code>datus-gateway</code> start picks up the new channels.</p>
+<p>Flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--config</code></td>
+<td><code>./conf/agent.yml</code></td>
+<td>Override the agent configuration file used by this command.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <h3 id="real-time-streaming">Real-Time Streaming<a class="headerlink" href="#real-time-streaming" title="Permanent link">&para;</a></h3>
 <p>Datus Gateway streams every stage of the agent's processing back to the chat:</p>
@@ -4468,10 +4559,10 @@
 </tbody>
 </table>
 <p>Examples:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>/verbose           # Show current verbosity level
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>/verbose quiet     # Only show thinking and final answer
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>/verbose brief     # Show tool call summaries
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>/verbose detail    # Show full tool call details
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/verbose           # Show current verbosity level
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/verbose quiet     # Only show thinking and final answer
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/verbose brief     # Show tool call summaries
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>/verbose detail    # Show full tool call details
 </span></code></pre></div>
 <h3 id="session-management">Session Management<a class="headerlink" href="#session-management" title="Permanent link">&para;</a></h3>
 <p>Each conversation (group chat, DM, or thread) automatically maps to a persistent session. To start a fresh session, send <code>/new</code>, <code>/reset</code>, or <code>/clear</code>.</p>
@@ -4482,7 +4573,7 @@
 <p>Use the <code>subagent_id</code> field to route messages from a specific channel to a dedicated sub-agent, enabling specialized behavior per channel.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="sdk-not-installed">SDK Not Installed<a class="headerlink" href="#sdk-not-installed" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
 </span></code></pre></div>
 <p>Install the required SDK package for your platform. See the <a href="#installation">Installation</a> section.</p>
 <h3 id="invalid-credentials">Invalid Credentials<a class="headerlink" href="#invalid-credentials" title="Permanent link">&para;</a></h3>
@@ -4498,10 +4589,10 @@
 </ul>
 <h3 id="debug-logging">Debug Logging<a class="headerlink" href="#debug-logging" title="Permanent link">&para;</a></h3>
 <p>Enable verbose logging to diagnose connection issues:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
 </span></code></pre></div>
 <p>Or set the environment variable:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
 </span></code></pre></div>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>

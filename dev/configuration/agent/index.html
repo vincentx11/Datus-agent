@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -3296,6 +3268,8 @@
       
         
       
+        
+      
     
     
     
@@ -3382,6 +3356,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3649,6 +3651,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4199,10 +4229,16 @@
 <td>DashScope Anthropic-compatible coding endpoint</td>
 </tr>
 <tr>
-<td><code>glm_coding</code></td>
-<td><code>glm-5</code></td>
+<td><code>bigmodel_coding</code></td>
+<td><code>glm-5.1</code></td>
 <td><code>claude</code></td>
-<td>GLM Anthropic-compatible coding endpoint</td>
+<td>BigModel Anthropic-compatible coding endpoint</td>
+</tr>
+<tr>
+<td><code>zai_coding</code></td>
+<td><code>glm-5.1</code></td>
+<td><code>claude</code></td>
+<td>Z.AI Anthropic-compatible coding endpoint</td>
 </tr>
 <tr>
 <td><code>minimax_coding</code></td>
@@ -4404,7 +4440,7 @@
 <div class="language-yaml highlight"><span class="filename">.datus/config.yml</span><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">target</span><span class="p">:</span>
 </span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
 </span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-4.1</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="nt">default_database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_duckdb</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="nt">default_datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_duckdb</span>
 </span></code></pre></div>
 
 

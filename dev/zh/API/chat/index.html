@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     上下文数据工程
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    教程
   
 
     
@@ -3478,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3564,6 +3538,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
   
 
     
@@ -3831,6 +3833,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4397,6 +4427,11 @@
 <td>内置 subagent 名(<code>gen_metrics</code>、<code>gen_semantic_model</code> 等)或自定义 id</td>
 </tr>
 <tr>
+<td><code>model</code></td>
+<td>string?</td>
+<td>单次请求级 model 覆盖,格式 <code>provider/model_id</code>(如 <code>openai/gpt-4.1</code>、<code>custom/my-model</code>)。优先级高于服务端 <code>target</code> 与会话默认值。</td>
+</tr>
+<tr>
 <td><code>plan_mode</code></td>
 <td>bool</td>
 <td>是否启用 plan 模式</td>
@@ -4469,7 +4504,24 @@
 <p>对某会话的对话历史进行总结压缩。</p>
 <p><strong>响应</strong>:<code>Result[CompactSessionData]</code>,含 <code>success</code>、<code>new_token_count</code>、<code>tokens_saved</code>、<code>compression_ratio</code>。</p>
 <h3 id="get-apiv1chatsessions"><code>GET /api/v1/chat/sessions</code><a class="headerlink" href="#get-apiv1chatsessions" title="Permanent link">&para;</a></h3>
-<p>列出当前用户的全部会话。</p>
+<p>列出当前用户的会话。</p>
+<p><strong>Query 参数</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>subagent_id</code></td>
+<td>string?</td>
+<td>按 subagent 过滤。传 <code>chat</code> 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户全部会话。</td>
+</tr>
+</tbody>
+</table>
 <p><strong>响应</strong>:<code>Result[ChatSessionData]</code>,数组元素为 <code>{ session_id, user_query, created_at, last_updated,
 total_turns, token_count, last_sql_queries, is_active }</code>。</p>
 <h3 id="delete-apiv1chatsessionssession_id"><code>DELETE /api/v1/chat/sessions/{session_id}</code><a class="headerlink" href="#delete-apiv1chatsessionssession_id" title="Permanent link">&para;</a></h3>

@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://docs.datus.ai/dev/getting_started/dashboard_copilot/">
       
       
-        <link rel="prev" href="../Datus_tutorial/">
+        <link rel="prev" href="../contextual_data_engineering/">
       
       
         <link rel="next" href="../../cli/introduction/">
@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -461,8 +463,6 @@
   
     
     
-      
-        
       
         
       
@@ -586,34 +586,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -800,17 +772,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#install-required-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install Required Extensions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#update-agentyml" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -839,10 +800,32 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#run-bootstrap-command" class="md-nav__link">
+  <a href="#launch-the-repl" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Run Bootstrap Command
+        Launch the REPL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set the Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-bootstrap-bi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run /bootstrap-bi
       
     </span>
   </a>
@@ -854,6 +837,17 @@
     <span class="md-ellipsis">
       
         Interactive Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automated-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Build
       
     </span>
   </a>
@@ -877,22 +871,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-4-use-attribution-analysis" class="md-nav__link">
+  <a href="#step-4-use-the-generated-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 4: Use Attribution Analysis
+        Step 4: Use the Generated Subagents
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Step 4: Use Attribution Analysis">
+    <nav class="md-nav" aria-label="Step 4: Use the Generated Subagents">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-query" class="md-nav__link">
+  <a href="#self-service-sql-main-subagent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example Query
+        Self-service SQL — main subagent
       
     </span>
   </a>
@@ -900,21 +894,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#attribution-analysis-capabilities" class="md-nav__link">
+  <a href="#attribution-analysis-attribution-subagent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Attribution Analysis Capabilities
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sample-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sample Output
+        Attribution analysis — attribution subagent
       
     </span>
   </a>
@@ -927,41 +910,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generated-subagents-explained" class="md-nav__link">
+  <a href="#subagent-comparison" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generated Subagents Explained
+        Subagent comparison
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Generated Subagents Explained">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#gensql-subagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GenSQL Subagent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#genreport-subagent-attribution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GenReport Subagent (Attribution)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3318,6 +3273,8 @@
       
         
       
+        
+      
     
     
     
@@ -3404,6 +3361,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3676,6 +3661,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3843,17 +3856,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#install-required-extensions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install Required Extensions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#update-agentyml" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3882,10 +3884,32 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#run-bootstrap-command" class="md-nav__link">
+  <a href="#launch-the-repl" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Run Bootstrap Command
+        Launch the REPL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set the Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run-bootstrap-bi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run /bootstrap-bi
       
     </span>
   </a>
@@ -3897,6 +3921,17 @@
     <span class="md-ellipsis">
       
         Interactive Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automated-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Build
       
     </span>
   </a>
@@ -3920,22 +3955,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-4-use-attribution-analysis" class="md-nav__link">
+  <a href="#step-4-use-the-generated-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 4: Use Attribution Analysis
+        Step 4: Use the Generated Subagents
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Step 4: Use Attribution Analysis">
+    <nav class="md-nav" aria-label="Step 4: Use the Generated Subagents">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-query" class="md-nav__link">
+  <a href="#self-service-sql-main-subagent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example Query
+        Self-service SQL — main subagent
       
     </span>
   </a>
@@ -3943,21 +3978,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#attribution-analysis-capabilities" class="md-nav__link">
+  <a href="#attribution-analysis-attribution-subagent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Attribution Analysis Capabilities
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sample-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sample Output
+        Attribution analysis — attribution subagent
       
     </span>
   </a>
@@ -3970,41 +3994,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generated-subagents-explained" class="md-nav__link">
+  <a href="#subagent-comparison" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generated Subagents Explained
+        Subagent comparison
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Generated Subagents Explained">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#gensql-subagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GenSQL Subagent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#genreport-subagent-attribution" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GenReport Subagent (Attribution)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4055,7 +4051,7 @@
 <li>Provide attribution analysis to explain what's driving metric changes</li>
 </ul>
 <p>With one command, Datus extracts all the context from your existing dashboard - the SQL queries, table relationships, metrics definitions, and business logic - and creates AI subagents that understand your data as well as your dashboard does.</p>
-<p>The bootstrap process automatically generates two specialized subagents: a <strong>GenSQL subagent</strong> that enables self-service data retrieval through SQL tools, and a <strong>GenReport subagent</strong> that provides analysis, drill-down, and attribution reports through metric tools.</p>
+<p>The bootstrap process automatically generates two specialized subagents: a <strong>main subagent</strong> for self-service SQL generation within the dashboard's semantic scope, and an <strong>attribution subagent</strong> for metric comparison, dimension-level attribution, and root-cause analysis.</p>
 <p><img alt="Dashboard to Agent Architecture" src="../../assets/dashboard_to_agent.png" /></p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>Before you begin, ensure you have:</p>
@@ -4134,31 +4130,29 @@
 <p>You can now access Superset at <a href="http://localhost:8088">http://localhost:8088</a> with default credentials <code>admin/admin</code>.</p>
 <h2 id="step-2-configure-datus">Step 2: Configure Datus<a class="headerlink" href="#step-2-configure-datus" title="Permanent link">&para;</a></h2>
 <p>Configure Datus to connect to both the PostgreSQL database and Superset dashboard.</p>
-<h3 id="install-required-extensions">Install Required Extensions<a class="headerlink" href="#install-required-extensions" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-bi-superset<span class="w"> </span>datus-postgresql<span class="w"> </span>datus-semantic-metricflow
-</span></code></pre></div>
 <h3 id="update-agentyml">Update agent.yml<a class="headerlink" href="#update-agentyml" title="Permanent link">&para;</a></h3>
 <p>Add the following configuration to your <code>~/.datus/conf/agent.yml</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15432</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">examples</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="w">        </span><span class="nt">extra</span><span class="p">:</span>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="w">          </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15432</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">examples</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="w">        </span><span class="nt">extra</span><span class="p">:</span>
+</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="w">          </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Configuration Sections</p>
@@ -4170,83 +4164,352 @@
 </div>
 <div class="admonition tip">
 <p class="admonition-title">Tip</p>
-<p>You can add SQL datasources interactively with <code>datus-agent service add</code>; semantic layer and BI platform entries still need to be edited in YAML.</p>
+<p>You can also add entries interactively from inside the REPL via slash commands: <code>/datasource</code> for SQL datasources, and <code>/services</code> for semantic layer, BI platform, and scheduler entries.</p>
 </div>
 <h2 id="step-3-bootstrap-from-dashboard">Step 3: Bootstrap from Dashboard<a class="headerlink" href="#step-3-bootstrap-from-dashboard" title="Permanent link">&para;</a></h2>
-<p>Now use the <code>bootstrap-bi</code> command to automatically generate context and subagents from your Superset dashboard. We'll use the World Bank's Data dashboard as an example.</p>
-<h3 id="run-bootstrap-command">Run Bootstrap Command<a class="headerlink" href="#run-bootstrap-command" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>datus-agent<span class="w"> </span>bootstrap-bi<span class="w"> </span>--datasource<span class="w"> </span>superset
+<p>Now use the in-REPL <code>/bootstrap-bi</code> slash command to automatically generate context and subagents from your Superset dashboard. We'll use the World Bank's Data dashboard as an example.</p>
+<h3 id="launch-the-repl">Launch the REPL<a class="headerlink" href="#launch-the-repl" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus
+</span></code></pre></div>
+<h3 id="set-the-model">Set the Model<a class="headerlink" href="#set-the-model" title="Permanent link">&para;</a></h3>
+<p><code>/bootstrap-bi</code> calls the LLM to produce SQL summaries, the semantic model, and metrics. Pick the model first via <code>/model</code> — see <a href="../../cli/model_command/">Model Command</a> for the full provider list.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>&gt; /model
+</span></code></pre></div>
+<h3 id="run-bootstrap-bi">Run <code>/bootstrap-bi</code><a class="headerlink" href="#run-bootstrap-bi" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>&gt; /bootstrap-bi
 </span></code></pre></div>
 <h3 id="interactive-flow">Interactive Flow<a class="headerlink" href="#interactive-flow" title="Permanent link">&para;</a></h3>
-<p>The command will guide you through an interactive process:</p>
-<div class="language-yaml no-copy highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">Select BI platform (superset)</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">Dashboard URL</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088/superset/dashboard/world_health/?native_filters_key=4X5gjZkIbnU</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nt">API base URL (e.g. https://host) (http://localhost:8088)</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
+<p>We'll walk through bootstrap using the <strong>World Bank's Data</strong> dashboard from the Superset example set.</p>
+<p><strong>1. Pick a BI platform</strong></p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  Pick a configured BI platform:
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  → superset               superset     http://localhost:8088
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>  ↑↓ navigate   ↵ select   Esc cancel
 </span></code></pre></div>
-<p>The system will display the dashboard information and extracted charts:</p>
-<p><img alt="Extracted SQL from Dashboard Charts" src="../../assets/worldbank_boostrapbi_extract_sql.png" /></p>
-<p>Select the charts and tables you want to include. The bootstrap process will then automatically:</p>
-<p><strong>1. Build Metadata and Reference SQL</strong></p>
-<p>The system analyzes each chart's SQL query and generates comprehensive documentation:</p>
-<p><img alt="Reference SQL Generation" src="../../assets/worldbank_bootstrapbi_reference_sql.png" /></p>
-<p><strong>2. Generate Semantic Model</strong></p>
-<p>Datus creates a semantic model with measures, dimensions, and relationships:</p>
-<p><img alt="Semantic Model Generation" src="../../assets/worldbank_bootstrapbi_semantic_model.png" /></p>
-<p><strong>3. Extract Metrics</strong></p>
-<p>The system identifies and validates metrics from the dashboard queries:</p>
-<p><img alt="Metrics Extraction" src="../../assets/worldbank_bootstrapbi_metrics.png" /></p>
+<p><strong>2. Pick a dashboard</strong></p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>filter:
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    16       Slack Dashboard
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    15       COVID Vaccine Dashboard
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    14       Unicode Test
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    13       FCC New Coder Survey 2018
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    12       Featured Charts
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    11       Video Game Sales
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    10       Sales Dashboard
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>    8        deck.gl Demo
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    7        Misc Charts
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>    6        USA Births Names
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>  → 5        World Bank&#39;s Data
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    9        [ untitled dashboard ]
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>  type to filter   ↑↓ navigate   ↵ select   m manual URL   Esc back
+</span></code></pre></div>
+<p><strong>3. Pick charts for reference SQL</strong></p>
+<p>The SQL behind each selected chart will be saved as a reference example for the main subagent.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  Select charts for reference SQL (9/9 selected):
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>  → [x] 281    Treemap (agg)
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    [x] 276    % Rural (agg)
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    [x] 277    Life Expectancy VS Rural % (agg)
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    [x] 274    Most Populated Countries (agg)
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    [x] 280    Box plot (agg)
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    [x] 278    Rural Breakdown (agg)
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    [x] 273    World&#39;s Population (agg)
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>    [x] 279    World&#39;s Pop Growth (agg)
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    [x] 275    Growth Rate (agg)
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+</span></code></pre></div>
+<p><strong>4. Pick charts for metrics</strong></p>
+<p>The aggregations in these charts will be mined for metric definitions. By default only charts with aggregations are pre-selected.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>  Select charts for metrics (9/9 selected):
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>  → [x] 281    Treemap (agg)
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    [x] 276    % Rural (agg)
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    [x] 277    Life Expectancy VS Rural % (agg)
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    [x] 274    Most Populated Countries (agg)
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    [x] 280    Box plot (agg)
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    [x] 278    Rural Breakdown (agg)
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    [x] 273    World&#39;s Population (agg)
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    [x] 279    World&#39;s Pop Growth (agg)
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    [x] 275    Growth Rate (agg)
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+</span></code></pre></div>
+<p><strong>5. Review tables in scope</strong></p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>  Review tables to scope (1/1 selected):
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>  → [x] public.wb_health_population
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+</span></code></pre></div>
+<p><strong>6. Pick a thread-pool size</strong></p>
+<p>The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>─────────────────────────────── Bootstrap BI ───────────────────────────────
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>  Pick a thread-pool size for parallel LLM calls:
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>  → 1 threads
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    2 threads
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    4 threads
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    8 threads
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>  ↑↓ navigate   ↵ select   Esc back
+</span></code></pre></div>
+<h3 id="automated-build">Automated Build<a class="headerlink" href="#automated-build" title="Permanent link">&para;</a></h3>
+<p>After the picker confirms, Datus runs an automated build pipeline — metadata crawl, reference SQL, semantic model, and metrics extraction.</p>
+<p><strong>1. Metadata crawl</strong></p>
+<p>Crawls and indexes the schema of the in-scope tables:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>⏺ 💬 Dashboard: World Bank&#39;s Data (id=5)
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=1
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>⏺ 💬 Crawling metadata for 1 table(s)…
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>⏺ 🔧 schema_crawl()
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>  └─ ✓
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>⏺ 💬 Metadata crawl finished.
+</span></code></pre></div>
+<p><strong>2. Reference SQL</strong></p>
+<p>For each selected chart, Datus generates a structured SQL Summary (purpose, table, dimensions, metrics, business intent) and writes it under <code>subject/sql_summaries/</code> so the main subagent can use them as few-shot references:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>⏺ 💬 Wrote 9 chart SQL(s) to /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql.
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>⏺ 💬 Processing 9 SQL item(s) with concurrency=1.
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>  ⎿  Done (2 tool uses · 20.0s)
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>⏺ 💬 gen_sql_summary (/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql):
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>SQL Summary: Population by Region and Country
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>📋 Overview
+</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>
+</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>This SQL query is sourced from the World Bank&#39;s Data Superset dashboard and powers a Treemap chart. It aggregates total population figures grouped by region and country code.
+</span><span id="__span-18-17"><a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>
+</span><span id="__span-18-18"><a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-18-19"><a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a>🔍 Query Breakdown
+</span><span id="__span-18-20"><a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>
+</span><span id="__span-18-21"><a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a>
+</span><span id="__span-18-22"><a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>  Element         Details
+</span><span id="__span-18-23"><a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</span><span id="__span-18-24"><a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a>  Table           public.wb_health_population
+</span><span id="__span-18-25"><a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>  Metric          SUM(&#39;SP_POP_TOTL&#39;) — Total population indicator
+</span><span id="__span-18-26"><a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a>  Dimensions      region, country_code
+</span><span id="__span-18-27"><a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>  Time Filter     From 1960-01-01 up to 2026-04-28 (full historical range)
+</span><span id="__span-18-28"><a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a>  Result Limit    50,000 rows
+</span><span id="__span-18-29"><a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a>  Visualization   Treemap chart
+</span><span id="__span-18-30"><a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a>
+</span><span id="__span-18-31"><a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>
+</span><span id="__span-18-32"><a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-18-33"><a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a>📊 Business Purpose
+</span><span id="__span-18-34"><a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a>
+</span><span id="__span-18-35"><a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>This query supports a World Bank population distribution analysis, visualizing how total population is distributed across different world regions and countries over time. The
+</span><span id="__span-18-36"><a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a>Treemap layout makes it easy to compare relative population sizes at a glance.
+</span><span id="__span-18-37"><a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a>
+</span><span id="__span-18-38"><a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-18-39"><a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a>💾 Saved File
+</span><span id="__span-18-40"><a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a>
+</span><span id="__span-18-41"><a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a> • Path: subject/sql_summaries/population_by_region_country_07f5c7b14f0355b0b64183b0993bc45e.yaml
+</span><span id="__span-18-42"><a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a> • Subject Tree: superset/world_bank_s
+</span><span id="__span-18-43"><a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a> • ID: 07f5c7b14f0355b0b64183b0993bc45e
+</span><span id="__span-18-44"><a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a>
+</span><span id="__span-18-45"><a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a>⏺ 💬 Indexed 9 reference SQL item(s).
+</span><span id="__span-18-46"><a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>
+</span><span id="__span-18-47"><a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a>⏺ 💬 Collected 9 reference SQL identifier(s).
+</span></code></pre></div>
+<p><strong>3. Semantic model</strong></p>
+<p>Datus consolidates all chart SQLs into a semantic model with measures, dimensions, and relationships, and validates it:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>⏺ gen_semantic_model(World Bank&#39;s Data)
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a> ⎿  Done (13 tool uses · 96.4s)
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>⏺ 💬 gen_semantic_model (World Bank&#39;s Data):
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>Semantic Model Generation Summary
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
+</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>Analysis
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>
+</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a> • SQL Queries Analyzed: 9 queries from the World Bank&#39;s Data dashboard
+</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a> • Tables Identified: 1 — public.wb_health_population
+</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a> • Column Usage Patterns: Analyzed 4 actively-filtered columns (year, region, country_name, country_code)
+</span></code></pre></div>
+<p><strong>4. Metric extraction</strong></p>
+<p>Based on the validated semantic model, the chart aggregations are deduped and merged into a small set of core metrics:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>⏺ gen_metrics(World Bank&#39;s Data)
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>  ⎿  Done (18 tool uses · 64.0s)
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>⏺ 💬 gen_metrics (World Bank&#39;s Data):
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>Metric Generation Summary
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>Analyzed: 9 SQL queries from the World Bank&#39;s Data dashboard (public.wb_health_population)
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core metrics
+</span></code></pre></div>
 <h3 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h3>
-<p>After the bootstrap completes, you'll have ready-to-use subagents:</p>
-<div class="language-yaml no-copy highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="l l-Scalar l-Scalar-Plain">Subagent `superset_world_bank_s` saved.</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="l l-Scalar l-Scalar-Plain">Subagent `superset_world_bank_s` bootstrapped.</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="l l-Scalar l-Scalar-Plain">Attribution Sub-Agent `superset_world_bank_s_attribution` saved.</span>
+<p>When bootstrap finishes, both subagents are saved and registered as slash commands:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>⏺ save_subagents(superset_world_bank_s)
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>  ⎿  Done (2 tool uses · 0.0s)
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>⏺ 💬 Sub-Agent build successful.
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>&gt; /agent
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>───────────────────────────── Agent Management ─────────────────────────────
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>   Custom   Built-in    (Tab or ←/→ to switch)
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    superset_world_bank_s
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    superset_world_bank_s_attribution
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    + Add agent…
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-21-13"><a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a>  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 </span></code></pre></div>
-<h2 id="step-4-use-attribution-analysis">Step 4: Use Attribution Analysis<a class="headerlink" href="#step-4-use-attribution-analysis" title="Permanent link">&para;</a></h2>
-<p>The bootstrapped attribution subagent enables powerful metric analysis capabilities.</p>
-<h3 id="example-query">Example Query<a class="headerlink" href="#example-query" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Datus&gt;<span class="w"> </span>/superset_world_bank_s_attribution<span class="w"> </span>compare<span class="w"> </span><span class="m">2014</span><span class="w"> </span>and<span class="w"> </span><span class="m">2004</span>,<span class="w"> </span>find<span class="w"> </span>the<span class="w"> </span>reason<span class="w"> </span>of<span class="w"> </span>population<span class="w"> </span>growth
+<h2 id="step-4-use-the-generated-subagents">Step 4: Use the Generated Subagents<a class="headerlink" href="#step-4-use-the-generated-subagents" title="Permanent link">&para;</a></h2>
+<p><code>/bootstrap-bi</code> produces two subagents at once: a <strong>main subagent</strong> for self-service SQL, and an <strong>attribution subagent</strong> for metric-level analysis. Both are immediately invocable as slash commands; you can also switch the default agent through <code>/agent</code>.</p>
+<h3 id="self-service-sql-main-subagent">Self-service SQL — main subagent<a class="headerlink" href="#self-service-sql-main-subagent" title="Permanent link">&para;</a></h3>
+<p>The main subagent generates and runs SQL grounded in the dashboard's tables and reference SQL — ideal for ad-hoc queries and detail lookups.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s<span class="w"> </span>show<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>countries<span class="w"> </span>by<span class="w"> </span>life<span class="w"> </span>expectancy<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">2020</span>
 </span></code></pre></div>
-<p>The agent performs multi-step analysis using the metrics and dimensions from your dashboard:</p>
-<p><img alt="Attribution Analysis Process" src="../../assets/worldbank_population_attribution1.png" /></p>
-<h3 id="attribution-analysis-capabilities">Attribution Analysis Capabilities<a class="headerlink" href="#attribution-analysis-capabilities" title="Permanent link">&para;</a></h3>
-<p>The attribution subagent provides:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>  ⎿  Done ✓ (7 tool uses · 42.9s)
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>🌍 Top 10 Countries by Life Expectancy
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>🏆 Top 10 Countries by Life Expectancy at Birth (2013)
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>  Rank   Country                   Region                       Life Expectancy
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia &amp; Pacific          83.83 yrs
+</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>  🥈 2   🇯🇵 Japan                  East Asia &amp; Pacific          83.33 yrs
+</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a>  🥉 3   🇮🇸 Iceland                Europe &amp; Central Asia        83.12 yrs
+</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a>  4      🇨🇭 Switzerland            Europe &amp; Central Asia        82.75 yrs
+</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a>  5      🇪🇸 Spain                  Europe &amp; Central Asia        82.43 yrs
+</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a>  6      🇱🇮 Liechtenstein          Europe &amp; Central Asia        82.38 yrs
+</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a>  7      🇸🇬 Singapore              East Asia &amp; Pacific          82.35 yrs
+</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a>  8      🇮🇹 Italy                  Europe &amp; Central Asia        82.29 yrs
+</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a>  9      🇦🇺 Australia              East Asia &amp; Pacific          82.20 yrs
+</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a>  10     🇮🇱 Israel                 Middle East &amp; North Africa   82.06 yrs
+</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>
+</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>📌 Key Insights
+</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>
+</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a> • 🥇 Hong Kong SAR, China leads globally at 83.83 years
+</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a> • 🌏 East Asia &amp; Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
+</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a> • 🌍 Europe &amp; Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
+</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a> • All top 10 countries exceed 82 years of life expectancy at birth
+</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a> • 🇮🇱 Israel is the sole representative from the Middle East &amp; North Africa region
+</span></code></pre></div>
+<h3 id="attribution-analysis-attribution-subagent">Attribution analysis — attribution subagent<a class="headerlink" href="#attribution-analysis-attribution-subagent" title="Permanent link">&para;</a></h3>
+<p>The attribution subagent works against metrics and the semantic model — ideal for "why did this change?" questions. It provides:</p>
 <ul>
-<li><strong>Automatic Dimension Importance Ranking</strong> - Identifies which dimensions most influence metric changes</li>
-<li><strong>Delta Contribution Calculation</strong> - Quantifies each factor's contribution to the overall change</li>
-<li><strong>Root Cause Identification</strong> - Pinpoints specific values driving metric movement</li>
+<li><strong>Automatic dimension importance ranking</strong> — identifies which dimensions most influence metric changes</li>
+<li><strong>Delta contribution calculation</strong> — quantifies each factor's contribution to the overall change</li>
+<li><strong>Root cause identification</strong> — pinpoints specific values driving metric movement</li>
 </ul>
-<h3 id="sample-output">Sample Output<a class="headerlink" href="#sample-output" title="Permanent link">&para;</a></h3>
-<p>The analysis generates a comprehensive report with key findings:</p>
-<p><img alt="Attribution Analysis Result" src="../../assets/worldbank_population_attribution2.png" /></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s_attribution<span class="w"> </span>compare<span class="w"> </span><span class="m">2014</span><span class="w"> </span>and<span class="w"> </span><span class="m">2004</span>,<span class="w"> </span>find<span class="w"> </span>the<span class="w"> </span>reason<span class="w"> </span>of<span class="w"> </span>population<span class="w"> </span>growth
+</span></code></pre></div>
+<p>The analysis produces a structured Markdown report:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>  ⎿  Done ✓ (15 tool uses · 71.3s)
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>
+</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
+</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
+</span><span id="__span-25-7"><a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here&#39;s what drove it:
+</span><span id="__span-25-8"><a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>
+</span><span id="__span-25-9"><a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-25-10"><a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>
+</span><span id="__span-25-11"><a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>📊 Population by Region
+</span><span id="__span-25-12"><a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a>
+</span><span id="__span-25-13"><a id="__codelineno-25-13" name="__codelineno-25-13" href="#__codelineno-25-13"></a>
+</span><span id="__span-25-14"><a id="__codelineno-25-14" name="__codelineno-25-14" href="#__codelineno-25-14"></a>  Region                       2004    2014    Δ Growth   Δ %
+</span><span id="__span-25-15"><a id="__codelineno-25-15" name="__codelineno-25-15" href="#__codelineno-25-15"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</span><span id="__span-25-16"><a id="__codelineno-25-16" name="__codelineno-25-16" href="#__codelineno-25-16"></a>  East Asia &amp; Pacific          2.09B   2.24B   +148.6M    +7.1%
+</span><span id="__span-25-17"><a id="__codelineno-25-17" name="__codelineno-25-17" href="#__codelineno-25-17"></a>  South Asia                   1.49B   1.72B   +234.4M    +15.8%
+</span><span id="__span-25-18"><a id="__codelineno-25-18" name="__codelineno-25-18" href="#__codelineno-25-18"></a>  Europe &amp; Central Asia        870M    903M    +32.9M     +3.8%
+</span><span id="__span-25-19"><a id="__codelineno-25-19" name="__codelineno-25-19" href="#__codelineno-25-19"></a>  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
+</span><span id="__span-25-20"><a id="__codelineno-25-20" name="__codelineno-25-20" href="#__codelineno-25-20"></a>  Latin America &amp; Caribbean    556M    626M    +70.8M     +12.7%
+</span><span id="__span-25-21"><a id="__codelineno-25-21" name="__codelineno-25-21" href="#__codelineno-25-21"></a>  Middle East &amp; North Africa   340M    417M    +77.5M     +22.8%
+</span><span id="__span-25-22"><a id="__codelineno-25-22" name="__codelineno-25-22" href="#__codelineno-25-22"></a>  North America                325M    354M    +29.6M     +9.1%
+</span><span id="__span-25-23"><a id="__codelineno-25-23" name="__codelineno-25-23" href="#__codelineno-25-23"></a>
+</span><span id="__span-25-24"><a id="__codelineno-25-24" name="__codelineno-25-24" href="#__codelineno-25-24"></a>
+</span><span id="__span-25-25"><a id="__codelineno-25-25" name="__codelineno-25-25" href="#__codelineno-25-25"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-25-26"><a id="__codelineno-25-26" name="__codelineno-25-26" href="#__codelineno-25-26"></a>
+</span><span id="__span-25-27"><a id="__codelineno-25-27" name="__codelineno-25-27" href="#__codelineno-25-27"></a>🔍 Root Cause Attribution
+</span><span id="__span-25-28"><a id="__codelineno-25-28" name="__codelineno-25-28" href="#__codelineno-25-28"></a>
+</span><span id="__span-25-29"><a id="__codelineno-25-29" name="__codelineno-25-29" href="#__codelineno-25-29"></a>1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
+</span><span id="__span-25-30"><a id="__codelineno-25-30" name="__codelineno-25-30" href="#__codelineno-25-30"></a>
+</span><span id="__span-25-31"><a id="__codelineno-25-31" name="__codelineno-25-31" href="#__codelineno-25-31"></a>The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
+</span><span id="__span-25-32"><a id="__codelineno-25-32" name="__codelineno-25-32" href="#__codelineno-25-32"></a>population size translated into massive absolute additions.
+</span><span id="__span-25-33"><a id="__codelineno-25-33" name="__codelineno-25-33" href="#__codelineno-25-33"></a>
+</span><span id="__span-25-34"><a id="__codelineno-25-34" name="__codelineno-25-34" href="#__codelineno-25-34"></a>2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
+</span><span id="__span-25-35"><a id="__codelineno-25-35" name="__codelineno-25-35" href="#__codelineno-25-35"></a>
+</span><span id="__span-25-36"><a id="__codelineno-25-36" name="__codelineno-25-36" href="#__codelineno-25-36"></a>More children survived to adulthood, compounding population growth:
+</span><span id="__span-25-37"><a id="__codelineno-25-37" name="__codelineno-25-37" href="#__codelineno-25-37"></a>
+</span><span id="__span-25-38"><a id="__codelineno-25-38" name="__codelineno-25-38" href="#__codelineno-25-38"></a> • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
+</span><span id="__span-25-39"><a id="__codelineno-25-39" name="__codelineno-25-39" href="#__codelineno-25-39"></a> • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
+</span><span id="__span-25-40"><a id="__codelineno-25-40" name="__codelineno-25-40" href="#__codelineno-25-40"></a>
+</span><span id="__span-25-41"><a id="__codelineno-25-41" name="__codelineno-25-41" href="#__codelineno-25-41"></a>3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
+</span><span id="__span-25-42"><a id="__codelineno-25-42" name="__codelineno-25-42" href="#__codelineno-25-42"></a>
+</span><span id="__span-25-43"><a id="__codelineno-25-43" name="__codelineno-25-43" href="#__codelineno-25-43"></a>High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
+</span><span id="__span-25-44"><a id="__codelineno-25-44" name="__codelineno-25-44" href="#__codelineno-25-44"></a>
+</span><span id="__span-25-45"><a id="__codelineno-25-45" name="__codelineno-25-45" href="#__codelineno-25-45"></a>4. 🔄 Net Migration — Minor Factor (Score: 1.0)
+</span><span id="__span-25-46"><a id="__codelineno-25-46" name="__codelineno-25-46" href="#__codelineno-25-46"></a>
+</span><span id="__span-25-47"><a id="__codelineno-25-47" name="__codelineno-25-47" href="#__codelineno-25-47"></a>Redistributes population globally but has minimal impact on total world population.
+</span></code></pre></div>
 <p>The report includes:</p>
 <ul>
-<li><strong>Overall Growth Metrics</strong> - Comparison of total population, growth rate, and rural population percentage</li>
-<li><strong>Top Regional Contributors</strong> - Which regions drove the most population increase</li>
-<li><strong>Top Country Contributors</strong> - Individual country contributions to the change</li>
-<li><strong>Conclusion</strong> - Summary of key insights explaining the metric movement</li>
+<li><strong>Overall growth metrics</strong> — comparison of total population, growth rate, and rural population percentage</li>
+<li><strong>Top regional contributors</strong> — which regions drove the most population increase</li>
+<li><strong>Top country contributors</strong> — individual country contributions</li>
+<li><strong>Conclusion</strong> — key insights explaining the metric movement</li>
 </ul>
-<h2 id="generated-subagents-explained">Generated Subagents Explained<a class="headerlink" href="#generated-subagents-explained" title="Permanent link">&para;</a></h2>
-<p>The <code>bootstrap-bi</code> command creates two types of subagents:</p>
-<h3 id="gensql-subagent">GenSQL Subagent<a class="headerlink" href="#gensql-subagent" title="Permanent link">&para;</a></h3>
-<p>The primary subagent (e.g., <code>superset_world_bank_s</code>) provides:</p>
-<ul>
-<li>SQL generation within the dashboard's semantic scope</li>
-<li>Context-aware queries using extracted metadata</li>
-<li>Reference SQL patterns from dashboard charts</li>
-</ul>
-<p><strong>Example usage:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>/superset_world_bank_s<span class="w"> </span>show<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>countries<span class="w"> </span>by<span class="w"> </span>life<span class="w"> </span>expectancy<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">2020</span>
-</span></code></pre></div></p>
-<h3 id="genreport-subagent-attribution">GenReport Subagent (Attribution)<a class="headerlink" href="#genreport-subagent-attribution" title="Permanent link">&para;</a></h3>
-<p>The attribution subagent (e.g., <code>superset_world_bank_s_attribution</code>) provides:</p>
-<ul>
-<li>Metric comparison and trend analysis</li>
-<li>Root cause analysis for metric changes</li>
-<li>Dimension-level attribution reports</li>
-</ul>
-<p><strong>Example usage:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/superset_world_bank_s_attribution<span class="w"> </span>why<span class="w"> </span>did<span class="w"> </span>healthcare<span class="w"> </span>spending<span class="w"> </span>increase<span class="w"> </span>between<span class="w"> </span><span class="m">2010</span><span class="w"> </span>and<span class="w"> </span><span class="m">2020</span>?
-</span></code></pre></div></p>
+<h2 id="subagent-comparison">Subagent comparison<a class="headerlink" href="#subagent-comparison" title="Permanent link">&para;</a></h2>
+<p><code>/bootstrap-bi</code> produces two complementary subagents:</p>
+<table>
+<thead>
+<tr>
+<th>Subagent</th>
+<th>Naming</th>
+<th>When to use</th>
+<th>Working context</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Main</strong></td>
+<td><code>{platform}_{dashboard}</code></td>
+<td>Ad-hoc queries, detail lookups, self-service SQL</td>
+<td>Dashboard tables + reference SQL + semantic model</td>
+</tr>
+<tr>
+<td><strong>Attribution</strong></td>
+<td><code>{platform}_{dashboard}_attribution</code></td>
+<td>Metric comparison, root-cause analysis, delta-contribution attribution</td>
+<td>Dashboard metrics + semantic model</td>
+</tr>
+</tbody>
+</table>
+<p>Send "what is X?" / "show me Y" questions to the main subagent; send "why did Z change?" / "which dimension drove the move?" questions to the attribution subagent.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <p>Now that you have your dashboard-powered subagents, explore more:</p>
 <ul>
@@ -4286,7 +4549,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../Datus_tutorial/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Tutorial">
+          <a href="../contextual_data_engineering/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contextual Data Engineering">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4296,7 +4559,7 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Tutorial
+                Contextual Data Engineering
               </div>
             </div>
           </a>

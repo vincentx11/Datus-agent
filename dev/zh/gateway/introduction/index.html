@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     上下文数据工程
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    教程
   
 
     
@@ -1649,6 +1621,17 @@
     <span class="md-ellipsis">
       
         CLI 参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        频道配置（configure 子命令）
       
     </span>
   </a>
@@ -3373,6 +3356,8 @@
       
         
       
+        
+      
     
     
     
@@ -3459,6 +3444,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
   
 
     
@@ -3731,6 +3744,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3935,6 +3976,17 @@
     <span class="md-ellipsis">
       
         CLI 参数
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        频道配置（configure 子命令）
       
     </span>
   </a>
@@ -4397,6 +4449,41 @@
 </tr>
 </tbody>
 </table>
+<h3 id="configure">频道配置（<code>configure</code> 子命令）<a class="headerlink" href="#configure" title="Permanent link">&para;</a></h3>
+<p>无需手工编辑 <code>agent.yml</code>,可交互式管理 IM 频道（Feishu、Slack 等）：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>datus-gateway<span class="w"> </span>configure
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1"># 或指定非默认配置文件</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>datus-gateway<span class="w"> </span>configure<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
+</span></code></pre></div>
+<p>向导打开一个单窗口 TUI:顶部为 <strong>Add</strong> 入口,下方实时列出当前已配置的频道。
+选中某个频道会进入子菜单,可执行:</p>
+<ul>
+<li>切换 <code>enabled</code></li>
+<li>修改 <code>verbose</code> 级别</li>
+<li>重新安装该频道适配器的依赖（如 <code>lark-oapi</code>、<code>slack-sdk[socket_mode]</code>）</li>
+<li>删除该频道</li>
+</ul>
+<p>新增频道时会询问频道名称及对应适配器的密钥（Feishu 的 App ID/Secret、
+Slack 的 App/Bot Token 等）。密钥在显示时会被打码,也可使用 <code>${ENV_VAR}</code>
+占位符。任何保存操作都会立即写回 <code>agent.yml</code>,下一次启动 <code>datus-gateway</code>
+即生效。</p>
+<p>参数:</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--config</code></td>
+<td><code>./conf/agent.yml</code></td>
+<td>覆盖此命令使用的 agent 配置文件</td>
+</tr>
+</tbody>
+</table>
 <h2 id="_11">功能特性<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <h3 id="_12">实时流式响应<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
 <p>Datus Gateway 将 Agent 处理的每个阶段实时推送到聊天中：</p>
@@ -4468,10 +4555,10 @@
 </tbody>
 </table>
 <p>示例：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>/verbose           # 查看当前详细级别
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>/verbose quiet     # 仅显示思考和最终回答
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>/verbose brief     # 显示工具调用摘要
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>/verbose detail    # 显示完整的工具调用详情
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/verbose           # 查看当前详细级别
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/verbose quiet     # 仅显示思考和最终回答
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/verbose brief     # 显示工具调用摘要
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>/verbose detail    # 显示完整的工具调用详情
 </span></code></pre></div>
 <h3 id="_14">会话管理<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
 <p>每个对话（群聊、私聊或话题）会自动映射到一个持久化会话。要开启新会话，发送 <code>/new</code>、<code>/reset</code> 或 <code>/clear</code>。</p>
@@ -4482,7 +4569,7 @@
 <p>使用 <code>subagent_id</code> 字段将特定频道的消息路由到专用子代理，实现按频道定制行为。</p>
 <h2 id="_17">故障排查<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h2>
 <h3 id="sdk">SDK 未安装<a class="headerlink" href="#sdk" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ImportError: slack_sdk is required for the Slack adapter. Install it with: pip install slack-sdk[socket_mode]
 </span></code></pre></div>
 <p>请安装目标平台所需的 SDK 包。参见<a href="#installation">安装</a>部分。</p>
 <h3 id="_18">凭证无效<a class="headerlink" href="#_18" title="Permanent link">&para;</a></h3>
@@ -4498,10 +4585,10 @@
 </ul>
 <h3 id="_20">调试日志<a class="headerlink" href="#_20" title="Permanent link">&para;</a></h3>
 <p>启用详细日志以诊断连接问题：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>datus-gateway<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
 </span></code></pre></div>
 <p>或设置环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_LOG_LEVEL</span><span class="o">=</span>DEBUG
 </span></code></pre></div>
 <h2 id="_21">下一步<a class="headerlink" href="#_21" title="Permanent link">&para;</a></h2>
 <ul>

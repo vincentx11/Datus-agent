@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -3307,6 +3279,8 @@
       
         
       
+        
+      
     
     
     
@@ -3393,6 +3367,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3660,6 +3662,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4040,7 +4070,7 @@
 <p>See the <a href="../../getting_started/Quickstart/">Quick Start Guide</a> for detailed installation and setup instructions.</p>
 </div>
 <div class="language-bash highlight"><span class="filename">Terminal</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-agent
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus-agent<span class="w"> </span>init
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w">           </span><span class="c1"># then inside the REPL: /model, /datasource, /init</span>
 </span></code></pre></div>
 <h3 id="step-2-configure-environment">Step 2: Configure Environment<a class="headerlink" href="#step-2-configure-environment" title="Permanent link">&para;</a></h3>
 <p>Set the required environment variables for your benchmark:</p>
@@ -4312,43 +4342,39 @@
 <h2 id="built-in-dataset-quick-trial">Built-in Dataset Quick Trial<a class="headerlink" href="#built-in-dataset-quick-trial" title="Permanent link">&para;</a></h2>
 <p>Try out benchmarking and evaluation with the pre-packaged California Schools dataset — no extra downloads needed.</p>
 <h3 id="step-1-initialize-the-dataset">Step 1: Initialize the Dataset<a class="headerlink" href="#step-1-initialize-the-dataset" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>datus-agent<span class="w"> </span>tutorial
-</span></code></pre></div>
-<p><img alt="tutorial" src="../../assets/tutorial.png" /></p>
-<p>This step does the following:</p>
+<p>Follow the <a href="../../getting_started/contextual_data_engineering/#part-2--hands-on-tutorial-california-schools">hands-on tutorial</a> to:</p>
 <ol>
-<li>Add database configuration and benchmark configuration for California Schools to agent.yml</li>
-<li>Initialize the metadata information of the tables for California Schools</li>
-<li>Use <code>benchmark/california_schools/success_story.csv</code> to build metric information</li>
-<li>Build reference SQL using the SQL files in <code>benchmark/california_schools/reference_sql</code></li>
+<li>Copy the bundled California Schools sample data into <code>~/.datus/benchmark/california_schools/</code></li>
+<li>Register the datasource and benchmark configuration in <code>agent.yml</code></li>
+<li>Use <code>/bootstrap</code> inside <code>datus-cli</code> to initialize metadata, semantic models, metrics, and reference SQL</li>
 </ol>
 <h3 id="benchmarking-and-evaluation">Benchmarking and evaluation<a class="headerlink" href="#benchmarking-and-evaluation" title="Permanent link">&para;</a></h3>
-<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>datus-agent<span class="w"> </span>benchmark<span class="w"> </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span>--benchmark<span class="w"> </span>california_schools<span class="w"> </span>--benchmark_task_ids<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span><span class="w"> </span>--workflow<span class="w"> </span>&lt;your<span class="w"> </span>workflow&gt;
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>datus-agent<span class="w"> </span>benchmark<span class="w"> </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span>--benchmark<span class="w"> </span>california_schools<span class="w"> </span>--benchmark_task_ids<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span><span class="w"> </span>--workflow<span class="w"> </span>&lt;your<span class="w"> </span>workflow&gt;
 </span></code></pre></div>
 👉 See <a href="#step-4-run-benchmark-tests">Step 4: Run Benchmark Tests</a></p>
-<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>datus-agent<span class="w"> </span><span class="nb">eval</span><span class="w"> </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span>--benchmark<span class="w"> </span>california_schools<span class="w"> </span>--task_ids<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>datus-agent<span class="w"> </span><span class="nb">eval</span><span class="w"> </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span>--benchmark<span class="w"> </span>california_schools<span class="w"> </span>--task_ids<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span>
 </span></code></pre></div>
 👉 See <a href="#step-5-evaluate-results">Step 5: Evaluate Results</a></p>
 <h2 id="custom-benchmark">Custom Benchmark<a class="headerlink" href="#custom-benchmark" title="Permanent link">&para;</a></h2>
 <h3 id="add-benchmark-configuration">Add Benchmark Configuration<a class="headerlink" href="#add-benchmark-configuration" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nt">databases</span><span class="p">:</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">      </span><span class="nt">california_schools</span><span class="p">:</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite</span><span class="w"> </span><span class="c1"># Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.</span>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">  </span><span class="nt">benchmark</span><span class="p">:</span>
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">    </span><span class="nt">california_schools</span><span class="p">:</span><span class="w">              </span><span class="c1"># Benchmark name</span>
-</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">      </span><span class="nt">question_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">       </span><span class="c1"># File containing benchmark questions</span>
-</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">      </span><span class="nt">question_id_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">task_id</span><span class="w">                    </span><span class="c1"># Field name for question ID</span>
-</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="w">      </span><span class="nt">question_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">question</span><span class="w">                      </span><span class="c1"># Field name for question text</span>
-</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="w">      </span><span class="nt">ext_knowledge_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">expected_knowledge</span><span class="w">       </span><span class="c1"># Field name for external knowledge or additional context</span>
-</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>
-</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="w">      </span><span class="c1"># Configuration for evaluation phase</span>
-</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="w">      </span><span class="nt">gold_sql_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">       </span><span class="c1"># File path for reference (gold) SQL</span>
-</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="w">      </span><span class="nt">gold_sql_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gold_sql</span><span class="w">                      </span><span class="c1"># Field name for reference SQL</span>
-</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="w">      </span><span class="nt">gold_result_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">    </span><span class="c1"># File path for reference (gold) results</span>
-</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="w">      </span><span class="nt">gold_result_key</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w">                         </span><span class="c1"># Field name for results when using a single file</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">      </span><span class="nt">california_schools</span><span class="p">:</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite:///benchmark/bird/dev_20240627/dev_databases/california_schools/california_schools.sqlite</span><span class="w"> </span><span class="c1"># Database file path. Use sqlite:/// for relative paths; sqlite://// for absolute paths.</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="nt">benchmark</span><span class="p">:</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="nt">california_schools</span><span class="p">:</span><span class="w">              </span><span class="c1"># Benchmark name</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">      </span><span class="nt">question_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">       </span><span class="c1"># File containing benchmark questions</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">      </span><span class="nt">question_id_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">task_id</span><span class="w">                    </span><span class="c1"># Field name for question ID</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">      </span><span class="nt">question_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">question</span><span class="w">                      </span><span class="c1"># Field name for question text</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="w">      </span><span class="nt">ext_knowledge_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">expected_knowledge</span><span class="w">       </span><span class="c1"># Field name for external knowledge or additional context</span>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="w">      </span><span class="c1"># Configuration for evaluation phase</span>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="w">      </span><span class="nt">gold_sql_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">       </span><span class="c1"># File path for reference (gold) SQL</span>
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="w">      </span><span class="nt">gold_sql_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gold_sql</span><span class="w">                      </span><span class="c1"># Field name for reference SQL</span>
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="w">      </span><span class="nt">gold_result_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools.csv</span><span class="w">    </span><span class="c1"># File path for reference (gold) results</span>
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="w">      </span><span class="nt">gold_result_key</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w">                         </span><span class="c1"># Field name for results when using a single file</span>
 </span></code></pre></div>
 <hr />
 <p>📖 <strong>Benchmark Configuration Field Description</strong></p>
@@ -4408,21 +4434,21 @@
 <div class="tabbed-set tabbed-alternate" data-tabs="8:2"><input checked="checked" id="__tabbed_8_1" name="__tabbed_8" type="radio" /><input id="__tabbed_8_2" name="__tabbed_8" type="radio" /><div class="tabbed-labels"><label for="__tabbed_8_1">datus-agent subcommand</label><label for="__tabbed_8_2">Python module</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-bash highlight"><span class="filename">Terminal</span><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datus-agent<span class="w"> </span>multi-round-benchmark<span class="w"> </span><span class="se">\</span>
+<div class="language-bash highlight"><span class="filename">Terminal</span><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>datus-agent<span class="w"> </span>multi-round-benchmark<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span>--workflow<span class="w"> </span>chat_agentic<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">  </span>--round<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">  </span>--workers<span class="w"> </span><span class="m">2</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><span class="filename">Terminal</span><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.multi_round_benchmark<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span>--workflow<span class="w"> </span>chat_agentic<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span>--round<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">  </span>--workers<span class="w"> </span><span class="m">2</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="language-bash highlight"><span class="filename">Terminal</span><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.multi_round_benchmark<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span>--workflow<span class="w"> </span>chat_agentic<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span>--round<span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">  </span>--workers<span class="w"> </span><span class="m">2</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -4520,37 +4546,37 @@
 <h3 id="output-structure">Output Structure<a class="headerlink" href="#output-structure" title="Permanent link">&para;</a></h3>
 <p><code>{timestamp}</code> is the time when the multi-round benchmark starts, formatted as <code>YYYYMMDD_HHmm</code> (e.g. <code>20260129_1530</code>). <code>{ts}</code> is a Unix epoch timestamp in seconds (e.g. <code>1769611836</code>).</p>
 <p>For each round the tool creates an isolated output directory under <code>{agent.home}/integration/</code>. After all rounds finish, a summary Excel file is also exported:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>{agent.home}/integration/
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>├── {group_name}_0/
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>│   ├── save/{datasource}/{timestamp}/
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>│   │   ├── 0.json                                     # Task metadata
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>│   │   ├── 0.sql                                      # Generated SQL
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>│   │   ├── 0.csv                                      # Query execution result
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>│   │   ├── 1.json
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>│   │   ├── 1.sql
-</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>│   │   ├── 1.csv
-</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>│   │   └── ...
-</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>│   ├── trajectory/{datasource}/{timestamp}/
-</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a>│   │   ├── 0_{ts}.yaml                                # Workflow trace (e.g. 0_1769611836.yaml)
-</span><span id="__span-20-13"><a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>│   │   ├── 1_{ts}.yaml
-</span><span id="__span-20-14"><a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a>│   │   └── ...
-</span><span id="__span-20-15"><a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a>│   └── evaluation_round_{timestamp}_0.json            # Evaluation report for round 0
-</span><span id="__span-20-16"><a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a>├── {group_name}_1/
-</span><span id="__span-20-17"><a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a>│   ├── save/{datasource}/{timestamp}/
-</span><span id="__span-20-18"><a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a>│   │   ├── 0.json
-</span><span id="__span-20-19"><a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a>│   │   ├── 0.sql
-</span><span id="__span-20-20"><a id="__codelineno-20-20" name="__codelineno-20-20" href="#__codelineno-20-20"></a>│   │   ├── 0.csv
-</span><span id="__span-20-21"><a id="__codelineno-20-21" name="__codelineno-20-21" href="#__codelineno-20-21"></a>│   │   ├── 1.json
-</span><span id="__span-20-22"><a id="__codelineno-20-22" name="__codelineno-20-22" href="#__codelineno-20-22"></a>│   │   ├── 1.sql
-</span><span id="__span-20-23"><a id="__codelineno-20-23" name="__codelineno-20-23" href="#__codelineno-20-23"></a>│   │   ├── 1.csv
-</span><span id="__span-20-24"><a id="__codelineno-20-24" name="__codelineno-20-24" href="#__codelineno-20-24"></a>│   │   └── ...
-</span><span id="__span-20-25"><a id="__codelineno-20-25" name="__codelineno-20-25" href="#__codelineno-20-25"></a>│   ├── trajectory/{datasource}/{timestamp}/
-</span><span id="__span-20-26"><a id="__codelineno-20-26" name="__codelineno-20-26" href="#__codelineno-20-26"></a>│   │   ├── 0_{ts}.yaml
-</span><span id="__span-20-27"><a id="__codelineno-20-27" name="__codelineno-20-27" href="#__codelineno-20-27"></a>│   │   ├── 1_{ts}.yaml
-</span><span id="__span-20-28"><a id="__codelineno-20-28" name="__codelineno-20-28" href="#__codelineno-20-28"></a>│   │   └── ...
-</span><span id="__span-20-29"><a id="__codelineno-20-29" name="__codelineno-20-29" href="#__codelineno-20-29"></a>│   └── evaluation_round_{timestamp}_1.json
-</span><span id="__span-20-30"><a id="__codelineno-20-30" name="__codelineno-20-30" href="#__codelineno-20-30"></a>├── ...
-</span><span id="__span-20-31"><a id="__codelineno-20-31" name="__codelineno-20-31" href="#__codelineno-20-31"></a>└── {group_name}_summary_{timestamp}.xlsx              # Summary report across all rounds
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>{agent.home}/integration/
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>├── {group_name}_0/
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>│   ├── save/{datasource}/{timestamp}/
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>│   │   ├── 0.json                                     # Task metadata
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>│   │   ├── 0.sql                                      # Generated SQL
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>│   │   ├── 0.csv                                      # Query execution result
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>│   │   ├── 1.json
+</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>│   │   ├── 1.sql
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>│   │   ├── 1.csv
+</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>│   │   └── ...
+</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>│   ├── trajectory/{datasource}/{timestamp}/
+</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a>│   │   ├── 0_{ts}.yaml                                # Workflow trace (e.g. 0_1769611836.yaml)
+</span><span id="__span-19-13"><a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>│   │   ├── 1_{ts}.yaml
+</span><span id="__span-19-14"><a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>│   │   └── ...
+</span><span id="__span-19-15"><a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a>│   └── evaluation_round_{timestamp}_0.json            # Evaluation report for round 0
+</span><span id="__span-19-16"><a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a>├── {group_name}_1/
+</span><span id="__span-19-17"><a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a>│   ├── save/{datasource}/{timestamp}/
+</span><span id="__span-19-18"><a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a>│   │   ├── 0.json
+</span><span id="__span-19-19"><a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a>│   │   ├── 0.sql
+</span><span id="__span-19-20"><a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a>│   │   ├── 0.csv
+</span><span id="__span-19-21"><a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a>│   │   ├── 1.json
+</span><span id="__span-19-22"><a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a>│   │   ├── 1.sql
+</span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a>│   │   ├── 1.csv
+</span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a>│   │   └── ...
+</span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>│   ├── trajectory/{datasource}/{timestamp}/
+</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a>│   │   ├── 0_{ts}.yaml
+</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a>│   │   ├── 1_{ts}.yaml
+</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a>│   │   └── ...
+</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a>│   └── evaluation_round_{timestamp}_1.json
+</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a>├── ...
+</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a>└── {group_name}_summary_{timestamp}.xlsx              # Summary report across all rounds
 </span></code></pre></div>
 <p>The summary Excel file contains a cross-round comparison table:</p>
 <table>

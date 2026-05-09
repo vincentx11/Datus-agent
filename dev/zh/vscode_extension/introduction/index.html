@@ -1,6 +1,6 @@
 
 <!doctype html>
-<html lang="en" class="no-js">
+<html lang="zh" class="no-js">
   <head>
     
       <meta charset="utf-8">
@@ -8,31 +8,35 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/develop/0.2.7_pre_release_test_plan/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/zh/vscode_extension/introduction/">
       
       
+        <link rel="prev" href="../../develop/Contributing/">
+      
+      
+        <link rel="next" href="../../release_notes/">
       
       
         
-          <link rel="alternate" href="./" hreflang="en">
+          <link rel="alternate" href="../../../vscode_extension/introduction/" hreflang="en">
         
-          <link rel="alternate" href="../../zh/develop/0.2.7_pre_release_test_plan/" hreflang="zh">
+          <link rel="alternate" href="./" hreflang="zh">
         
       
       
-      <link rel="icon" href="../../assets/logo-light.png">
+      <link rel="icon" href="../../../assets/logo-light.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Datus-Agent 0.2.7 发版前测试计划（研发内部） - Datus Docs</title>
+        <title>VSCode 插件 - Datus Docs</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -45,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
   
@@ -82,8 +86,8 @@
     <div data-md-component="skip">
       
         
-        <a href="#datus-agent-027" class="md-skip">
-          Skip to content
+        <a href="#vscode-extension" class="md-skip">
+          跳转至
         </a>
       
     </div>
@@ -99,10 +103,10 @@
       
 
 <header class="md-header" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -119,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Datus-Agent 0.2.7 发版前测试计划（研发内部）
+              VSCode 插件
             
           </span>
         </div>
@@ -169,20 +173,20 @@
       <div class="md-header__option">
   <div class="md-select">
     
-    <button class="md-header__button md-icon" aria-label="Select language">
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
     </button>
     <div class="md-select__inner">
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="./" hreflang="en" class="md-select__link">
+            <a href="../../../vscode_extension/introduction/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
         
           <li class="md-select__item">
-            <a href="../../zh/develop/0.2.7_pre_release_test_plan/" hreflang="zh" class="md-select__link">
+            <a href="./" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -203,16 +207,16 @@
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
-      <nav class="md-search__options" aria-label="Search">
+      <nav class="md-search__options" aria-label="查找">
         
-        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
           
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
@@ -223,7 +227,7 @@
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
-            Initializing search
+            正在初始化搜索引擎
           </div>
           <ol class="md-search-result__list" role="presentation"></ol>
         </div>
@@ -235,7 +239,7 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -256,7 +260,7 @@
         
           
             
-<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
       
@@ -264,17 +268,19 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../.." class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
           
   
   
     
   
-  Home
+  首页
 
         </a>
       </li>
@@ -294,7 +300,7 @@
   
     
   
-  Release Notes
+  发布说明
 
       </a>
     </li>
@@ -321,18 +327,18 @@
   
 
 
-<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     Datus Docs
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -349,6 +355,8 @@
       
   
   
+    
+  
   
   
     
@@ -388,29 +396,34 @@
       
         
       
-    
-    
-    
-      
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../.." class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
   <span class="md-ellipsis">
     
   
-    Home
+    首页
   
 
     
@@ -421,18 +434,18 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Home
+    首页
   
 
           </label>
@@ -448,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -480,7 +491,7 @@
   <span class="md-ellipsis">
     
   
-    Getting Started
+    入门指南
   
 
     
@@ -496,7 +507,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Getting Started
+    入门指南
   
 
           </label>
@@ -516,7 +527,7 @@
   <span class="md-ellipsis">
     
   
-    Quickstart
+    快速开始
   
 
     
@@ -544,7 +555,7 @@
   <span class="md-ellipsis">
     
   
-    Data Engineering Quickstart
+    数据工程快速开始
   
 
     
@@ -572,35 +583,7 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
+    上下文数据工程
   
 
     
@@ -698,7 +681,7 @@
   <span class="md-ellipsis">
     
   
-    CLI
+    命令行
   
 
     
@@ -714,7 +697,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    CLI
+    命令行
   
 
           </label>
@@ -734,7 +717,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -762,7 +745,7 @@
   <span class="md-ellipsis">
     
   
-    Chat Command
+    聊天命令
   
 
     
@@ -790,7 +773,7 @@
   <span class="md-ellipsis">
     
   
-    Context Command
+    上下文命令
   
 
     
@@ -818,7 +801,7 @@
   <span class="md-ellipsis">
     
   
-    Execution Command
+    执行命令
   
 
     
@@ -846,7 +829,7 @@
   <span class="md-ellipsis">
     
   
-    MCP Extensions
+    MCP 扩展
   
 
     
@@ -874,7 +857,7 @@
   <span class="md-ellipsis">
     
   
-    SQL Execution
+    SQL 执行
   
 
     
@@ -902,7 +885,7 @@
   <span class="md-ellipsis">
     
   
-    Skill Command
+    技能命令
   
 
     
@@ -930,7 +913,7 @@
   <span class="md-ellipsis">
     
   
-    Reference
+    参考
   
 
     
@@ -958,7 +941,7 @@
   <span class="md-ellipsis">
     
   
-    Plan Mode
+    计划模式
   
 
     
@@ -1066,7 +1049,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1094,7 +1077,7 @@
   <span class="md-ellipsis">
     
   
-    Built-in subagents
+    内置 subagent
   
 
     
@@ -1122,7 +1105,7 @@
   <span class="md-ellipsis">
     
   
-    Customized subagents
+    自定义 subagent
   
 
     
@@ -1150,7 +1133,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Dashboard
+    生成 Dashboard
   
 
     
@@ -1178,7 +1161,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    生成指标
   
 
     
@@ -1206,7 +1189,7 @@
   <span class="md-ellipsis">
     
   
-    Generate Semantic Model
+    生成语义模型
   
 
     
@@ -1234,7 +1217,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler
+    调度器
   
 
     
@@ -1354,7 +1337,7 @@
   <span class="md-ellipsis">
     
   
-    Chatbot
+    chatbot
   
 
     
@@ -1404,7 +1387,7 @@
   <span class="md-ellipsis">
     
   
-    IM Gateway
+    IM 网关
   
 
     
@@ -1420,7 +1403,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    IM Gateway
+    IM 网关
   
 
           </label>
@@ -1440,7 +1423,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1496,7 +1479,7 @@
   <span class="md-ellipsis">
     
   
-    Feishu
+    飞书
   
 
     
@@ -1564,7 +1547,7 @@
   <span class="md-ellipsis">
     
   
-    Knowledge Base
+    知识库
   
 
     
@@ -1580,7 +1563,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Knowledge Base
+    知识库
   
 
           </label>
@@ -1600,7 +1583,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1628,7 +1611,7 @@
   <span class="md-ellipsis">
     
   
-    External Knowledge
+    外部知识
   
 
     
@@ -1656,7 +1639,7 @@
   <span class="md-ellipsis">
     
   
-    Platform Documentation
+    平台文档
   
 
     
@@ -1684,7 +1667,7 @@
   <span class="md-ellipsis">
     
   
-    Metadata
+    元数据
   
 
     
@@ -1712,7 +1695,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Models
+    语义模型
   
 
     
@@ -1740,7 +1723,7 @@
   <span class="md-ellipsis">
     
   
-    Metrics
+    指标
   
 
     
@@ -1796,7 +1779,7 @@
   <span class="md-ellipsis">
     
   
-    Reference Template
+    SQL模板
   
 
     
@@ -1856,7 +1839,7 @@
   <span class="md-ellipsis">
     
   
-    Workflow
+    工作流
   
 
     
@@ -1872,7 +1855,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Workflow
+    工作流
   
 
           </label>
@@ -1892,7 +1875,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -1920,7 +1903,7 @@
   <span class="md-ellipsis">
     
   
-    Nodes
+    节点
   
 
     
@@ -1948,7 +1931,7 @@
   <span class="md-ellipsis">
     
   
-    Orchestration
+    编排
   
 
     
@@ -2072,7 +2055,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2100,7 +2083,7 @@
   <span class="md-ellipsis">
     
   
-    Deployment
+    部署
   
 
     
@@ -2156,7 +2139,7 @@
   <span class="md-ellipsis">
     
   
-    Knowledge Base API
+    知识库 API
   
 
     
@@ -2222,7 +2205,7 @@
   <span class="md-ellipsis">
     
   
-    Configuration
+    配置
   
 
     
@@ -2238,7 +2221,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Configuration
+    配置
   
 
           </label>
@@ -2258,7 +2241,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2314,7 +2297,7 @@
   <span class="md-ellipsis">
     
   
-    Workflow
+    工作流
   
 
     
@@ -2342,7 +2325,7 @@
   <span class="md-ellipsis">
     
   
-    Benchmark
+    基准测试
   
 
     
@@ -2394,7 +2377,7 @@
   <span class="md-ellipsis">
     
   
-    Services
+    服务
   
 
     
@@ -2410,7 +2393,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Services
+    服务
   
 
           </label>
@@ -2458,7 +2441,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Layer
+    语义层
   
 
     
@@ -2486,7 +2469,7 @@
   <span class="md-ellipsis">
     
   
-    BI Platforms
+    BI 平台
   
 
     
@@ -2514,7 +2497,7 @@
   <span class="md-ellipsis">
     
   
-    Schedulers
+    调度器
   
 
     
@@ -2578,7 +2561,7 @@
   <span class="md-ellipsis">
     
   
-    Nodes
+    节点
   
 
     
@@ -2638,7 +2621,7 @@
   <span class="md-ellipsis">
     
   
-    Adapters
+    适配器
   
 
     
@@ -2654,7 +2637,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Adapters
+    适配器
   
 
           </label>
@@ -2674,7 +2657,7 @@
   <span class="md-ellipsis">
     
   
-    Database Adapters
+    数据库适配器
   
 
     
@@ -2702,7 +2685,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Adapters
+    语义层适配器
   
 
     
@@ -2730,7 +2713,7 @@
   <span class="md-ellipsis">
     
   
-    BI Adapters
+    BI 适配器
   
 
     
@@ -2758,7 +2741,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler Adapters
+    Scheduler 适配器
   
 
     
@@ -2812,7 +2795,7 @@
   <span class="md-ellipsis">
     
   
-    Benchmark
+    基准测试
   
 
     
@@ -2828,7 +2811,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Benchmark
+    基准测试
   
 
           </label>
@@ -2848,7 +2831,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2902,7 +2885,7 @@
   <span class="md-ellipsis">
     
   
-    Metricflow
+    MetricFlow
   
 
     
@@ -2918,7 +2901,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Metricflow
+    MetricFlow
   
 
           </label>
@@ -2938,7 +2921,7 @@
   <span class="md-ellipsis">
     
   
-    Introduction
+    介绍
   
 
     
@@ -2975,6 +2958,8 @@
       
         
       
+        
+      
     
     
     
@@ -2996,7 +2981,7 @@
   <span class="md-ellipsis">
     
   
-    Integration
+    集成
   
 
     
@@ -3012,7 +2997,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Integration
+    集成
   
 
           </label>
@@ -3081,6 +3066,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../integration/memory/" class="md-nav__link">
         
   
@@ -3088,7 +3101,7 @@
   <span class="md-ellipsis">
     
   
-    Auto Memory
+    自动记忆
   
 
     
@@ -3232,7 +3245,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../develop/" class="md-nav__link ">
               
   
   
@@ -3276,7 +3289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../Architecture/" class="md-nav__link">
+      <a href="../../develop/Architecture/" class="md-nav__link">
         
   
   
@@ -3304,7 +3317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../Contributing/" class="md-nav__link">
+      <a href="../../develop/Contributing/" class="md-nav__link">
         
   
   
@@ -3333,6 +3346,303 @@
 
               
             
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        概览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安装
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        启动步骤
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="启动步骤">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-web-server-datus-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 启动带 Web Server 的 Datus-agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-vscode-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 在 VSCode 中配置 Endpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心功能
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="核心功能">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-catalog-tree-context-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Catalog Tree 与 Context Tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-subagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. SubAgent 创建与管理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-datus-studio-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Datus Studio Chat 面板
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-sql-result-ai-chart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. SQL Result 与 AI Chart 面板
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-filesystem-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. FileSystem Tools（文件操作接管）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. FileSystem Tools（文件操作接管）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        使用建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见问题
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="常见问题">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#disconnected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        插件一直显示 "Disconnected"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        端口被占用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog 看不到表
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in 子代理可以编辑吗
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        总结
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3354,7 +3664,7 @@
   <span class="md-ellipsis">
     
   
-    Release Notes
+    发布说明
   
 
     
@@ -3380,7 +3690,7 @@
                   <div class="md-sidebar__inner">
                     
 
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+<nav class="md-nav md-nav--secondary" aria-label="目录">
   
   
   
@@ -3389,7 +3699,7 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      Table of contents
+      目录
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
@@ -3397,49 +3707,10 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        一、测试范围与优先级
+        概览
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="一、测试范围与优先级">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#p0" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        P0（阻塞发版）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#p1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        P1（发版前必过）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#p2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        P2（能跑即可）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3447,7 +3718,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        二、测试分层
+        安装
       
     </span>
   </a>
@@ -3458,19 +3729,19 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        三、自动化测试用例设计
+        启动步骤
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="三、自动化测试用例设计">
+    <nav class="md-nav" aria-label="启动步骤">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#31-filesystemfunctool-pathzone588-561" class="md-nav__link">
+  <a href="#1-web-server-datus-agent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.1 FilesystemFuncTool / PathZone（#588 / #561）
+        1. 启动带 Web Server 的 Datus-agent
       
     </span>
   </a>
@@ -3478,170 +3749,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#32-filesystem_strict-d6c610bf" class="md-nav__link">
+  <a href="#2-vscode-endpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.2 filesystem_strict 三态（d6c610bf）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#33-auto-memory498-595" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.3 Auto Memory（#498 / #595）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#34-rest-api-streaming520-555-538-553" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.4 REST API / Streaming（#520 / #555 / #538 / #553）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#35-cli-print-mode-proxy-tools489-501" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.5 CLI Print Mode / Proxy Tools（#489 / #501）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#36-gateway-daemon-streaming559-562-565-593-570-568" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.6 Gateway Daemon / Streaming（#559 / #562 / #565 / #593 / #570 / #568）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#37-session-subagent547-544-594-575-529-516" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.7 Session / Subagent（#547 / #544 / #594 / #575 / #529 / #516）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#38-kb-587-578" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.8 KB 路径锚定（#587 / #578）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#e2e" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        四、手工 E2E 剧本（发版前必过一次）
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="四、手工 E2E 剧本（发版前必过一次）">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#e2e-1cli" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-1：CLI 默认链路
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-2print-mode-proxy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-2：Print Mode + Proxy
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-3-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-3：独立 API
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-4gateway" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-4：Gateway 网关（飞书）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-5filesystem-strict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-5：Filesystem Strict
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-6kb-026" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-6：KB 迁移验证（从 0.2.6 上来的用户）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#e2e-7auto-memory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        E2E-7：Auto Memory
+        2. 在 VSCode 中配置 Endpoint
       
     </span>
   </a>
@@ -3657,21 +3768,88 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        五、非功能验证
+        核心功能
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="核心功能">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-catalog-tree-context-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Catalog Tree 与 Context Tree
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#2-subagent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        六、回滚预案
+        2. SubAgent 创建与管理
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-datus-studio-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Datus Studio Chat 面板
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-sql-result-ai-chart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. SQL Result 与 AI Chart 面板
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-filesystem-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. FileSystem Tools（文件操作接管）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. FileSystem Tools（文件操作接管）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        使用建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3679,18 +3857,68 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        七、测试分工模板
+        常见问题
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="常见问题">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#disconnected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        插件一直显示 "Disconnected"
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#checklist-24" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        八、验收 Checklist（发版前最后 24 小时）
+        端口被占用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog 看不到表
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in 子代理可以编辑吗
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        总结
       
     </span>
   </a>
@@ -3714,7 +3942,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/develop/0.2.7_pre_release_test_plan.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/vscode_extension/introduction.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3722,711 +3950,142 @@
   
 
 
-<h1 id="datus-agent-027">Datus-Agent 0.2.7 发版前测试计划（研发内部）<a class="headerlink" href="#datus-agent-027" title="Permanent link">&para;</a></h1>
-<blockquote>
-<p>目标：在 <code>fstool-fix</code> 合入 <code>main</code> 并打 <code>v0.2.7</code> 前，覆盖 Leo / Felix.Liu 自 <code>v0.2.6</code> 后 39 个提交的回归测试。
-本文档面向研发与 QA；所有测试用例须可重复执行，优先用已有 <code>pytest</code> 标记体系（CI / nightly / regression）。</p>
-</blockquote>
-<hr />
-<h2 id="_1">一、测试范围与优先级<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<h3 id="p0">P0（阻塞发版）<a class="headerlink" href="#p0" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>模块</th>
-<th>对应 PR</th>
-<th>验证重点</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>文件系统工具 / PathZone</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/578" title="GitHub Issue: Datus-ai/Datus-agent #578">#578</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/588" title="GitHub Issue: Datus-ai/Datus-agent #588">#588</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/561" title="GitHub Issue: Datus-ai/Datus-agent #561">#561</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/587" title="GitHub Issue: Datus-ai/Datus-agent #587">#587</a></td>
-<td>跨 zone 读写、strict 模式拒绝、KB 路径锚定</td>
-</tr>
-<tr>
-<td>Auto Memory（MEMORY.md）</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/498" title="GitHub Issue: Datus-ai/Datus-agent #498">#498</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/595" title="GitHub Issue: Datus-ai/Datus-agent #595">#595</a></td>
-<td>注入、空态占位、L1/L2 加载、写入权限</td>
-</tr>
-<tr>
-<td>REST API / Chat API Streaming</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/520" title="GitHub Issue: Datus-ai/Datus-agent #520">#520</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/554" title="GitHub Issue: Datus-ai/Datus-agent #554">#554</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/555" title="GitHub Issue: Datus-ai/Datus-agent #555">#555</a></td>
-<td>独立部署、流式事件顺序、interactive 透传</td>
-</tr>
-<tr>
-<td>CLI Print Mode + Proxy Tools</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/489" title="GitHub Issue: Datus-ai/Datus-agent #489">#489</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/501" title="GitHub Issue: Datus-ai/Datus-agent #501">#501</a></td>
-<td>stdin/stdout JSON Lines、proxy 往返、resume</td>
-</tr>
-<tr>
-<td>Gateway Daemon + Streaming</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/559" title="GitHub Issue: Datus-ai/Datus-agent #559">#559</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/562" title="GitHub Issue: Datus-ai/Datus-agent #562">#562</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/565" title="GitHub Issue: Datus-ai/Datus-agent #565">#565</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/593" title="GitHub Issue: Datus-ai/Datus-agent #593">#593</a></td>
-<td>daemon 起停、飞书 IM 增量下行、跨线程 ContextVar</td>
-</tr>
-<tr>
-<td>filesystem_strict 三态</td>
-<td><code>d6c610bf</code></td>
-<td>YAML / CLI 三态覆盖规则、strict 无人值守</td>
-</tr>
-</tbody>
-</table>
-<h3 id="p1">P1（发版前必过）<a class="headerlink" href="#p1" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>模块</th>
-<th>对应 PR</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>SubAgentTaskTool 通用化</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/575" title="GitHub Issue: Datus-ai/Datus-agent #575">#575</a></td>
-</tr>
-<tr>
-<td>Session scope / filter by agent</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/523" title="GitHub Issue: Datus-ai/Datus-agent #523">#523</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/509" title="GitHub Issue: Datus-ai/Datus-agent #509">#509</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/594" title="GitHub Issue: Datus-ai/Datus-agent #594">#594</a></td>
-</tr>
-<tr>
-<td>SSE subagent depth &amp; parent_action_id</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/547" title="GitHub Issue: Datus-ai/Datus-agent #547">#547</a></td>
-</tr>
-<tr>
-<td>session_total_tokens 语义</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/544" title="GitHub Issue: Datus-ai/Datus-agent #544">#544</a></td>
-</tr>
-<tr>
-<td>Project-level config / Feedback Agent</td>
-<td><a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/592" title="GitHub Issue: Datus-ai/Datus-agent #592">#592</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/579" title="GitHub Issue: Datus-ai/Datus-agent #579">#579</a></td>
-</tr>
-</tbody>
-</table>
-<h3 id="p2">P2（能跑即可）<a class="headerlink" href="#p2" title="Permanent link">&para;</a></h3>
-<p>CLI 底部栏 UX（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/583" title="GitHub Issue: Datus-ai/Datus-agent #583">#583</a>）、ask_user 多选（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/553" title="GitHub Issue: Datus-ai/Datus-agent #553">#553</a>）、API 级 feedback action（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/593" title="GitHub Issue: Datus-ai/Datus-agent #593">#593</a>）、bug fix 小补丁（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/529" title="GitHub Issue: Datus-ai/Datus-agent #529">#529</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/516" title="GitHub Issue: Datus-ai/Datus-agent #516">#516</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/505" title="GitHub Issue: Datus-ai/Datus-agent #505">#505</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/533" title="GitHub Issue: Datus-ai/Datus-agent #533">#533</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/548" title="GitHub Issue: Datus-ai/Datus-agent #548">#548</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/531" title="GitHub Issue: Datus-ai/Datus-agent #531">#531</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/568" title="GitHub Issue: Datus-ai/Datus-agent #568">#568</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/570" title="GitHub Issue: Datus-ai/Datus-agent #570">#570</a>/<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/577" title="GitHub Issue: Datus-ai/Datus-agent #577">#577</a>）。</p>
-<hr />
-<h2 id="_2">二、测试分层<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>层级</th>
-<th>用例前缀</th>
-<th>运行命令</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>CI（零外部依赖）</td>
-<td><code>tests/unit_tests/</code></td>
-<td><code>uv run pytest tests/unit_tests/ -q</code></td>
-</tr>
-<tr>
-<td>Nightly（真实 LLM）</td>
-<td><code>@pytest.mark.nightly</code></td>
-<td><code>uv run pytest -m nightly tests/</code></td>
-</tr>
-<tr>
-<td>Regression（DB / 多 Provider）</td>
-<td><code>@pytest.mark.regression</code></td>
-<td><code>uv run pytest -m "nightly or regression" tests/</code></td>
-</tr>
-<tr>
-<td>手工 E2E</td>
-<td>下方 §4 剧本</td>
-<td>人工</td>
-</tr>
-</tbody>
-</table>
-<p>覆盖率门槛：<code>--cov=datus --cov-fail-under=80</code>；diff coverage <code>uv run diff-cover coverage.xml --compare-branch=upstream/main --fail-under=80</code>。</p>
-<hr />
-<h2 id="_3">三、自动化测试用例设计<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>下列编号对应 <code>tests/unit_tests/...</code> 中的新增或需补齐用例；每个 case 至少 1 条正向 + 1 条反向。</p>
-<h3 id="31-filesystemfunctool-pathzone588-561">3.1 FilesystemFuncTool / PathZone（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/588" title="GitHub Issue: Datus-ai/Datus-agent #588">#588</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/561" title="GitHub Issue: Datus-ai/Datus-agent #561">#561</a>）<a class="headerlink" href="#31-filesystemfunctool-pathzone588-561" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/tools/func_tool/test_filesystem_func_tool.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>输入</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>FS-01</td>
-<td>INTERNAL 读</td>
-<td><code>read_file("./subject/semantic_models/foo.yaml")</code></td>
-<td>成功；无 prompt</td>
-</tr>
-<tr>
-<td>FS-02</td>
-<td>WHITELIST 写 skills</td>
-<td><code>write_file(".datus/skills/x.md", ...)</code></td>
-<td>成功；无 prompt</td>
-</tr>
-<tr>
-<td>FS-03</td>
-<td>WHITELIST memory</td>
-<td><code>write_file(".datus/memory/chat/MEMORY.md", ...)</code></td>
-<td>成功</td>
-</tr>
-<tr>
-<td>FS-04</td>
-<td>HIDDEN 读拒绝</td>
-<td><code>read_file(".datus/sessions/abc.db")</code></td>
-<td><code>PathZone=HIDDEN</code>，非 strict 下走 prompt；strict 下 <code>PermissionDeniedException</code></td>
-</tr>
-<tr>
-<td>FS-05</td>
-<td>EXTERNAL + strict</td>
-<td><code>strict=True</code>, 读 <code>/etc/hosts</code></td>
-<td>硬拒绝，不触达 broker</td>
-</tr>
-<tr>
-<td>FS-06</td>
-<td>EXTERNAL + interactive</td>
-<td><code>strict=False</code>, 同上</td>
-<td>触发权限 prompt</td>
-</tr>
-<tr>
-<td>FS-07</td>
-<td><code>glob</code> 递归</td>
-<td><code>glob("**/*.sql")</code></td>
-<td>返回按 mtime 排序；不命中 <code>.datus/</code> HIDDEN</td>
-</tr>
-<tr>
-<td>FS-08</td>
-<td><code>grep</code> 命中</td>
-<td><code>grep("SELECT", glob="*.sql")</code></td>
-<td>返回含行号的 content</td>
-</tr>
-<tr>
-<td>FS-09</td>
-<td><code>edit_file</code> 唯一性</td>
-<td><code>old_string</code> 重复</td>
-<td>抛错提示非唯一</td>
-</tr>
-<tr>
-<td>FS-10</td>
-<td><code>read_file</code> offset/limit</td>
-<td>10000 行文件，offset=100, limit=50</td>
-<td>返回 50 行，首行号正确</td>
-</tr>
-<tr>
-<td>FS-11</td>
-<td>旧工具已移除</td>
-<td>调用 <code>list_directory</code></td>
-<td><code>AttributeError</code>（保证 <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/561" title="GitHub Issue: Datus-ai/Datus-agent #561">#561</a> 清理彻底）</td>
-</tr>
-</tbody>
-</table>
-<h3 id="32-filesystem_strict-d6c610bf">3.2 filesystem_strict 三态（<code>d6c610bf</code>）<a class="headerlink" href="#32-filesystem_strict-d6c610bf" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/configuration/test_agent_config_filesystem_strict.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>YAML <code>agent.filesystem.strict</code></th>
-<th>CLI flag</th>
-<th>期望 <code>agent_config.filesystem_strict</code></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>STR-01</td>
-<td><code>true</code></td>
-<td>未传</td>
-<td><code>True</code></td>
-</tr>
-<tr>
-<td>STR-02</td>
-<td><code>false</code></td>
-<td>未传</td>
-<td><code>False</code></td>
-</tr>
-<tr>
-<td>STR-03</td>
-<td><code>true</code></td>
-<td><code>--no-filesystem-strict</code></td>
-<td><code>False</code></td>
-</tr>
-<tr>
-<td>STR-04</td>
-<td><code>false</code></td>
-<td><code>--filesystem-strict</code></td>
-<td><code>True</code></td>
-</tr>
-<tr>
-<td>STR-05</td>
-<td>未设置</td>
-<td>未传</td>
-<td>默认 <code>False</code></td>
-</tr>
-<tr>
-<td>STR-06</td>
-<td>未设置</td>
-<td><code>--filesystem-strict --no-filesystem-strict</code></td>
-<td>argparse 互斥冲突报错</td>
-</tr>
-</tbody>
-</table>
-<p>同时 <code>tests/unit_tests/agent/node/test_agentic_node_filesystem.py</code>：验证 <code>_resolve_filesystem_strict</code> 直接读取属性，不再依赖动态 attach。</p>
-<h3 id="33-auto-memory498-595">3.3 Auto Memory（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/498" title="GitHub Issue: Datus-ai/Datus-agent #498">#498</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/595" title="GitHub Issue: Datus-ai/Datus-agent #595">#595</a>）<a class="headerlink" href="#33-auto-memory498-595" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/agent/node/test_chat_agentic_node_memory.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>MEM-01</td>
-<td><code>MEMORY.md</code> 不存在</td>
-<td>prompt 含 <code>"empty -- no memories saved yet"</code></td>
-</tr>
-<tr>
-<td>MEM-02</td>
-<td><code>MEMORY.md</code> 空文件</td>
-<td>同 MEM-01（missing 与 empty 同分支）</td>
-</tr>
-<tr>
-<td>MEM-03</td>
-<td><code>MEMORY.md</code> 有内容</td>
-<td>prompt 内 <code>&lt;memory&gt;...&lt;/memory&gt;</code> 含真实内容</td>
-</tr>
-<tr>
-<td>MEM-04</td>
-<td>内容 &gt; 200 行</td>
-<td>L1 截断到 200 行；L2 子文件列表出现在提示里</td>
-</tr>
-<tr>
-<td>MEM-05</td>
-<td>写入路径</td>
-<td><code>write_file(".datus/memory/{current_node}/MEMORY.md")</code> 在 WHITELIST，成功</td>
-</tr>
-<tr>
-<td>MEM-06</td>
-<td>非 Memory 节点</td>
-<td><code>GenSQLAgenticNode</code> 默认保留 filesystem tools，但 memory 注入可配置开关</td>
-</tr>
-</tbody>
-</table>
-<h3 id="34-rest-api-streaming520-555-538-553">3.4 REST API / Streaming（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/520" title="GitHub Issue: Datus-ai/Datus-agent #520">#520</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/555" title="GitHub Issue: Datus-ai/Datus-agent #555">#555</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/538" title="GitHub Issue: Datus-ai/Datus-agent #538">#538</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/553" title="GitHub Issue: Datus-ai/Datus-agent #553">#553</a>）<a class="headerlink" href="#34-rest-api-streaming520-555-538-553" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/api/</code> 系列</p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>端点</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>API-01</td>
-<td><code>POST /api/v1/chat</code></td>
-<td><code>stream_response=false</code></td>
-<td>一次性返回完整 payload</td>
-</tr>
-<tr>
-<td>API-02</td>
-<td><code>POST /api/v1/chat</code></td>
-<td><code>stream_response=true</code></td>
-<td>SSE 流；出现 <code>create</code>→<code>append*</code>→<code>update</code>→<code>end</code> 顺序事件</td>
-</tr>
-<tr>
-<td>API-03</td>
-<td><code>POST /api/v1/tools/{tool_name}</code></td>
-<td>合法参数</td>
-<td><code>ToolService</code> 注册表命中；结果结构符合注册签名</td>
-</tr>
-<tr>
-<td>API-04</td>
-<td>同上</td>
-<td>未知工具名</td>
-<td>404</td>
-</tr>
-<tr>
-<td>API-05</td>
-<td><code>GET /api/v1/chat/sessions?subagent_id=X</code></td>
-<td>多 agent 场景</td>
-<td>仅返回匹配 X 的 session</td>
-</tr>
-<tr>
-<td>API-06</td>
-<td><code>ChatInput.interactive=false</code></td>
-<td>请求级覆盖</td>
-<td><code>AgenticNode.interactive_enabled=False</code>；ask_user 不注册</td>
-</tr>
-<tr>
-<td>API-07</td>
-<td><code>UserInteractionInput</code></td>
-<td>multi-select payload <code>[["A","B"],["C"]]</code></td>
-<td>成功反序列化；SSE multiSelect 字段转换正确</td>
-</tr>
-<tr>
-<td>API-08</td>
-<td><code>session_total_tokens</code> 字段</td>
-<td>跑两轮对话</td>
-<td>等于第二轮最后一次模型调用的 input_tokens，而非累加</td>
-</tr>
-</tbody>
-</table>
-<h3 id="35-cli-print-mode-proxy-tools489-501">3.5 CLI Print Mode / Proxy Tools（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/489" title="GitHub Issue: Datus-ai/Datus-agent #489">#489</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/501" title="GitHub Issue: Datus-ai/Datus-agent #501">#501</a>）<a class="headerlink" href="#35-cli-print-mode-proxy-tools489-501" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/cli/test_print_mode.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>PRN-01</td>
-<td><code>datus --print</code> JSON Lines 输入</td>
-<td>每行对应一次 Action；退出码 0</td>
-</tr>
-<tr>
-<td>PRN-02</td>
-<td><code>--resume &lt;id&gt;</code> 不带 <code>--print</code></td>
-<td>argparse 校验失败</td>
-</tr>
-<tr>
-<td>PRN-03</td>
-<td><code>--proxy_tools query_sql</code></td>
-<td>tool_call 事件从 stdout 流出，stdin 回注结果后会话继续</td>
-</tr>
-<tr>
-<td>PRN-04</td>
-<td>ProxyTool 乱序回传</td>
-<td><code>ToolResultChannel</code> 按 <code>call_id</code> 路由，不出现串返</td>
-</tr>
-<tr>
-<td>PRN-05</td>
-<td>stdin EOF</td>
-<td>工具阻塞但收到 stop_event 后清洁退出</td>
-</tr>
-<tr>
-<td>PRN-06</td>
-<td>Windows 事件循环</td>
-<td><code>run_async()</code> 路径不报 <code>asyncio.run already running</code></td>
-</tr>
-</tbody>
-</table>
-<h3 id="36-gateway-daemon-streaming559-562-565-593-570-568">3.6 Gateway Daemon / Streaming（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/559" title="GitHub Issue: Datus-ai/Datus-agent #559">#559</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/562" title="GitHub Issue: Datus-ai/Datus-agent #562">#562</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/565" title="GitHub Issue: Datus-ai/Datus-agent #565">#565</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/593" title="GitHub Issue: Datus-ai/Datus-agent #593">#593</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/570" title="GitHub Issue: Datus-ai/Datus-agent #570">#570</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/568" title="GitHub Issue: Datus-ai/Datus-agent #568">#568</a>）<a class="headerlink" href="#36-gateway-daemon-streaming559-562-565-593-570-568" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/gateway/test_runtime.py</code> &amp; <code>test_feishu_adapter.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>CLW-01</td>
-<td><code>--daemon --action start</code></td>
-<td>产生 pid 文件；<code>status</code> 命中运行中</td>
-</tr>
-<tr>
-<td>CLW-02</td>
-<td><code>--action restart</code></td>
-<td>旧进程退出、新进程起来；始终 daemon=True</td>
-</tr>
-<tr>
-<td>CLW-03</td>
-<td><code>_read_pid</code> 负值/非数字</td>
-<td>拒绝并返回友好错误</td>
-</tr>
-<tr>
-<td>CLW-04</td>
-<td>POSIX-only 调用在 Windows</td>
-<td><code>os.setsid</code> 等被平台守卫跳过</td>
-</tr>
-<tr>
-<td>CLW-05</td>
-<td><code>_run_loop</code> 捕获 <code>path_manager</code></td>
-<td>ContextVar 为空时主动 bind；<code>project_name</code> 不为 <code>""</code></td>
-</tr>
-<tr>
-<td>CLW-06</td>
-<td>飞书 streaming 拼接</td>
-<td><code>"Hi" + " again!"</code> 得到 <code>"Hi again!"</code>（空白不被 strip）</td>
-</tr>
-<tr>
-<td>CLW-07</td>
-<td>whitespace-only delta</td>
-<td>单个 <code>" "</code> token 不被过滤</td>
-</tr>
-<tr>
-<td>CLW-08</td>
-<td>群聊未参与 thread 回复</td>
-<td><code>SessionManager.session_exists()</code> 为 False，bot 不应答</td>
-</tr>
-</tbody>
-</table>
-<h3 id="37-session-subagent547-544-594-575-529-516">3.7 Session / Subagent（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/547" title="GitHub Issue: Datus-ai/Datus-agent #547">#547</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/544" title="GitHub Issue: Datus-ai/Datus-agent #544">#544</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/594" title="GitHub Issue: Datus-ai/Datus-agent #594">#594</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/575" title="GitHub Issue: Datus-ai/Datus-agent #575">#575</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/529" title="GitHub Issue: Datus-ai/Datus-agent #529">#529</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/516" title="GitHub Issue: Datus-ai/Datus-agent #516">#516</a>）<a class="headerlink" href="#37-session-subagent547-544-594-575-529-516" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/session/test_session_manager.py</code> 等</p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>SES-01</td>
-<td><code>session_matches_agent</code></td>
-<td>id <code>foo_session_xxx</code> 与 <code>current_subagent_name=foo</code> 匹配；legacy 无前缀 id 归为默认 chat</td>
-</tr>
-<tr>
-<td>SES-02</td>
-<td><code>get_last_turn_usage</code></td>
-<td>仅统计 <code>depth==0</code> 事件；遇到上一次 root USER 断言停止</td>
-</tr>
-<tr>
-<td>SES-03</td>
-<td><code>cmd_chat_info</code> context%</td>
-<td>分母为 <code>session_total_tokens</code>（最后一次 input）</td>
-</tr>
-<tr>
-<td>SES-04</td>
-<td><code>SubAgentTaskTool</code> 2 级上限</td>
-<td>深度=2 时子节点的 task tool 被剥离</td>
-</tr>
-<tr>
-<td>SES-05</td>
-<td><code>allowed_subagents</code> 过滤</td>
-<td><code>chat</code> 默认 <code>'*'</code> 可见全量；<code>gen_sql</code> 默认仅 <code>'explore'</code></td>
-</tr>
-<tr>
-<td>SES-06</td>
-<td>自定义 subagent 解析</td>
-<td><code>_create_node</code> 以 <code>entry["id"]</code> 反查 <code>agentic_nodes</code> key；<code>scoped_context</code> 非空</td>
-</tr>
-<tr>
-<td>SES-07</td>
-<td>fs-dependent 节点</td>
-<td><code>gen_semantic_model / gen_metrics / gen_sql_summary / gen_ext_knowledge</code> 上 <code>filesystem_tools</code> 类别从 proxy 中排除</td>
-</tr>
-</tbody>
-</table>
-<h3 id="38-kb-587-578">3.8 KB 路径锚定（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/587" title="GitHub Issue: Datus-ai/Datus-agent #587">#587</a> / <a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/578" title="GitHub Issue: Datus-ai/Datus-agent #578">#578</a>）<a class="headerlink" href="#38-kb-587-578" title="Permanent link">&para;</a></h3>
-<p><code>tests/unit_tests/storage/test_kb_path_anchoring.py</code></p>
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>场景</th>
-<th>断言</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>KB-01</td>
-<td>生成 prompt <code>kind_subdir</code></td>
-<td>含前缀 <code>subject/</code>；不含 <code>{current_database}</code></td>
-</tr>
-<tr>
-<td>KB-02</td>
-<td><code>agent.knowledge_base_home</code> 配置</td>
-<td>被静默忽略；实际写入仍在 <code>{project_root}/subject/</code></td>
-</tr>
-<tr>
-<td>KB-03</td>
-<td><code>project_name</code> 派生</td>
-<td><code>os.getcwd()="/"</code> → <code>_root</code>；超长路径以 7 位 md5 截断</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="e2e">四、手工 E2E 剧本（发版前必过一次）<a class="headerlink" href="#e2e" title="Permanent link">&para;</a></h2>
-<h3 id="e2e-1cli">E2E-1：CLI 默认链路<a class="headerlink" href="#e2e-1cli" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>uv sync</code> 升级到 0.2.7 候选。</li>
-<li>在一个干净目录 <code>cd ~/tmp/datus-demo</code> 初始化：<code>datus init</code>。</li>
-<li><code>datus chat</code>，提问 <code>select top 5 from lineitem limit 1</code>，观察 SQL 生成、执行、Ctrl+O 切换思考区。</li>
-<li>退出，再 <code>.sessions</code> + <code>.resume</code>：只看到 chat agent 的 session（<a class="magiclink magiclink-github magiclink-issue" href="https://github.com/Datus-ai/Datus-agent/issues/594" title="GitHub Issue: Datus-ai/Datus-agent #594">#594</a>）。</li>
-<li><code>.rewind</code> 到上一步，继续对话成功。</li>
-</ol>
-<h3 id="e2e-2print-mode-proxy">E2E-2：Print Mode + Proxy<a class="headerlink" href="#e2e-2print-mode-proxy" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>datus chat --print --proxy_tools query_sql &lt; input.jsonl &gt; out.jsonl</code></li>
-<li>外部脚本监听 stdout 的 <code>call-tool</code> 事件，将 mock 结果写回 stdin。</li>
-<li>验证 <code>out.jsonl</code> 含完整 Action / Message 序列；<code>--resume &lt;id&gt;</code> 可恢复。</li>
-</ol>
-<h3 id="e2e-3-api">E2E-3：独立 API<a class="headerlink" href="#e2e-3-api" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>datus-api server --host 127.0.0.1 --port 8080 --stream --interactive</code></li>
-<li>用 <code>curl -N</code> 对 <code>POST /api/v1/chat</code> 发流式请求。</li>
-<li><code>POST /api/v1/tools/search_metrics</code> body=<code>{"keyword": "..."}</code> 验证新 dispatch 路径。</li>
-<li><code>GET /api/v1/chat/sessions?subagent_id=foo</code> 验证过滤。</li>
-</ol>
-<h3 id="e2e-4gateway">E2E-4：Gateway 网关（飞书）<a class="headerlink" href="#e2e-4gateway" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>datus-gateway --daemon --action start --pid-file ~/.datus/run/gateway.pid --daemon-log-file ~/.datus/logs/gateway.log</code></li>
-<li><code>--action status</code> / <code>--action restart</code> / <code>--action stop</code> 全链路验证。</li>
-<li>在飞书单聊发起提问，确认增量下行文本正确（无“Hiagain!”类粘连），群聊 <a class="magiclink magiclink-github magiclink-mention" href="https://github.com/bot" title="GitHub User: bot">@bot</a> 正常，未参与的 thread 回复被忽略。</li>
-</ol>
-<h3 id="e2e-5filesystem-strict">E2E-5：Filesystem Strict<a class="headerlink" href="#e2e-5filesystem-strict" title="Permanent link">&para;</a></h3>
-<ol>
-<li>使用 <code>--filesystem-strict</code> 启动 CLI；让模型尝试 <code>read_file("/etc/hosts")</code> → 硬拒绝。</li>
-<li>切换到 <code>--no-filesystem-strict</code>，同样调用 → 出现权限 prompt；选择 allow once，后续相同路径再次 prompt。</li>
-<li>Gateway / API bootstrap 读取 <code>agent.filesystem.strict=true</code>，无交互环境下外部路径请求直接拒绝，不挂起。</li>
-</ol>
-<h3 id="e2e-6kb-026">E2E-6：KB 迁移验证（从 0.2.6 上来的用户）<a class="headerlink" href="#e2e-6kb-026" title="Permanent link">&para;</a></h3>
-<ol>
-<li>准备一份 0.2.6 的 KB：<code>subject/semantic_models/duckdb_local/foo.yaml</code>。</li>
-<li>升级到 0.2.7 直接 <code>datus chat</code> → 生成新 KB 时路径应为 <code>subject/semantic_models/foo.yaml</code>（不含 <code>duckdb_local/</code>）。</li>
-<li>跑 Release Note 提供的迁移脚本 → 旧内容归位；<code>@subject</code> 命令可识别。</li>
-</ol>
-<h3 id="e2e-7auto-memory">E2E-7：Auto Memory<a class="headerlink" href="#e2e-7auto-memory" title="Permanent link">&para;</a></h3>
-<ol>
-<li><code>datus chat</code>，输入 <code>Remember that my project uses PostgreSQL</code>；观察 <code>.datus/memory/chat/MEMORY.md</code> 被写入。</li>
-<li><code>exit</code> 再启 → <code>MEMORY.md</code> 内容出现在系统提示；空态场景（手动清空文件）提示为 <code>empty -- no memories saved yet</code>。</li>
-</ol>
-<hr />
-<h2 id="_4">五、非功能验证<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>维度</th>
-<th>检查项</th>
-<th>工具/命令</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>覆盖率</td>
-<td>整体 ≥ 80%，diff ≥ 80%</td>
-<td><code>uv run pytest tests/unit_tests/ --cov=datus --cov-fail-under=80</code> + <code>diff-cover</code></td>
-</tr>
-<tr>
-<td>Lint / Format</td>
-<td>零错误</td>
-<td><code>uv run ruff format . &amp;&amp; uv run ruff check --fix .</code></td>
-</tr>
-<tr>
-<td>Pre-commit hook</td>
-<td>本地绿灯</td>
-<td><code>.pre-commit hook</code></td>
-</tr>
-<tr>
-<td>文档</td>
-<td><code>release_notes.md</code>、<code>web_chatbot/API*</code>、filesystem strict、memory 新增页</td>
-<td>人工核对</td>
-</tr>
-<tr>
-<td>回归基准</td>
-<td>benchmark 组没有显著回退</td>
-<td><code>uv run pytest -m "nightly or regression" tests/</code></td>
-</tr>
-<tr>
-<td>性能</td>
-<td>流式首字节延迟 P95 ≤ 1.5s（本地 Claude Opus 4.7）</td>
-<td>手工或内置 trace</td>
-</tr>
-<tr>
-<td>并发</td>
-<td>Gateway daemon 多 worker 并发消息 ≥ 10 QPS 无 ContextVar 串扰</td>
-<td>压测脚本（可用 <code>locust</code>）</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="_5">六、回滚预案<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>无法紧急修复时</strong>：在 PyPI 标记 <code>0.2.7</code> 为 yanked，保留 <code>0.2.6</code> 作为推荐版本。</li>
-<li><strong>KB 目录锚定引发用户数据误读</strong>：在 <code>0.2.7.1</code> 中新增一次性 <code>datus migrate-kb</code> 子命令，按 Release Note §5.3 的逻辑原子搬迁。</li>
-<li><strong>Gateway daemon 存活问题</strong>：提供 <code>--no-daemon</code> 前台兜底，文档明示。</li>
-</ol>
-<hr />
-<h2 id="_6">七、测试分工模板<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>模块</th>
-<th>负责人</th>
-<th>CI</th>
-<th>Nightly</th>
-<th>手工 E2E</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>文件系统重构</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>FS-01..11 / STR-01..06</td>
-<td>—</td>
-<td>E2E-5 / E2E-6</td>
-</tr>
-<tr>
-<td>Auto Memory</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>MEM-01..06</td>
-<td>—</td>
-<td>E2E-7</td>
-</tr>
-<tr>
-<td>REST API / Chat</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a> + <a class="magiclink magiclink-github magiclink-mention" href="https://github.com/ArnoZhang" title="GitHub User: ArnoZhang">@ArnoZhang</a></td>
-<td>API-01..08</td>
-<td>真实模型下 streaming</td>
-<td>E2E-3</td>
-</tr>
-<tr>
-<td>CLI Print / Proxy</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>PRN-01..06</td>
-<td>—</td>
-<td>E2E-2</td>
-</tr>
-<tr>
-<td>Gateway / Feishu</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>GW-01..08</td>
-<td>真实 Feishu webhook</td>
-<td>E2E-4</td>
-</tr>
-<tr>
-<td>Session / Subagent</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>SES-01..07</td>
-<td>—</td>
-<td>E2E-1</td>
-</tr>
-<tr>
-<td>KB 路径</td>
-<td><a class="magiclink magiclink-github magiclink-mention" href="https://github.com/Leo" title="GitHub User: Leo">@Leo</a></td>
-<td>KB-01..03</td>
-<td>—</td>
-<td>E2E-6</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h2 id="checklist-24">八、验收 Checklist（发版前最后 24 小时）<a class="headerlink" href="#checklist-24" title="Permanent link">&para;</a></h2>
-<ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>uv run pytest tests/unit_tests/ -q</code> 全绿。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>uv run pytest -m nightly tests/</code> 全绿（允许因外部服务抖动二次重跑）。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>uv run ruff format . &amp;&amp; uv run ruff check .</code> 零错误零警告。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Coverage ≥ 80%；diff coverage ≥ 80%。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> 七个 E2E 剧本均由至少一位 QA 实操通过。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Release Note 中的迁移脚本在至少一台 0.2.6 旧数据环境上验证无损。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>docs/release_notes.md</code> 顶部追加 <code>0.2.7</code> 小节并链接到本 Release Note（中文版）。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> PR 标题前缀符合 <code>[Feature]/[Enhancement]/[Refactor]/[BugFix]</code> 约定；CI 通过。</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>pyproject.toml</code> 中 <code>version</code> 从 <code>0.2.6</code> 更新到 <code>0.2.7</code>；打 tag <code>v0.2.7</code>。</li>
+<h1 id="vscode-extension">VSCode Extension 用户指南<a class="headerlink" href="#vscode-extension" title="Permanent link">&para;</a></h1>
+<h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p><strong>Datus Studio</strong> 是 Datus-agent 的官方 VSCode 插件，把 Datus 的数据工程能力直接搬进你日常使用的 IDE。它复用 Datus-agent 的 Web Server（HTTP 服务），通过统一的 Endpoint 连接后端，所有元数据、子代理、上下文、模型与数据源配置都来自同一个 Datus 实例。</p>
+<p>面向场景：</p>
+<ul>
+<li><strong>数据工程师 / 分析师</strong>：在写代码、调 SQL 的同时，在同一窗口完成自然语言问答、SQL 生成、结果可视化，避免在 IDE / 网页 / 终端之间来回切换。</li>
+<li><strong>AI Native 数据开发</strong>：把 Object Catalog、Context（Metrics / Reference / Knowledge）、SubAgent、Chat、SQL Result、AI Chart 整合进 VSCode 的标准面板，按 IDE 习惯组织工作流。</li>
+<li><strong>多数据源协作</strong>：在一个工程下连接多个数据库，切换 SubAgent、切换 Datasource、切换 Plan mode 都不离开编辑器。</li>
 </ul>
+<p><img alt="Datus Studio 主界面" src="../../../assets/vscode-main.png" /></p>
+<h2 id="_2">安装<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>当前发布渠道为 VSIX 直装：</p>
+<ol>
+<li>下载最新版本：<a href="https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip">https://cdn.studio.datus.ai/vsc/release/datus-studio-vsix.zip</a>，解压 zip 得到 .vsix 文件。</li>
+<li>在 VSCode 中打开命令面板（<code>Cmd/Ctrl + Shift + P</code>），执行 <strong>「Extensions: Install from VSIX...」</strong>，选择刚下载的 <code>.vsix</code> 文件。</li>
+<li>安装完成后，活动栏会出现 Datus Studio 图标，并新增三个面板：左侧 <strong>Datus: Object Explorer</strong>、主面板 <strong>Datus Studio</strong>（Chat，你可以手动拖拽到右侧）、底部 <strong>Datus Studio</strong>（SQL / Chart）。</li>
+</ol>
+<div class="admonition tip">
+<p class="admonition-title">升级</p>
+<p>重新下载最新的 <code>.vsix</code> 文件后再次执行 <em>Install from VSIX</em> 即可覆盖安装。</p>
+</div>
+<h2 id="_3">启动步骤<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>Datus Studio 自身不持有任何模型与数据库凭证，所有能力都由 Datus-agent 的 Web Server 提供。启动顺序如下。</p>
+<h3 id="1-web-server-datus-agent">1. 启动带 Web Server 的 Datus-agent<a class="headerlink" href="#1-web-server-datus-agent" title="Permanent link">&para;</a></h3>
+<p>任意带有 <code>--web</code> 的启动方式都可以，关键是要让 Datus-agent 暴露 HTTP 服务。常见命令：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 直接指定数据源</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus-cli<span class="w"> </span>--web<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 指定配置文件 + 数据源（推荐：项目化配置）</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus-cli<span class="w"> </span>--web<span class="w"> </span>--config<span class="w"> </span>/path/to/conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># 自定义端口与监听地址</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus-cli<span class="w"> </span>--web<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0
+</span></code></pre></div>
+<p>启动完成后，终端会打印实际的服务地址，例如：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>http://localhost:8501
+</span></code></pre></div>
+<p>将这个地址记下，下一步要填到插件 Settings 里。</p>
+<div class="admonition note">
+<p class="admonition-title">为什么必须 <code>--web</code></p>
+<p>VSCode 插件通过 HTTP 与 Datus-agent 通信。CLI 模式（不带 <code>--web</code>）只在终端内运行，没有 HTTP 端口，插件无法连接。</p>
+</div>
+<h3 id="2-vscode-endpoint">2. 在 VSCode 中配置 Endpoint<a class="headerlink" href="#2-vscode-endpoint" title="Permanent link">&para;</a></h3>
+<ol>
+<li>打开活动栏的 <strong>Datus Studio</strong> Chat 面板，点击右上角齿轮图标进入 <strong>「Datus · Settings」</strong>。</li>
+<li>切到 <strong>General</strong> 页，将上一步的服务地址填入 <strong>Endpoint</strong>，例如 <code>http://localhost:8501</code>。</li>
+<li>同页还可以设置：<ul>
+<li><strong>Language</strong>：插件界面语言（中 / 英）。</li>
+<li><strong>Default Model</strong>：默认对话使用的 LLM，下拉来自 Datus-agent 已配置的 providers。</li>
+<li><strong>Feedback</strong>：直接向 Datus 团队提交反馈或建议。</li>
+</ul>
+</li>
+</ol>
+<p><img alt="Datus Studio 设置页" src="../../../assets/vscode-settings.png" /></p>
+<p>保存后，插件会自动 Reload 与 Datus-agent 建立连接，左侧 Object Explorer 会拉取数据库目录与已注册的子代理。</p>
+<div class="admonition tip">
+<p class="admonition-title">Models / Datasources 子页</p>
+<p><strong>Models</strong> 与 <strong>Datasources</strong> 两个子页是 Datus-agent 同名配置的可视化镜像，可在插件里直接编辑，写回到对应的 <code>agent.yml</code>。</p>
+</div>
+<h2 id="_4">核心功能<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>整个插件按 VSCode 习惯划分为 <strong>左侧 Catalog Tree/Context Tree/SubAgent Explorer</strong>、<strong>右侧 Datus Studio Chat</strong>、<strong>底部 Datus Studio (SQL / Chart)</strong> 三块。</p>
+<h3 id="1-catalog-tree-context-tree">1. Catalog Tree 与 Context Tree<a class="headerlink" href="#1-catalog-tree-context-tree" title="Permanent link">&para;</a></h3>
+<p>左侧 <strong>Datus: Object Explorer</strong> 提供两个 Tab：</p>
+<ul>
+<li><strong>Catalog</strong>：当前数据源下的 <code>database → schema → table</code> 树，对应 Datus-agent 抓取的元数据。<ul>
+<li>点击表名 → 在编辑区打开 <em>Table Info</em> 标签页，展示 <strong>Columns</strong>（字段类型 / 是否可空 / 默认值 / PK）、<strong>Indexes</strong>、<strong>Sample data</strong>。</li>
+<li>顶部支持搜索与刷新，元数据变更后点刷新立即同步。</li>
+</ul>
+</li>
+<li><strong>Context</strong>：上下文知识树，与 Datus-agent 的 <code>subject/</code> 目录对齐：<ul>
+<li><strong>Metrics</strong>：MetricFlow 指标定义。</li>
+<li><strong>Reference</strong>：Reference SQL 与 Reference Template。</li>
+<li><strong>Knowledge</strong>：External Knowledge / Platform Documentation。</li>
+</ul>
+</li>
+</ul>
+<p>Catalog 与 Context 中的任意节点都可以作为 Chat 的引用对象（在 Chat 输入框 <code>@</code> 选择），也可以作为 SubAgent 的可见范围（见下文）。</p>
+<h3 id="2-subagent">2. SubAgent 创建与管理<a class="headerlink" href="#2-subagent" title="Permanent link">&para;</a></h3>
+<p>左下 <strong>Agents</strong> 区列出当前工程的全部子代理（含 Built-in 与自定义）。点击 <strong>「+ Add Agent」</strong> 进入四步向导：</p>
+<ol>
+<li><strong>Description</strong>：基本信息（名称、描述、面向场景）。</li>
+<li><strong>Tools</strong>：勾选可用工具 / MCP 工具。</li>
+<li><strong>Objects</strong>：选择该 SubAgent 可见的 <strong>Catalog 范围</strong> 与 <strong>Context 范围</strong>——同样使用上一节的两棵树，勾选到 schema / table / 知识节点级别。底部 <em>Selected</em> 区会以 <code>jeff_shop.*</code>、<code>Root.*</code> 等通配符形式回显。</li>
+<li><strong>Rules</strong>：补充行为规则、Few-shot 示例、对话风格等。</li>
+</ol>
+<p><img alt="创建 SubAgent 向导（Objects 步骤）" src="../../../assets/vscode-create-subagent.png" /></p>
+<p>向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 <code>/agent</code> 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（<code>gen_sql</code>、<code>gen_metrics</code>、<code>gen_dashboard</code>、<code>gen_semantic_model</code>、<code>gen_report</code>、<code>scheduler</code>、…）只读展示，可在向导中查看其 Tools / Objects / Rules。</p>
+<h3 id="3-datus-studio-chat">3. Datus Studio Chat 面板<a class="headerlink" href="#3-datus-studio-chat" title="Permanent link">&para;</a></h3>
+<p>右侧 <strong>Datus Studio</strong> 是与 Datus-agent 对话的主入口，对齐 Web Chatbot 但更贴近 IDE 工作流：</p>
+<ul>
+<li><strong>普通对话</strong>：自然语言提问，Datus 会生成 SQL、调工具、并把结果以 Markdown / 表格 / 链接渲染回来。</li>
+<li><strong>SubAgent 切换</strong>：输入框下方 <strong>Main...</strong> 下拉，选择 <code>gen_sql</code>、<code>gen_dashboard</code>、<code>gen_metrics</code> 或自定义子代理。切换后 Chat 上下文随即接入该子代理的可见范围与规则。</li>
+<li><strong>Datasource 切换</strong>：右下 <strong>数据库</strong> 下拉，无需重启即可切换当前会话的数据源。</li>
+<li><strong>Plan mode</strong>：开启后，Datus 会先输出执行计划与 SQL 草稿，等你确认再执行；适合生产数据上的高风险查询。</li>
+<li><strong>会话历史</strong>：聊天历史按 <code>~/.datus/sessions/{project}/</code> 分项目存储，插件侧边可加载历史会话继续聊或对照查看。</li>
+<li><strong>代码联动</strong>：在编辑器内选中一段 SQL 或文本，右键 <em>Datus: Add Selection to Chat</em>（命令 <code>datus.addSelectionToChat</code>），即可把当前选区作为上下文丢进 Chat。</li>
+</ul>
+<h3 id="4-sql-result-ai-chart">4. SQL Result 与 AI Chart 面板<a class="headerlink" href="#4-sql-result-ai-chart" title="Permanent link">&para;</a></h3>
+<p>执行 SQL（来自 Chat 生成、手写、或 SubAgent 回写）后，结果会显示在底部 <strong>Datus Studio</strong> 面板，三个子 Tab：</p>
+<ul>
+<li><strong>Generated SQL</strong>：本轮生成 / 执行的 SQL 全文，支持复制与一键回灌到编辑器。</li>
+<li><strong>Execute Result</strong>：分页表格，支持排序、列宽调整、CSV / Excel 下载。</li>
+<li><strong>Chart</strong>：基于 <a href="https://echarts.apache.org/">ECharts</a> 的可视化区。</li>
+</ul>
+<p>Chart 子 Tab 提供：</p>
+<ul>
+<li><strong>图表类型切换</strong>：柱状图 / 折线图 / 散点图 / 饼图。</li>
+<li><strong>维度 / 度量绑定</strong>：通过 <em>Showing <code>&lt;measure&gt;</code> By <code>&lt;dimension&gt;</code></em> 选择字段；齿轮图标可调整轴、配色、堆叠等细节。</li>
+<li><strong>AI 解读</strong>：图表上方自动给出由 LLM 生成的趋势 / 异常 / 对比说明。</li>
+<li><strong>导出</strong>：右上角下载图标可导出 PNG / 数据。</li>
+</ul>
+<p><img alt="SQL Result 与 AI Chart 面板" src="../../../assets/vscode-sql-chart.png" /></p>
+<h3 id="5-filesystem-tools">5. FileSystem Tools（文件操作接管）<a class="headerlink" href="#5-filesystem-tools" title="Permanent link">&para;</a></h3>
+<p>Datus-agent 在自然语言对话与子代理执行过程中会调用一组文件工具（<code>read_file</code> / <code>write_file</code> / <code>edit_file</code> / <code>glob</code> / <code>grep</code>），用于读写本地文件、查找代码与配置。在 <strong>VSCode 场景下，这组文件工具会被插件接管</strong>：所有文件操作都不会落到 Datus-agent 进程所在的目录，而是统一作用于 <strong>VSCode 当前打开的工作区目录</strong>（<code>workspaceFolders[0]</code>）。</p>
+<ul>
+<li><strong>统一的根目录</strong>：无论 Datus-agent 在哪台机器、以哪个工作目录启动，文件读写永远发生在你 VSCode 里看到的那个项目，避免出现 “SQL 写出来了但找不到文件” 的割裂感。</li>
+<li><strong>强制的路径沙箱</strong>：所有传入路径都会校验前缀是否在工作区内。任何尝试越界（如 <code>../../etc/passwd</code>）都会以 <code>Invalid path</code> 拒绝。</li>
+<li><strong>白名单 + 体积限制</strong>：仅允许文本类扩展名（<code>.txt</code> <code>.md</code> <code>.py</code> <code>.js</code> <code>.ts</code> <code>.json</code> <code>.yaml</code> <code>.yml</code> <code>.csv</code> <code>.sql</code> <code>.html</code> <code>.css</code> <code>.xml</code> 等）；单文件读取上限 <strong>10MB</strong>，<code>grep</code> 跳过 &gt;1MB 的文件，<code>glob</code> 与 <code>grep</code> 自动忽略 <code>.git/</code>、<code>node_modules/</code>。</li>
+</ul>
+<h4 id="_5">使用建议<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>保持 VSCode 工作区干净</strong>：因为读写都落在工作区根目录，建议每个 Datus 项目对应一个 VSCode 工作区文件夹，与 Datus-agent 的 <code>project_name</code>、<code>subject/</code> 目录一一对应，子代理生成的 <code>metric.yml</code>、<code>semantic_model.yml</code>、<code>reference_sql/*.sql</code> 才会落到正确位置。</li>
+<li><strong>未打开文件夹的情况</strong>：VSCode 没有打开任何工作区时，所有文件工具都会返回错误。先用 <em>「File → Open Folder...」</em> 打开你的项目再发起对话。</li>
+<li><strong>超出白名单的文件</strong>：二进制、Notebook、Office 文档等会被直接拒绝。需要让 Datus 处理这些文件时，先转换成支持的文本格式或在白名单中扩展（修改插件源码）。</li>
+</ul>
+<h2 id="_6">常见问题<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h3 id="disconnected">插件一直显示 "Disconnected"<a class="headerlink" href="#disconnected" title="Permanent link">&para;</a></h3>
+<p>检查 Endpoint 是否填对、Datus-agent 是否带 <code>--web</code> 启动；远程主机要确认防火墙放行了对应端口。</p>
+<h3 id="_7">端口被占用<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<p><code>datus --web --port 8080 ...</code> 自定义端口后，把 Settings → Endpoint 同步改成 <code>http://localhost:8080</code>。</p>
+<h3 id="catalog">Catalog 看不到表<a class="headerlink" href="#catalog" title="Permanent link">&para;</a></h3>
+<p>确认 Datus-agent 已对该数据源跑过元数据抓取（CLI 中的 <code>/init</code> 或 <code>/refresh-meta</code>）。插件本身只渲染后端返回的目录。</p>
+<h3 id="built-in">Built-in 子代理可以编辑吗<a class="headerlink" href="#built-in" title="Permanent link">&para;</a></h3>
+<p>不可以。Built-in 仅展示其结构，要定制请使用 <em>「+ Add Agent」</em> 新建一个独立子代理。</p>
+<h2 id="_8">总结<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<p>Datus Studio VSCode 插件把 Datus-agent 的核心能力——元数据浏览、上下文管理、子代理编排、Chat 对话、SQL 执行与 AI 可视化——整合进一个 IDE 内的工作区，与 <a href="../../cli/introduction/">CLI</a> 与 <a href="../../web_chatbot/introduction/">Web Chatbot</a> 共用同一份后端配置与知识库，是开发态最顺手的入口。</p>
 
 
 
@@ -4453,6 +4112,44 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+        
+          
+          <a href="../../develop/Contributing/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Contributing">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                上一页
+              </span>
+              <div class="md-ellipsis">
+                Contributing
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../release_notes/" class="md-footer__link md-footer__link--next" aria-label="下一页: 发布说明">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                下一页
+              </span>
+              <div class="md-ellipsis">
+                发布说明
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -4533,10 +4230,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

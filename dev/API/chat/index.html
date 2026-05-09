@@ -396,6 +396,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -584,34 +584,6 @@
     
   
     Contextual Data Engineering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tutorial
   
 
     
@@ -3478,6 +3450,8 @@
       
         
       
+        
+      
     
     
     
@@ -3564,6 +3538,34 @@
     
   
     Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
   
 
     
@@ -3831,6 +3833,34 @@
           </ul>
         </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -4397,6 +4427,11 @@ else returns the standard <a href="../introduction/#response-envelope"><code>Res
 <td>Built-in name (<code>gen_metrics</code>, <code>gen_semantic_model</code>, …) or custom subagent id</td>
 </tr>
 <tr>
+<td><code>model</code></td>
+<td>string?</td>
+<td>Per-request model override in <code>provider/model_id</code> form (e.g. <code>openai/gpt-4.1</code>, <code>custom/my-model</code>). Highest priority over server-side <code>target</code> and any session default.</td>
+</tr>
+<tr>
 <td><code>plan_mode</code></td>
 <td>bool</td>
 <td>Enable plan mode</td>
@@ -4470,7 +4505,24 @@ else returns the standard <a href="../introduction/#response-envelope"><code>Res
 <p><strong>Response</strong>: <code>Result[CompactSessionData]</code> containing <code>success</code>, <code>new_token_count</code>, <code>tokens_saved</code>,
 <code>compression_ratio</code>.</p>
 <h3 id="get-apiv1chatsessions"><code>GET /api/v1/chat/sessions</code><a class="headerlink" href="#get-apiv1chatsessions" title="Permanent link">&para;</a></h3>
-<p>List all chat sessions for the current user.</p>
+<p>List chat sessions for the current user.</p>
+<p><strong>Query parameters</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Param</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>subagent_id</code></td>
+<td>string?</td>
+<td>Filter by subagent. Pass <code>chat</code> for the default chat agent, or any builtin/custom subagent id. Omit to return every session for the user.</td>
+</tr>
+</tbody>
+</table>
 <p><strong>Response</strong>: <code>Result[ChatSessionData]</code> with an array of <code>{ session_id, user_query, created_at, last_updated,
 total_turns, token_count, last_sql_queries, is_active }</code>.</p>
 <h3 id="delete-apiv1chatsessionssession_id"><code>DELETE /api/v1/chat/sessions/{session_id}</code><a class="headerlink" href="#delete-apiv1chatsessionssession_id" title="Permanent link">&para;</a></h3>

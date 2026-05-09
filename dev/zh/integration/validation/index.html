@@ -8,31 +8,35 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/zh/release_notes_0.2.7_zh/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/zh/integration/validation/">
       
       
+        <link rel="prev" href="../skills/">
+      
+      
+        <link rel="next" href="../memory/">
       
       
         
-          <link rel="alternate" href="../../release_notes_0.2.7_zh/" hreflang="en">
+          <link rel="alternate" href="../../../integration/validation/" hreflang="en">
         
           <link rel="alternate" href="./" hreflang="zh">
         
       
       
-      <link rel="icon" href="../../assets/logo-light.png">
+      <link rel="icon" href="../../../assets/logo-light.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Datus-Agent 0.2.7 Release Note（中文版） - Datus Docs</title>
+        <title>校验 - Datus Docs</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -45,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
   
@@ -82,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#datus-agent-027-release-note" class="md-skip">
+        <a href="#_1" class="md-skip">
           跳转至
         </a>
       
@@ -100,9 +104,9 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="页眉">
-    <a href="../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -119,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Datus-Agent 0.2.7 Release Note（中文版）
+              校验
             
           </span>
         </div>
@@ -176,7 +180,7 @@
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="../../release_notes_0.2.7_zh/" hreflang="en" class="md-select__link">
+            <a href="../../../integration/validation/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
@@ -264,11 +268,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
           
   
   
@@ -288,7 +294,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../release_notes/" class="md-tabs__link">
+      <a href="../../release_notes/" class="md-tabs__link">
         
   
   
@@ -323,9 +329,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../assets/logo-light.png" alt="logo">
+  <img src="../../../assets/logo-light.png" alt="logo">
 
     </a>
     Datus Docs
@@ -349,6 +355,8 @@
       
   
   
+    
+  
   
   
     
@@ -388,22 +396,27 @@
       
         
       
-    
-    
-    
-      
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
@@ -421,13 +434,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1">
             <span class="md-nav__icon md-icon"></span>
             
@@ -448,8 +461,6 @@
   
     
     
-      
-        
       
         
       
@@ -509,7 +520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting_started/Quickstart/" class="md-nav__link">
+      <a href="../../getting_started/Quickstart/" class="md-nav__link">
         
   
   
@@ -537,7 +548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting_started/data_engineering_quickstart/" class="md-nav__link">
+      <a href="../../getting_started/data_engineering_quickstart/" class="md-nav__link">
         
   
   
@@ -565,7 +576,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting_started/contextual_data_engineering/" class="md-nav__link">
+      <a href="../../getting_started/contextual_data_engineering/" class="md-nav__link">
         
   
   
@@ -593,35 +604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting_started/Datus_tutorial/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    教程
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../getting_started/dashboard_copilot/" class="md-nav__link">
+      <a href="../../getting_started/dashboard_copilot/" class="md-nav__link">
         
   
   
@@ -727,7 +710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -755,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -783,7 +766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -811,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/execution_command/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -839,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -867,7 +850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -895,7 +878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -923,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -951,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -1059,7 +1042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/introduction/" class="md-nav__link">
+      <a href="../../subagent/introduction/" class="md-nav__link">
         
   
   
@@ -1087,7 +1070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/builtin_subagents/" class="md-nav__link">
+      <a href="../../subagent/builtin_subagents/" class="md-nav__link">
         
   
   
@@ -1115,7 +1098,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/customized_subagent/" class="md-nav__link">
+      <a href="../../subagent/customized_subagent/" class="md-nav__link">
         
   
   
@@ -1143,7 +1126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_dashboard/" class="md-nav__link">
+      <a href="../../subagent/gen_dashboard/" class="md-nav__link">
         
   
   
@@ -1171,7 +1154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/gen_metrics/" class="md-nav__link">
         
   
   
@@ -1199,7 +1182,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_semantic_model/" class="md-nav__link">
+      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
         
   
   
@@ -1227,7 +1210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/scheduler/" class="md-nav__link">
+      <a href="../../subagent/scheduler/" class="md-nav__link">
         
   
   
@@ -1255,7 +1238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_sql_summary/" class="md-nav__link">
+      <a href="../../subagent/gen_sql_summary/" class="md-nav__link">
         
   
   
@@ -1283,7 +1266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_table/" class="md-nav__link">
+      <a href="../../subagent/gen_table/" class="md-nav__link">
         
   
   
@@ -1311,7 +1294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../subagent/gen_job/" class="md-nav__link">
+      <a href="../../subagent/gen_job/" class="md-nav__link">
         
   
   
@@ -1347,7 +1330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web_chatbot/introduction/" class="md-nav__link">
+      <a href="../../web_chatbot/introduction/" class="md-nav__link">
         
   
   
@@ -1433,7 +1416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../gateway/introduction/" class="md-nav__link">
+      <a href="../../gateway/introduction/" class="md-nav__link">
         
   
   
@@ -1461,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../gateway/slack/" class="md-nav__link">
+      <a href="../../gateway/slack/" class="md-nav__link">
         
   
   
@@ -1489,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../gateway/feishu/" class="md-nav__link">
+      <a href="../../gateway/feishu/" class="md-nav__link">
         
   
   
@@ -1593,7 +1576,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/introduction/" class="md-nav__link">
+      <a href="../../knowledge_base/introduction/" class="md-nav__link">
         
   
   
@@ -1621,7 +1604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/ext_knowledge/" class="md-nav__link">
+      <a href="../../knowledge_base/ext_knowledge/" class="md-nav__link">
         
   
   
@@ -1649,7 +1632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/platform_doc/" class="md-nav__link">
+      <a href="../../knowledge_base/platform_doc/" class="md-nav__link">
         
   
   
@@ -1677,7 +1660,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/metadata/" class="md-nav__link">
+      <a href="../../knowledge_base/metadata/" class="md-nav__link">
         
   
   
@@ -1705,7 +1688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/semantic_model/" class="md-nav__link">
+      <a href="../../knowledge_base/semantic_model/" class="md-nav__link">
         
   
   
@@ -1733,7 +1716,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/metrics/" class="md-nav__link">
+      <a href="../../knowledge_base/metrics/" class="md-nav__link">
         
   
   
@@ -1761,7 +1744,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/reference_sql/" class="md-nav__link">
+      <a href="../../knowledge_base/reference_sql/" class="md-nav__link">
         
   
   
@@ -1789,7 +1772,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../knowledge_base/reference_template/" class="md-nav__link">
+      <a href="../../knowledge_base/reference_template/" class="md-nav__link">
         
   
   
@@ -1885,7 +1868,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/introduction/" class="md-nav__link">
+      <a href="../../workflow/introduction/" class="md-nav__link">
         
   
   
@@ -1913,7 +1896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/nodes/" class="md-nav__link">
+      <a href="../../workflow/nodes/" class="md-nav__link">
         
   
   
@@ -1941,7 +1924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/orchestration/" class="md-nav__link">
+      <a href="../../workflow/orchestration/" class="md-nav__link">
         
   
   
@@ -1969,7 +1952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/api/" class="md-nav__link">
+      <a href="../../workflow/api/" class="md-nav__link">
         
   
   
@@ -2065,7 +2048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../API/introduction/" class="md-nav__link">
+      <a href="../../API/introduction/" class="md-nav__link">
         
   
   
@@ -2093,7 +2076,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../API/deployment/" class="md-nav__link">
+      <a href="../../API/deployment/" class="md-nav__link">
         
   
   
@@ -2121,7 +2104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../API/chat/" class="md-nav__link">
+      <a href="../../API/chat/" class="md-nav__link">
         
   
   
@@ -2149,7 +2132,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../API/knowledge_base/" class="md-nav__link">
+      <a href="../../API/knowledge_base/" class="md-nav__link">
         
   
   
@@ -2251,7 +2234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/introduction/" class="md-nav__link">
+      <a href="../../configuration/introduction/" class="md-nav__link">
         
   
   
@@ -2279,7 +2262,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/agent/" class="md-nav__link">
+      <a href="../../configuration/agent/" class="md-nav__link">
         
   
   
@@ -2307,7 +2290,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/workflow/" class="md-nav__link">
+      <a href="../../configuration/workflow/" class="md-nav__link">
         
   
   
@@ -2335,7 +2318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/benchmark/" class="md-nav__link">
+      <a href="../../configuration/benchmark/" class="md-nav__link">
         
   
   
@@ -2423,7 +2406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/datasources/" class="md-nav__link">
+      <a href="../../configuration/datasources/" class="md-nav__link">
         
   
   
@@ -2451,7 +2434,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/semantic_layer/" class="md-nav__link">
+      <a href="../../configuration/semantic_layer/" class="md-nav__link">
         
   
   
@@ -2479,7 +2462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/bi_platforms/" class="md-nav__link">
+      <a href="../../configuration/bi_platforms/" class="md-nav__link">
         
   
   
@@ -2507,7 +2490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/schedulers/" class="md-nav__link">
+      <a href="../../configuration/schedulers/" class="md-nav__link">
         
   
   
@@ -2543,7 +2526,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/storage/" class="md-nav__link">
+      <a href="../../configuration/storage/" class="md-nav__link">
         
   
   
@@ -2571,7 +2554,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/nodes/" class="md-nav__link">
+      <a href="../../configuration/nodes/" class="md-nav__link">
         
   
   
@@ -2667,7 +2650,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adapters/db_adapters/" class="md-nav__link">
+      <a href="../../adapters/db_adapters/" class="md-nav__link">
         
   
   
@@ -2695,7 +2678,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adapters/semantic_adapters/" class="md-nav__link">
+      <a href="../../adapters/semantic_adapters/" class="md-nav__link">
         
   
   
@@ -2723,7 +2706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adapters/bi_adapters/" class="md-nav__link">
+      <a href="../../adapters/bi_adapters/" class="md-nav__link">
         
   
   
@@ -2751,7 +2734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../adapters/scheduler_adapters/" class="md-nav__link">
+      <a href="../../adapters/scheduler_adapters/" class="md-nav__link">
         
   
   
@@ -2841,7 +2824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../benchmark/benchmark_manual/" class="md-nav__link">
+      <a href="../../benchmark/benchmark_manual/" class="md-nav__link">
         
   
   
@@ -2931,7 +2914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../metricflow/introduction/" class="md-nav__link">
+      <a href="../../metricflow/introduction/" class="md-nav__link">
         
   
   
@@ -2964,8 +2947,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2975,6 +2960,8 @@
       
         
       
+        
+      
     
     
     
@@ -2982,11 +2969,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_14" checked>
         
           
           <label class="md-nav__link" for="__nav_1_14" id="__nav_1_14_label" tabindex="0">
@@ -3007,7 +2994,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_14_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_14">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3025,7 +3012,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integration/mcp/" class="md-nav__link">
+      <a href="../mcp/" class="md-nav__link">
         
   
   
@@ -3053,7 +3040,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../integration/skills/" class="md-nav__link">
+      <a href="../skills/" class="md-nav__link">
         
   
   
@@ -3078,10 +3065,162 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    校验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        会在哪里运行
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行流程
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validator-skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        内置检查和 validator skill 的区别
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置 validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        添加项目级 validator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target 过滤
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        修改内置 validation 规则
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../integration/memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
         
   
   
@@ -3171,7 +3310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../training/llm_trace_usage/" class="md-nav__link">
+      <a href="../../training/llm_trace_usage/" class="md-nav__link">
         
   
   
@@ -3232,7 +3371,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../develop/" class="md-nav__link ">
+            <a href="../../develop/" class="md-nav__link ">
               
   
   
@@ -3276,7 +3415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../develop/Architecture/" class="md-nav__link">
+      <a href="../../develop/Architecture/" class="md-nav__link">
         
   
   
@@ -3304,7 +3443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../develop/Contributing/" class="md-nav__link">
+      <a href="../../develop/Contributing/" class="md-nav__link">
         
   
   
@@ -3333,6 +3472,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_extension/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VSCode 插件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -3347,7 +3514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../release_notes/" class="md-nav__link">
+      <a href="../../release_notes/" class="md-nav__link">
         
   
   
@@ -3394,10 +3561,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
+  <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        一、本次版本关键词
+        会在哪里运行
       
     </span>
   </a>
@@ -3405,132 +3572,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#new-features" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        二、New Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="二、New Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#21-rest-api-chat-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.1 REST API 服务与 Chat API
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#22-cli-print-modestdinstdout" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.2 CLI Print Mode（stdin/stdout）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#23-datus-gateway-im" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.3 Datus Gateway IM 网关
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#24-auto-memory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.4 Auto Memory
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#25-feature" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.5 其他用户可见 Feature
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#refactor-breaking-changes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        三、Refactor &amp; Breaking Changes（升级重点）
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="三、Refactor &amp; Breaking Changes（升级重点）">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#31" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.1 文件系统结构与工具重构（重点）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#32-tool-dispatch-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.2 Tool Dispatch API 重写
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#33-session" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3.3 Session &amp; 观测
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        四、Bug Fixes
+        运行流程
       
     </span>
   </a>
@@ -3538,71 +3583,54 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#026" class="md-nav__link">
+  <a href="#validator-skill" class="md-nav__link">
     <span class="md-ellipsis">
       
-        五、从 0.2.6 升级指南
+        内置检查和 validator skill 的区别
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="五、从 0.2.6 升级指南">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#51" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.1 升级命令
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#52-breaking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.2 必检项（Breaking / 行为变化）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#53-kb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.3 KB 目录迁移脚本（参考）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#54" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.4 新能力快速体验
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#leo-felixliu" class="md-nav__link">
+  <a href="#validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        六、贡献者（本次版本 Leo / Felix.Liu 部分）
+        配置 validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        添加项目级 validator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target 过滤
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        修改内置 validation 规则
       
     </span>
   </a>
@@ -3626,7 +3654,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/release_notes_0.2.7_zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/integration/validation.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3634,276 +3662,201 @@
   
 
 
-<h1 id="datus-agent-027-release-note">Datus-Agent 0.2.7 Release Note（中文版）<a class="headerlink" href="#datus-agent-027-release-note" title="Permanent link">&para;</a></h1>
-<blockquote>
-<p>面向用户的发版说明。覆盖范围：自 <code>v0.2.6</code> (2026-03-21) 以来由 Leo / Felix.Liu 负责落地的改动。
-发版分支：<code>fstool-fix</code>（合入 <code>main</code> 后打 <code>v0.2.7</code>）。</p>
-</blockquote>
-<hr />
-<h2 id="_1">一、本次版本关键词<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<h1 id="_1">校验<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>Validation 是面向“已经创建或更新了持久资源”的 subagent 的后置保护层。
+它和生成过程里的 <code>read_query</code>、<code>validate_ddl</code>、<code>validate_semantic</code> 不同：
+这些工具帮助主 agent 在结束前生成正确 SQL 或 YAML，而 validation hook 会在写入类工具上报
+deliverable 之后自动运行。</p>
+<h2 id="_2">会在哪里运行<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><code>ValidationHook</code> 会挂在会产出 deliverable 的 subagent 上：</p>
+<table>
+<thead>
+<tr>
+<th>Subagent</th>
+<th>收集的 target</th>
+<th>内置检查</th>
+<th>Validator skill</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gen_table</code></td>
+<td><code>execute_ddl</code> 产出的表</td>
+<td>表存在</td>
+<td><code>table-validation</code></td>
+</tr>
+<tr>
+<td><code>gen_job</code></td>
+<td>DDL、DML、<code>transfer_query_result</code> 产出的表和跨库传输</td>
+<td>表存在、传输行数一致</td>
+<td><code>table-validation</code>、<code>transfer-reconciliation</code></td>
+</tr>
+<tr>
+<td><code>gen_dashboard</code></td>
+<td>BI 工具产出的 dashboard、chart、dataset</td>
+<td>BI 资源存在</td>
+<td><code>bi-validation</code></td>
+</tr>
+<tr>
+<td><code>scheduler</code></td>
+<td>submit/update 工具产出的 scheduler job</td>
+<td>job 存在且状态不是 failed；如果 runtime 工具可用，还会确定性触发并轮询一次</td>
+<td><code>scheduler-validation</code></td>
+</tr>
+</tbody>
+</table>
+<p>语义模型和指标生成走自己的发布门禁：<code>validate_semantic</code>，以及指标场景里的
+<code>query_metrics(..., dry_run=True)</code>。这些流程不使用 <code>ValidationHook</code> target。</p>
+<h2 id="_3">运行流程<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>新增独立 REST API 服务（<code>datus-api</code>）</strong> —— 从 Streamlit 后端抽出，可独立部署。</li>
-<li><strong>CLI Print Mode + Proxy Tools</strong> —— 支持 stdin/stdout 非交互式调用，便于外部 orchestrator 接管工具执行。</li>
-<li><strong>Gateway 网关 Daemon 模式 + 流式输出</strong> —— IM 场景（飞书）端到端打通 streaming。</li>
-<li><strong>Auto Memory（MEMORY.md）</strong> —— Agentic Node 获得跨会话的持久化记忆能力。</li>
-<li><strong>文件系统工具重构</strong> —— 统一到 <code>project_root</code> + <code>PathZone</code> 访问策略；<code>filesystem_strict</code> 升级为一等 AgentConfig 字段。</li>
-<li><strong>Project-level 配置 + Feedback Agent + Session 作用域隔离</strong> —— 多项目、多 Agent 协作的基础能力补齐。</li>
+<li>写入类工具返回 <code>FuncToolResult</code>，并在 <code>result.deliverable_target</code> 里声明它产出了什么。</li>
+<li><code>ValidationHook.on_tool_end</code> 读取这个 target，加入当前 session。hook 累积的是整次运行，不只是最后一次工具调用。</li>
+<li>agent 结束时，<code>ValidationHook.on_end</code> 把所有 target 包成一个 <code>SessionTarget</code>。</li>
+<li>Layer A 运行确定性的代码检查。即使关闭 LLM validator skill，这一层也始终执行。</li>
+<li>对 scheduler job，如果 scheduler 工具暴露 trigger 和 run-history API，hook 会额外执行确定性的 runtime 检查：触发刚提交的 job、轮询对应 run，并在失败时附上日志。</li>
+<li>当 <code>agent.validation.skill_validators_enabled</code> 为 true 时，Layer B 会运行匹配的 validator skill。</li>
+<li>只要有 blocking 检查失败，拥有这个 hook 的 subagent 会把一份精简的 validation 失败报告作为下一轮 prompt 继续重试。重试次数由 <code>agent.validation.max_retries</code> 限制。重试后仍失败时，节点返回 <code>success=false</code>，并带上 <code>validation_report</code>。</li>
 </ol>
-<hr />
-<h2 id="new-features">二、New Features<a class="headerlink" href="#new-features" title="Permanent link">&para;</a></h2>
-<h3 id="21-rest-api-chat-api">2.1 REST API 服务与 Chat API<a class="headerlink" href="#21-rest-api-chat-api" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>能力</th>
-<th>PR</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>新增 <code>datus-api</code> CLI 入口与 FastAPI 模块</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/520">#520</a></td>
-<td>独立的 REST API，包含 agents / chat / database / explorer / KB / MCP 路由；消除对 <code>datus_backend</code> 的 ORM 依赖；可独立部署</td>
-</tr>
-<tr>
-<td>Datus Chat 模块</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/554">#554</a></td>
-<td>新的 chat 子模块，作为 Web/IM 调用 Agentic 能力的统一入口</td>
-</tr>
-<tr>
-<td>Chat API Streaming 输出</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/555">#555</a></td>
-<td>新增 <code>--stream</code> CLI 标志与按请求级的 <code>stream_response</code>，逐 token 输出 thinking delta；客户端需处理 <code>create/append/update</code> 三类 message 事件</td>
-</tr>
-<tr>
-<td><code>ask_user_tool</code> 多选支持</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/553">#553</a></td>
-<td>SSE <code>UserInteractionInput.input</code> 由 <code>List[str]</code> 升级为 <code>List[List[str]]</code> 以承载 multiSelect</td>
-</tr>
-<tr>
-<td>API Server 参数透传</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/538">#538</a></td>
-<td>新增 <code>--source</code> / <code>--interactive</code> / <code>--no-interactive</code>，且支持 <code>ChatInput.interactive</code> / <code>ChatInput.source</code> 按请求覆盖</td>
-</tr>
-<tr>
-<td>Web API 文档</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/530">#530</a></td>
-<td>完整 REST API 使用手册</td>
-</tr>
-</tbody>
-</table>
-<h3 id="22-cli-print-modestdinstdout">2.2 CLI Print Mode（stdin/stdout）<a class="headerlink" href="#22-cli-print-modestdinstdout" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>能力</th>
-<th>PR</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--print</code> 非交互模式</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/489">#489</a></td>
-<td>JSON Lines 格式通过 stdin/stdout 流式通信；新增 <code>--resume</code> 恢复既有 session（要求同时指定 <code>--print</code>）；抽离 <code>node_factory</code> / <code>action_content_builder</code></td>
-</tr>
-<tr>
-<td>Proxy Tools for Print Mode</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/501">#501</a></td>
-<td><code>--proxy_tools</code> 把指定工具替换为 channel-based 代理：Agent 发出 <code>call-tool</code> 事件到 stdout，外部进程通过 stdin 回传结果；适合 VSCode 插件、Web 前端接管工具执行</td>
-</tr>
-</tbody>
-</table>
-<h3 id="23-datus-gateway-im">2.3 Datus Gateway IM 网关<a class="headerlink" href="#23-datus-gateway-im" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>能力</th>
-<th>PR</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Daemon 模式</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/559">#559</a></td>
-<td>新增 <code>--daemon</code>、<code>--action start/stop/restart/status</code>、<code>--pid-file</code>、<code>--daemon-log-file</code>；POSIX-only 调用加平台守卫；<code>--log-level</code> 在 daemon 模式下生效</td>
-</tr>
-<tr>
-<td>Gateway Streaming 输出</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/562">#562</a></td>
-<td>网关向 IM 下行支持逐 token 增量输出</td>
-</tr>
-<tr>
-<td>飞书 Streaming 支持</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/565">#565</a></td>
-<td>飞书 adapter 端接 Gateway streaming</td>
-</tr>
-<tr>
-<td>Gateway/API Feedback Action</td>
-<td><a href="https://github.com/Datus-ai/Datus-agent/pull/593">#593</a></td>
-<td>修复 ContextVar 跨线程传递导致的 <code>project_name</code> 空串问题，IM 场景也能正确解析 project</td>
-</tr>
-</tbody>
-</table>
-<h3 id="24-auto-memory">2.4 Auto Memory<a class="headerlink" href="#24-auto-memory" title="Permanent link">&para;</a></h3>
+<p>Advisory 级别的失败和 warning 会被报告出来，但不会触发重试。</p>
+<h2 id="validator-skill">内置检查和 validator skill 的区别<a class="headerlink" href="#validator-skill" title="Permanent link">&para;</a></h2>
+<p>Layer A 是代码层基础设施，用来验证每次运行都应该满足的硬性不变量：</p>
 <ul>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/498">#498</a> <strong>MEMORY.md 持久化</strong>：Agentic Node 的系统提示词会自动注入 <code>MEMORY.md</code> 内容（≤200 行为 L1 主文件；超过的部分由模型按需读取 L2 子文件），不新增任何工具，复用现有 <code>FilesystemFuncTool</code>。</li>
-<li>适用节点：<code>chat</code> + 自定义 subagent（<code>GenSQL</code> / <code>GenReport</code> 强制保留 filesystem tools）。</li>
-<li>增强：空 <code>MEMORY.md</code> 场景下显式下发 <code>"empty -- no memories saved yet"</code> 占位符，避免模型误判注入失败（<a href="https://github.com/Datus-ai/Datus-agent/pull/595">#595</a>）。</li>
+<li>table target 可以被 <code>describe_table</code></li>
+<li>transfer 的目标表存在</li>
+<li>当 transfer 工具上报 source/target 行数时，两边行数一致</li>
+<li>BI dashboard、chart、dataset 可达</li>
+<li>scheduler job 存在，且不是已失败状态</li>
 </ul>
-<h3 id="25-feature">2.5 其他用户可见 Feature<a class="headerlink" href="#25-feature" title="Permanent link">&para;</a></h3>
+<p>Layer B 是用户可扩展的规则层，由 frontmatter 中 <code>kind: validator</code> 的 skill 实现。
+Validator skill 不会通过 <code>load_skill</code> 加载，也不会作为普通 skill 暴露给主 agent；
+它只由 <code>ValidationHook</code> 在匹配的 subagent 运行结束时调用。</p>
+<p>Validator 子 agent 只能使用只读工具：</p>
 <ul>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/579">#579</a> <strong>Feedback Agent</strong>：新增反馈 Agent 节点。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/583">#583</a> <strong>CLI 底部栏 UX 重设计</strong>。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/575">#575</a> <strong>SubAgentTaskTool 通用化</strong>：<code>SubAgentConfig</code> / <code>AgenticNode</code> 新增 <code>subagents</code> 字段；<code>chat</code> 默认 <code>'*'</code>，其他节点（GenSQL、GenReport）默认 <code>'explore'</code>；强制 2 级深度。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/592">#592</a> <strong>Project-level 配置</strong>。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/523">#523</a> <strong><code>--session-scope</code> 参数</strong>：session 目录隔离，支持按 scope 划分会话存储。</li>
+<li>数据库只读工具，例如 <code>describe_table</code>、<code>get_table_ddl</code>、<code>read_query</code></li>
+<li>BI 只读工具，例如 <code>get_dashboard</code>、<code>get_chart</code>、<code>get_chart_data</code>、<code>get_dataset</code></li>
+<li>Scheduler 只读工具，例如 <code>get_scheduler_job</code>、<code>list_job_runs</code>、<code>get_run_log</code></li>
 </ul>
-<hr />
-<h2 id="refactor-breaking-changes">三、Refactor &amp; Breaking Changes（升级重点）<a class="headerlink" href="#refactor-breaking-changes" title="Permanent link">&para;</a></h2>
-<h3 id="31">3.1 文件系统结构与工具重构（重点）<a class="headerlink" href="#31" title="Permanent link">&para;</a></h3>
-<blockquote>
-<p>涉及 <a href="https://github.com/Datus-ai/Datus-agent/pull/578">#578</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/588">#588</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/561">#561</a>、<a href="https://github.com/Datus-ai/Datus-agent/pull/587">#587</a>；以及 <code>fstool-fix</code> 分支上 <code>d6c610bf</code>、<code>ddf42ba8</code>。</p>
-</blockquote>
-<p><strong>变更摘要</strong></p>
-<ol>
-<li><strong>KB 内容锚定规则变更</strong></li>
-<li>旧：<code>knowledge_base_home</code> 可任意指定；路径内包含 <code>{current_database}</code> 层级。</li>
-<li>新：KB 内容**强制**锚定到 <code>{project_root}/subject/{semantic_models|sql_summaries|ext_knowledge|metrics}/</code>；不再有 <code>{db}/</code> 子目录；<code>agent.yml</code> 里 <code>agent.knowledge_base_home</code> 字段被**静默忽略**。</li>
-<li><strong>Global 存储按 project 分片</strong></li>
-<li><code>~/.datus/sessions/{project_name}/{session_id}.db</code></li>
-<li><code>~/.datus/data/{project_name}/datus_db/</code></li>
-<li><code>project_name</code> 规则：<code>os.getcwd().replace("/", "-").lstrip("-")</code>，空路径回落 <code>_root</code>，超长路径尾部加 7 位 md5。</li>
-<li><strong>FilesystemFuncTool 工具集精简</strong>（<a href="https://github.com/Datus-ai/Datus-agent/pull/561">#561</a>）</li>
-<li><code>read_file</code> 新增 <code>offset</code> / <code>limit</code>。</li>
-<li><code>edit_file</code> 简化为单对 <code>old_string</code> / <code>new_string</code>（带唯一性校验）。</li>
-<li>新增 <code>glob</code> 与 <code>grep</code>；移除 <code>read_multiple_files</code> / <code>create_directory</code> / <code>list_directory</code> / <code>directory_tree</code> / <code>move_file</code> / <code>search_files</code>。</li>
-<li><strong>访问区分级</strong>（<a href="https://github.com/Datus-ai/Datus-agent/pull/588">#588</a>）：<code>PathZone</code> = <code>INTERNAL</code> / <code>WHITELIST</code>（<code>~/.datus/skills</code>、<code>.datus/skills</code>、<code>.datus/memory/{current_node}</code>）/ <code>HIDDEN</code>（<code>.datus</code> 其他内容）/ <code>EXTERNAL</code>（项目根以外）。</li>
-<li><strong><code>filesystem_strict</code> 一等字段</strong>（<code>d6c610bf</code>）</li>
-<li><code>agent.yml</code> 新增 <code>agent.filesystem.strict: true/false</code>。</li>
-<li>CLI 互斥三态：<code>--filesystem-strict</code> / <code>--no-filesystem-strict</code> / 两者均不传（保留 YAML 值）。</li>
-<li>API（<code>chat_task_manager</code>）与 Gateway（<code>main._run_gateway</code>）在 strict 模式下会硬拒绝 <code>EXTERNAL</code> 路径，不再向权限 broker 发交互 prompt，避免无人值守场景挂起。</li>
-</ol>
-<h3 id="32-tool-dispatch-api">3.2 Tool Dispatch API 重写<a class="headerlink" href="#32-tool-dispatch-api" title="Permanent link">&para;</a></h3>
-<ul>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/569">#569</a> 用 <code>POST /api/v1/tools/{tool_name}</code> 直连 <code>ContextSearchTools</code> 注册表，<strong>移除旧 route</strong> <code>execute_tool</code> 与一组陈旧 CLI 模型（<code>SchemaLinkingToolInput</code> / <code>SearchMetricsToolInput</code> 等）。</li>
-</ul>
-<h3 id="33-session">3.3 Session &amp; 观测<a class="headerlink" href="#33-session" title="Permanent link">&para;</a></h3>
-<ul>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/547">#547</a> SSE 事件新增 <code>depth</code> / <code>parent_action_id</code> / <code>subagent-complete</code>，前端可构建层级活动树。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/544">#544</a> <code>session_total_tokens</code> 语义调整为 <strong>最后一次模型调用的 input_tokens</strong>（真实上下文占用），而非累加；CLI 展示与 SSE <code>end</code> 事件新增 <code>requests</code>（LLM 调用次数）。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/594">#594</a> <code>.sessions</code>/<code>.resume</code> 与 <code>GET /api/v1/chat/sessions</code> 按当前 agent 过滤；API 新增 <code>subagent_id</code> 可选参数。</li>
-</ul>
-<hr />
-<h2 id="bug-fixes">四、Bug Fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/570">#570</a> streaming delta chunk 不再 <code>strip()</code>，保留 token 之间的空白（飞书下 <code>"Hi" + " again!"</code> 不再变成 <code>"Hiagain!"</code>）。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/568">#568</a> 群聊中 bot 不再回复未参与过的 thread。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/577">#577</a> session compact 结果持久化修复。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/548">#548</a> compact API 不再恒返回 <code>success=false</code>（补齐 <code>_get_or_create_session</code>）。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/533">#533</a> 工具结果以 JSON mode 序列化，保留 session history 中的结构（修复 <code>datetime/Decimal/UUID</code> 被 <code>str(dict)</code> 破坏）。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/531">#531</a> 任务阻塞时主动下发 ping，避免 SSE 连接被中间层掐断。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/529">#529</a> 自定义 subagent 的 <code>node_name</code> 从 <code>agentic_nodes</code> key 正确解析，<code>scoped_context</code> 不再为空。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/516">#516</a> <code>filesystem_tools</code> 不再被错误代理到 <code>gen_semantic_model</code>、<code>gen_metrics</code>、<code>gen_sql_summary</code>、<code>gen_ext_knowledge</code>。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/505">#505</a> 加载历史 session 使用真实 id。</li>
-<li><a href="https://github.com/Datus-ai/Datus-agent/pull/587">#587</a> 移除 KB 生成 prompt 里过时的 <code>{current_database}</code> 目录层级。</li>
-</ul>
-<hr />
-<h2 id="026">五、从 0.2.6 升级指南<a class="headerlink" href="#026" title="Permanent link">&para;</a></h2>
-<h3 id="51">5.1 升级命令<a class="headerlink" href="#51" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># 或 pip 安装方式</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>datus-agent
+<p>写入工具和递归 subagent 工具不会暴露给 validator。Scheduler validator 也不应该调用
+<code>trigger_scheduler_job</code>；确定性的触发和轮询由 hook 负责。</p>
+<h2 id="validation">配置 validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>在 <code>agent.yml</code> 中配置：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">validation</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="c1"># 设为 false 时，只关闭 Layer B validator skill；Layer A 仍然会运行。</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">skill_validators_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="c1"># 主 agent 总尝试次数，包含第一次尝试。</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">max_retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
 </span></code></pre></div>
-<h3 id="52-breaking">5.2 必检项（Breaking / 行为变化）<a class="headerlink" href="#52-breaking" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>项</th>
-<th>0.2.6 行为</th>
-<th>0.2.7 行为</th>
-<th>动作</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>agent.knowledge_base_home</code></td>
-<td>生效</td>
-<td><strong>静默忽略</strong></td>
-<td>删除该配置；把本地已生成的 KB 内容迁移至 <code>./subject/</code></td>
-</tr>
-<tr>
-<td>KB 目录结构</td>
-<td><code>subject/{kind}/{db}/...</code></td>
-<td><code>subject/{kind}/...</code>（无 <code>{db}</code>）</td>
-<td>执行下方迁移脚本或重新 bootstrap</td>
-</tr>
-<tr>
-<td><code>~/.datus/sessions/</code></td>
-<td>扁平</td>
-<td>按 <code>{project_name}</code> 分片</td>
-<td>旧 session 文件移动到 <code>~/.datus/sessions/{project_name}/</code> 下即可复用</td>
-</tr>
-<tr>
-<td><code>~/.datus/data/datus_db/</code></td>
-<td>全局</td>
-<td><code>~/.datus/data/{project_name}/datus_db/</code></td>
-<td>同上</td>
-</tr>
-<tr>
-<td>FilesystemFuncTool API</td>
-<td>包含 <code>list_directory</code>/<code>directory_tree</code>/<code>search_files</code> 等</td>
-<td>已移除，改用 <code>glob</code> / <code>grep</code></td>
-<td>如你自己的插件/脚本调用了旧工具名，迁移至新工具</td>
-</tr>
-<tr>
-<td><code>execute_tool</code> REST API</td>
-<td><code>GET/POST /api/v1/tools/{tool_name}</code> 旧实现</td>
-<td>由 <code>ToolService</code> 直连</td>
-<td>重新对齐请求 body 为工具的原生参数</td>
-</tr>
-<tr>
-<td><code>session_total_tokens</code> 语义</td>
-<td>累加 input_tokens</td>
-<td>最后一次调用的 input_tokens</td>
-<td>监控面板/报表需要重新校准</td>
-</tr>
-<tr>
-<td><code>UserInteractionInput.input</code></td>
-<td><code>List[str]</code></td>
-<td><code>List[List[str]]</code></td>
-<td>API 客户端改造 payload</td>
-</tr>
-</tbody>
-</table>
-<h3 id="53-kb">5.3 KB 目录迁移脚本（参考）<a class="headerlink" href="#53-kb" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># 0.2.6 → 0.2.7：去掉多余的 {current_database} 层</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>./subject
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">for</span><span class="w"> </span>kind<span class="w"> </span><span class="k">in</span><span class="w"> </span>semantic_models<span class="w"> </span>sql_summaries<span class="w"> </span>ext_knowledge<span class="w"> </span>metrics<span class="p">;</span><span class="w"> </span><span class="k">do</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="o">[</span><span class="w"> </span>-d<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$kind</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="k">continue</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>find<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$kind</span><span class="s2">&quot;</span><span class="w"> </span>-mindepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>-maxdepth<span class="w"> </span><span class="m">2</span><span class="w"> </span>-type<span class="w"> </span>d<span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>db_dir<span class="p">;</span><span class="w"> </span><span class="k">do</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span>mv<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$db_dir</span><span class="s2">&quot;</span>/*<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$kind</span><span class="s2">/&quot;</span><span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>rmdir<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$db_dir</span><span class="s2">&quot;</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="k">done</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">done</span>
+<p>如果只想保留低成本的确定性检查，可以设置 <code>skill_validators_enabled: false</code>。
+如果只想关闭某一个 validator，保留其他 validator，可覆盖或编辑对应 skill，把
+<code>severity</code> 设为 <code>off</code>。</p>
+<h2 id="validator">添加项目级 validator<a class="headerlink" href="#validator" title="Permanent link">&para;</a></h2>
+<p>在项目下创建一个 skill：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>./.datus/skills/
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>└── finance-table-validation/
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    └── SKILL.md
 </span></code></pre></div>
-<h3 id="54">5.4 新能力快速体验<a class="headerlink" href="#54" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># 启动独立 API</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>datus-api<span class="w"> </span>server<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--stream<span class="w"> </span>--interactive
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># CLI print mode + proxy tools</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>datus<span class="w"> </span>chat<span class="w"> </span>--print<span class="w"> </span>--proxy_tools<span class="w"> </span>query_sql<span class="w"> </span>--resume<span class="w"> </span>&lt;session_id&gt;
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Datus Gateway 网关以 daemon 启动</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>datus-gateway<span class="w"> </span>--daemon<span class="w"> </span>--action<span class="w"> </span>start<span class="w"> </span>--pid-file<span class="w"> </span>~/.datus/run/gateway.pid
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># 开启 filesystem strict（无人值守安全）</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>datus<span class="w"> </span>chat<span class="w"> </span>--filesystem-strict
+<p>如果你自定义了 <code>skills.directories</code>，请把 validator 放到配置里的某个目录下。
+默认扫描顺序下，项目级 <code>./.datus/skills</code> 会覆盖用户级 <code>~/.datus/skills</code>，二者又都会覆盖内置 skill。</p>
+<p>示例：</p>
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>---
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>name: finance-table-validation
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>description: Validate finance mart tables after gen_job writes them
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>tags: [validation, finance, data-quality]
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>version: &quot;1.0.0&quot;
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>user_invocable: false
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>disable_model_invocation: false
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>kind: validator
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>severity: blocking
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>mode: llm
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>allowed_agents:
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="k">-</span><span class="w"> </span>gen_job
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>targets:
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span><span class="k">-</span><span class="w"> </span>type: table
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    schema: marts
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="gu">    table_pattern: finance_*</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="gu">---</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="gh"># Finance Table Validation</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>ValidationHook 会在匹配的 <span class="sb">`gen_job`</span> 运行结束后调用这个 skill。你收到的是
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="sb">`SessionTarget`</span>；请遍历 <span class="sb">`session.targets`</span>，对每个匹配的表独立执行检查。
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>
+</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>对每张 finance mart 表：
+</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>
+</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="k">1.</span> 使用目标 datasource 上的 <span class="sb">`read_query`</span> 检查最新业务日期是否存在。
+</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="k">2.</span> 使用 <span class="sb">`read_query`</span> 确认 <span class="sb">`amount`</span> 没有负值。
+</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="k">3.</span> 每条规则、每张表都返回一个独立 check。
+</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>
+</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>不要修改数据。如果某张表失败，报告具体表名和失败规则，让重试 prompt 只修复有问题的 target。
 </span></code></pre></div>
-<hr />
-<h2 id="leo-felixliu">六、贡献者（本次版本 Leo / Felix.Liu 部分）<a class="headerlink" href="#leo-felixliu" title="Permanent link">&para;</a></h2>
-<p>共 39 个提交，含 15 项 Feature / 4 项 Refactor / 8 项 Enhancement / 10 项 Bug Fix / 1 项 Doc。</p>
+<p>hook 会自动追加 JSON 输出契约。validator 的回答里需要包含一个 fenced JSON block：</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;checks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="p">{</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;non_negative_amount&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">&quot;passed&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;blocking&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">&quot;observed&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;table&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;marts.finance_daily&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;negative_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">},</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">&quot;expected&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;negative_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="p">],</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="nt">&quot;blocking_issues&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;marts.finance_daily has negative amount values&quot;</span><span class="p">]</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>blocking_issues</code> 里的每一项都会被转换成失败的 blocking check。它适合放简短的必修复问题。</p>
+<h2 id="target">Target 过滤<a class="headerlink" href="#target" title="Permanent link">&para;</a></h2>
+<p><code>targets</code> 决定 validator 什么时候运行。空列表表示匹配 session 中的所有 target。
+否则，只要任意 filter 匹配，就会激活这个 validator。</p>
+<p>支持的 target 类型：</p>
+<ul>
+<li><code>table</code></li>
+<li><code>transfer</code></li>
+<li><code>dashboard</code></li>
+<li><code>chart</code></li>
+<li><code>dataset</code></li>
+<li><code>scheduler_job</code></li>
+</ul>
+<p>表类 target 还支持：</p>
+<ul>
+<li><code>database</code></li>
+<li><code>schema</code></li>
+<li><code>table</code></li>
+<li><code>table_pattern</code>，使用 <code>fnmatch</code> glob 语法</li>
+</ul>
+<p>示例：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># gen_table 创建的任意表。</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_table</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nt">targets</span><span class="p">:</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># 只检查 marts 下名称以 rev_ 开头的表。</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_job</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="nt">targets</span><span class="p">:</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">table</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">marts</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="nt">table_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">rev_*</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="c1"># gen_dashboard 产出的任意 dashboard/chart/dataset。</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="nt">allowed_agents</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">gen_dashboard</span><span class="p p-Indicator">]</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+</span></code></pre></div>
+<p><code>allowed_agents</code> 可以写具体配置出来的 subagent alias，也可以写规范的节点类名，
+例如 <code>gen_job</code>、<code>gen_dashboard</code>、<code>scheduler</code>。</p>
+<h2 id="validation_1">修改内置 validation 规则<a class="headerlink" href="#validation_1" title="Permanent link">&para;</a></h2>
+<p>如果只想在某个项目里修改内置 validator，把内置 skill 复制到项目级 skill 目录，并保持相同
+<code>name</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>./.datus/skills/table-validation/SKILL.md
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>./.datus/skills/bi-validation/SKILL.md
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>./.datus/skills/scheduler-validation/SKILL.md
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>./.datus/skills/transfer-reconciliation/SKILL.md
+</span></code></pre></div>
+<p>修改时保留 <code>kind: validator</code>、正确的 <code>allowed_agents</code>，以及符合预期的 <code>targets</code>
+过滤条件。改完后重启 Datus 或重新打开对应 subagent，让 skill registry 重新扫描文件。</p>
+<p>空值率、枚举取值、重复键、样本 diff、业务阈值等表级数据内容检查，建议通过项目级
+validator skill 添加。内置 <code>table-validation</code> 刻意只覆盖显式 schema 契约；
+对象存在和基础行数不变量属于 Layer A。</p>
 
 
 
@@ -3930,6 +3883,44 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+        
+          
+          <a href="../skills/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Skills">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                上一页
+              </span>
+              <div class="md-ellipsis">
+                Skills
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../memory/" class="md-footer__link md-footer__link--next" aria-label="下一页: 自动记忆">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                下一页
+              </span>
+              <div class="md-ellipsis">
+                自动记忆
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -4010,10 +4001,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
