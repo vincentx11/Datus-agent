@@ -12,7 +12,7 @@ Responsibilities:
 4. Manage subject tree assignments for metrics
 """
 
-from datetime import datetime
+import time
 from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.agent_config import AgentConfig
@@ -128,7 +128,7 @@ class SemanticStorageManager:
         catalog = model_data.get("catalog_name", "")
         database = model_data.get("database_name", "")
         schema = model_data.get("schema_name", "")
-        updated_at = datetime.now()
+        updated_at = int(time.time() * 1000)
 
         # Build fully qualified table name (filter empty parts)
         table_fq_name = ".".join(p for p in [catalog, database, schema, table_name] if p)
@@ -145,7 +145,7 @@ class SemanticStorageManager:
             "database_name": database,
             "schema_name": schema,
             "table_name": table_name,
-            "description": model_data.get("description", ""),
+            "description": model_data.get("description") or "",
             "is_dimension": False,
             "is_measure": False,
             "is_entity_key": False,
@@ -175,7 +175,7 @@ class SemanticStorageManager:
                 "database_name": database,
                 "schema_name": schema,
                 "table_name": table_name,
-                "description": dim.get("description", ""),
+                "description": dim.get("description") or "",
                 "is_dimension": True,
                 "is_measure": False,
                 "is_entity_key": False,
@@ -185,7 +185,7 @@ class SemanticStorageManager:
             }
             dim_objects.append(dim_obj)
         if dim_objects:
-            store.batch_store(dim_objects)
+            store.store_batch(dim_objects)
 
         # Store measures
         measures = model_data.get("measures", [])
@@ -207,7 +207,7 @@ class SemanticStorageManager:
                 "database_name": database,
                 "schema_name": schema,
                 "table_name": table_name,
-                "description": measure.get("description", ""),
+                "description": measure.get("description") or "",
                 "is_dimension": False,
                 "is_measure": True,
                 "is_entity_key": False,
@@ -217,7 +217,7 @@ class SemanticStorageManager:
             }
             measure_objects.append(measure_obj)
         if measure_objects:
-            store.batch_store(measure_objects)
+            store.store_batch(measure_objects)
 
         # Store identifiers (entity keys)
         identifiers = model_data.get("identifiers", [])
@@ -239,7 +239,7 @@ class SemanticStorageManager:
                 "database_name": database,
                 "schema_name": schema,
                 "table_name": table_name,
-                "description": identifier.get("description", ""),
+                "description": identifier.get("description") or "",
                 "is_dimension": False,
                 "is_measure": False,
                 "is_entity_key": True,
@@ -305,7 +305,7 @@ class SemanticStorageManager:
             "catalog_name": metric_data.get("catalog_name", ""),
             "database_name": metric_data.get("database_name", ""),
             "schema_name": metric_data.get("schema_name", ""),
-            "updated_at": datetime.now(),
+            "updated_at": int(time.time() * 1000),
         }
 
         store.batch_store_metrics([metric_obj])
@@ -340,7 +340,7 @@ class SemanticStorageManager:
             try:
                 models = adapter.list_semantic_models()
             except Exception as e:
-                logger.error(f"Failed to list semantic models from {adapter.service_type}: {e}")
+                logger.error(f"Failed to list semantic models from adapter: {e}")
                 models = []
 
             for model_entry in models:
@@ -368,7 +368,7 @@ class SemanticStorageManager:
                             stats["semantic_models_synced"] += 1
                 except Exception as e:
                     model_id = model_entry.name if isinstance(model_entry, SemanticModelInfo) else model_entry
-                    logger.error(f"Failed to sync semantic model '{model_id}' from {adapter.service_type}: {e}")
+                    logger.error(f"Failed to sync semantic model '{model_id}' from adapter: {e}")
                     continue
 
         # Sync metrics
@@ -387,7 +387,7 @@ class SemanticStorageManager:
                     self.store_metric(
                         {
                             "name": metric.name,
-                            "description": metric.description,
+                            "description": metric.description or "",
                             "metric_type": metric.type or "simple",
                             "dimensions": metric.dimensions,
                             "measures": metric.measures,
@@ -399,13 +399,11 @@ class SemanticStorageManager:
                     stats["metrics_synced"] += 1
                 except Exception as e:
                     metric_id = getattr(metric, "name", "unknown")
-                    logger.error(f"Failed to sync metric '{metric_id}' from {adapter.service_type}: {e}")
+                    logger.error(f"Failed to sync metric '{metric_id}' from adapter: {e}")
                     continue
 
         logger.info(
-            f"Synced from {adapter.service_type}: "
-            f"{stats['semantic_models_synced']} semantic models, "
-            f"{stats['metrics_synced']} metrics"
+            f"Synced from adapter: {stats['semantic_models_synced']} semantic models, {stats['metrics_synced']} metrics"
         )
 
         return stats

@@ -35,6 +35,8 @@ from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 
+from ...agent.node.node_factory import create_node
+
 logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL = 10  # seconds
@@ -570,86 +572,13 @@ class ChatTaskManager:
         are isolated per user under ``{session_dir}/{user_id}/``.
         """
         execution_mode: Literal["interactive", "workflow"] = "interactive" if interactive else "workflow"
-        if subagent_id:
-            if subagent_id == "gen_semantic_model":
-                from datus.agent.node.gen_semantic_model_agentic_node import (
-                    GenSemanticModelAgenticNode,
-                )
-
-                return GenSemanticModelAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_metrics":
-                from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-                return GenMetricsAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_sql_summary":
-                from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
-
-                return SqlSummaryAgenticNode(
-                    node_name=subagent_id,
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "gen_ext_knowledge":
-                from datus.agent.node.gen_ext_knowledge_agentic_node import (
-                    GenExtKnowledgeAgenticNode,
-                )
-
-                return GenExtKnowledgeAgenticNode(
-                    node_name=subagent_id,
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            elif subagent_id == "feedback":
-                from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-
-                return FeedbackAgenticNode(
-                    agent_config=agent_config,
-                    execution_mode=execution_mode,
-                    scope=user_id,
-                )
-            else:
-                # Custom sub_agent: agentic_nodes is keyed by sanitized node_name
-                # (not the UUID subagent_id). Each entry carries its original
-                # sub_agent id under the "id" field — use it to resolve the key
-                # so downstream tools can look up scoped_context via
-                # sub_agent_config().
-                node_name = subagent_id
-                for key, entry in (agent_config.agentic_nodes or {}).items():
-                    if isinstance(entry, dict) and entry.get("id") == subagent_id:
-                        node_name = key
-                        break
-                return GenSQLAgenticNode(
-                    node_id=session_id,
-                    description=f"SQL generation node for {node_name}",
-                    node_type="gensql",
-                    input_data=None,
-                    agent_config=agent_config,
-                    tools=None,
-                    node_name=node_name,
-                    scope=user_id,
-                    execution_mode=execution_mode,
-                )
-        else:
-            return ChatAgenticNode(
-                node_id=session_id,
-                description="Chat node for backend API",
-                node_type="chat",
-                input_data=None,
-                agent_config=agent_config,
-                tools=None,
-                scope=user_id,
-                execution_mode=execution_mode,
-            )
+        return create_node(
+            subagent_name=subagent_id,
+            agent_config=agent_config,
+            node_id_suffix=f"_{session_id}" if session_id else "",
+            scope=user_id,
+            execution_mode=execution_mode,
+        )
 
     # ------------------------------------------------------------------
     # Node input factory

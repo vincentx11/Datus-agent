@@ -145,6 +145,18 @@ class BaseEmbeddingStore(StorageBase):
                 row.setdefault(k, v)
         return data
 
+    def _sanitize_vector_source(self, data: List[Dict[str, Any]]) -> None:
+        """Replace None/NaN values in the vector source column with empty strings.
+
+        Embedding models (e.g. fastembed) reject None/NaN inputs, so this
+        ensures the source column always contains a valid string.
+        """
+        src = self.vector_source_name
+        for row in data:
+            val = row.get(src)
+            if val is None or (isinstance(val, float) and val != val):
+                row[src] = ""
+
     def _search_all(
         self, where: WhereExpr = None, select_fields: Optional[List[str]] = None, limit: Optional[int] = None
     ) -> pa.Table:
@@ -307,6 +319,8 @@ class BaseEmbeddingStore(StorageBase):
         data = self._apply_default_values(data)
         # Ensure table is ready before storing data
         self._ensure_table_ready()
+        # Sanitize vector source column to prevent embedding errors
+        self._sanitize_vector_source(data)
 
         try:
             with self._write_lock:
@@ -316,6 +330,7 @@ class BaseEmbeddingStore(StorageBase):
                 # split the data into batches and store them
                 for i in range(0, len(data), self.batch_size):
                     batch = data[i : i + self.batch_size]
+                    self._sanitize_vector_source(batch)
                     self._add_with_retry(pd.DataFrame(batch))
         except Exception as e:
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
@@ -326,6 +341,8 @@ class BaseEmbeddingStore(StorageBase):
         data = self._apply_default_values(data)
         # Ensure table is ready before storing data
         self._ensure_table_ready()
+        # Sanitize vector source column to prevent embedding errors
+        self._sanitize_vector_source(data)
         try:
             with self._write_lock:
                 self._add_with_retry(pd.DataFrame(data))
@@ -344,6 +361,8 @@ class BaseEmbeddingStore(StorageBase):
             return
         data = self._apply_default_values(data)
         self._ensure_table_ready()
+        # Sanitize vector source column to prevent embedding errors
+        self._sanitize_vector_source(data)
 
         # Deduplicate input data by on_column, keeping the last occurrence
         # This prevents duplicates when the same id appears multiple times in the input batch
@@ -360,11 +379,13 @@ class BaseEmbeddingStore(StorageBase):
         try:
             with self._write_lock:
                 if len(data) <= self.batch_size:
+                    self._sanitize_vector_source(data)
                     self._upsert_with_retry(pd.DataFrame(data), on_column)
                     return
                 # Split the data into batches and upsert them
                 for i in range(0, len(data), self.batch_size):
                     batch = data[i : i + self.batch_size]
+                    self._sanitize_vector_source(batch)
                     self._upsert_with_retry(pd.DataFrame(batch), on_column)
         except Exception as e:
             raise DatusException(ErrorCode.STORAGE_SAVE_FAILED, message_args={"error_message": str(e)}) from e
